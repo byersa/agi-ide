@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-4.0.xsd"
+        require-authentication="false" allow-extra-path="true">
+
+    <pre-actions>
+        <!-- 
+          Rugged Token Discovery Handshake:
+          1. Check system environment variable
+          2. Locate transient token state file relative to runtimePath (runtime/tmp/webmcp.token)
+          3. Fall back to the default development token
+        -->
+        <script><![CDATA[
+            String token = System.getenv('WEBMCP_SERVER_TOKEN')
+            ec.logger.info("[AGI SHELL] Initializing token:" + token);
+            if (!token) {
+                File tokenFile = new File(ec.factory.runtimePath, "tmp/webmcp.token")
+                if (tokenFile.exists()) {
+                    try {
+                        token = tokenFile.text.trim()
+                        ec.logger.info("AGI KERNEL: Dynamically resolved active token from state file: " + token)
+                    } catch (Exception e) {
+                        ec.logger.error("AGI KERNEL: Failed to read token state file: " + e.message)
+                    }
+                }
+            }
+            if (!token) {
+                token = '816554a337e2d73431bd2903642f993b'
+            }
+            context.put("connectionToken", token)
+            context.put("isDesignMode", "Y")
+        ]]></script>
+
+        <!-- Bootstrapper for UI Assets and Dependencies -->
+        <script location="component://agi-ide/script/AgiBootstrapper.groovy"/>
+    </pre-actions>
+
+    <widgets>
+        <render-mode>
+            <text type="html"><![CDATA[
+                <!-- WebMCP Configuration Parameters -->
+                <script>
+                    window.WEBMCP_SERVER = 'ws://localhost:4797/facility-alerts?token=${connectionToken}';
+                    window.WEBMCP_OPTIONS = { position: 'bottom-left', padding: '15px' };
+                </script>
+                
+                <#-- Deduplication helper to prevent double-initialization of header assets -->
+                <#assign renderedBasenames = []>
+                <#function isDuplicate url>
+                    <#local basename = url?keep_before("?")?keep_after_last("/")>
+                    <#if basename == ""> <#local basename = url> </#if>
+                    <#if renderedBasenames?seq_contains(basename)>
+                        <#return true>
+                    <#else>
+                        <#assign renderedBasenames = renderedBasenames + [basename]>
+                        <#return false>
+                    </#if>
+                </#function>
+
+                <!-- Process Head Scripts (Vue, Quasar, CSS, and Asset Channels) -->
+                <#list (html_stylesheets![]) as stylesheet>
+                    <link rel="stylesheet" href="${stylesheet}">
+                </#list>
+
+                <#list (html_scripts![]) as script>
+                    <#if !isDuplicate(script)>
+                        <script src="${script}"></script>
+                    </#if>
+                </#list>
+
+                <!-- Target Mount Point for active Vue Canvas -->
+                <div id="q-app" v-cloak></div>
+                
+                <!-- Process Bootstrapper Scripts Enqueued via footer_scripts -->
+                <#list (footer_scripts![]) as script>
+                    <#if !isDuplicate(script)>
+                        <script src="${script}"></script>
+                    </#if>
+                </#list>
+
+                <!-- FreeMarker list cleaner: Prevents Moqui's native macro engine from duplicating script tags -->
+                <#if footer_scripts??>
+                    <#assign dummy = footer_scripts.clear()>
+                </#if>
+
+                <script type="importmap">
+                    {
+                      "imports": {
+                        "vue": "https://unpkg.com/vue@3.3.4/dist/vue.esm-browser.js",
+                        "vue-demi": "https://unpkg.com/vue-demi@0.14.6/lib/index.mjs",
+                        "pinia": "https://unpkg.com/pinia@2.1.7/dist/pinia.esm-browser.js",
+                        "@vue/devtools-api": "https://unpkg.com/@vue/devtools-api@6.6.1/lib/esm/index.js"
+                      }
+                    }
+                </script>
+
+                <script type="module">
+                    import { BlueprintClient } from '/agi_ide_assets/BlueprintClient.js';
+                    import { useMeetingsStore } from '/agi_ide_assets/meetingsStore.js';
+                    import { createPinia } from 'pinia';
+                    
+                    console.info("[AGI SHELL] Initializing Workspace Module Context.");
+                    
+                    // Unified Command Consumer Interceptor
+                    window.addEventListener('webmcp-command', (event) => {
+                        const cmd = event.detail;
+                        if (window.MceShellInstance && window.MceShellInstance.currentBlueprint) {
+                            console.info("[AGI PULSE] Processing layout update payload:", cmd.action);
+                            BlueprintClient.processCommand(window.MceShellInstance.currentBlueprint, cmd);
+                        } else {
+                            console.warn("[AGI WARN] Command skipped: Blueprint canvas mounting incomplete.");
+                        }
+                    });
+
+                    // Conversational Chat Dialogue Stream relay
+                    window.addEventListener('webmcp-message', (event) => {
+                        const msg = event.detail;
+                        console.info("[AGI CHAT] Inbound statement text:", msg.text);
+                        if (window.MceShellInstance && window.MceShellInstance.messages) {
+                            window.MceShellInstance.messages.push(msg);
+                        }
+                    });
+
+                    window.addEventListener('DOMContentLoaded', () => {
+                        // 1. INSTANTIATE AND AUTO-CONNECT WEBMCP: 
+                        // Bypasses the manual popup login flow by programmatically initiating the connection
+                        if (typeof WebMCP !== 'undefined' && !window.webmcp) {
+                            try {
+                                window.webmcp = new WebMCP(window.WEBMCP_OPTIONS);
+                                console.info("[AGI SHELL] WebMCP client instantiated successfully on window.webmcp.");
+
+                                // Build the expected Base64-encoded token envelope
+                                const connectionPayload = {
+                                    server: 'ws://localhost:4797',
+                                    token: '${connectionToken}'
+                                };
+                                const encodedToken = btoa(JSON.stringify(connectionPayload));
+                                
+                                // Fire connection sequence
+                                window.webmcp.connect(encodedToken);
+                                console.info("[AGI SHELL] WebMCP client auto-connect handshake triggered.");
+                            } catch (e) {
+                                console.error("[AGI FATAL] Failed to instantiate or connect WebMCP:", e);
+                            }
+                        }
+
+                        let attempts = 0;
+                        const initMce = () => {
+                            attempts++;
+                            
+                            // STRICT GATING: Block Vue mounting until both engines and transport channels are verified
+                            const hasVue = typeof window.Vue !== 'undefined';
+                            const hasQuasar = typeof window.Quasar !== 'undefined';
+                            const hasMceShell = typeof window.MceShell !== 'undefined';
+                            const hasWebMcp = typeof window.webmcp !== 'undefined';
+                            
+                            if (attempts % 10 === 0) {
+                                console.info('[AGI DIAGNOSTIC] Initialization status (Attempt ' + attempts + '):', {
+                                    Vue: hasVue,
+                                    Quasar: hasQuasar,
+                                    MceShell: hasMceShell,
+                                    webmcp: hasWebMcp
+                                });
+                            }
+
+                            if (hasVue && hasQuasar && hasMceShell && hasWebMcp) {
+                                if (window.MceShellInstance) return;
+                        
+                                const { createApp } = window.Vue;
+                                const app = createApp(window.MceShell, {
+                                    connectionToken: '${connectionToken}',
+                                    isDesignMode: '${isDesignMode}'
+                                });
+                        
+                                const pinia = createPinia();
+                                app.use(pinia);
+                                window.meetingsStore = useMeetingsStore();
+                                
+                                app.use(window.Quasar, { config: { dark: false } });
+                                app.use(BlueprintClient);
+                        
+                                window.MceShellInstance = app.mount('#q-app');
+                                window.PiniaInstance = pinia; 
+                                console.info("[AGI COMPLETE] Vue 3 App engine completely mounted to canvas stage with verified WebMCP transport.");
+                            } else {
+                                // Wait 100ms and check again
+                                setTimeout(initMce, 100);
+                            }
+                        };
+                        initMce();
+                    });
+                </script>
+            ]]></text>
+        </render-mode>
+    </widgets>
+</screen>

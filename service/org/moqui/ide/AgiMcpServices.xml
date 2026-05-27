@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-3.0.xsd">
+
+    <service verb="connect" noun="McpBridgeConnection" type="inline">
+        <actions>
+            <script location="component://agi-ide/service/org/moqui/ide/McpBridgeConnection.groovy"/>
+        </actions>
+    </service>
+
+    <service verb="get" noun="XmlArtifactBlueprint" read-only="true">
+        <in-parameters>
+            <parameter name="targetComponent" required="true"/>
+            <parameter name="artifactPath" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="blueprintJson" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                // Constructs an isolated, mock execution context to force a qjson compile pass
+                // through your live DeterministicVueRenderer class.
+                String screenLocation = "component://${targetComponent}/${artifactPath}"
+                
+                try {
+                    // Leverages Moqui's native ScreenFacade to build a render pass programmatically
+                    def renderComm = ec.screen.makeRender()
+                        .withScreen(screenLocation)
+                        .renderMode("qjson") // Tells ScreenRenderImpl to activate our custom renderer!
+                    
+                    StringWriter writer = new StringWriter()
+                    renderComm.withWriter(writer).render()
+                    
+                    // Slurp the generated JSON tree straight back into an operational Map object
+                    def jsonMap = new groovy.json.JsonSlurper().parseText(writer.toString())
+                    context.blueprintJson = jsonMap
+                } catch (Exception e) {
+                    ec.logger.error("❌ [AGI-IDE SERVICE ERROR] Failed to serialize artifact tree: " + e.getMessage(), e)
+                    context.blueprintJson = [name: "Error", attributes: [text: e.getMessage()]]
+                }
+            ]]></script>
+        </actions>
+    </service>
+</services>
