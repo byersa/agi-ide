@@ -6,7 +6,7 @@
         <screen location="component://webroot/screen/webroot.xml">
             <subscreens-item name="agi-ide" menu-title="AGI IDE" menu-index="96"
                              location="component://agi-ide/screen/agi-ide.xml"/>
-            <subscreens-item name="agi_ide_assets" menu-title="AGI IDE Assets" menu-index="98"
+            <subscreens-item name="agi-ide-assets" menu-title="AGI IDE Assets" menu-index="98"
                              menu-include="false"
                              location="component://agi-ide/screen/agi-ide/assets.xml"/>
         </screen>

@@ -28,7 +28,24 @@ window.AgiWorkspaceAppDefinition = {
             username: "",
             userId: "",
             loading: 0,
-            isArchitectMode: true // Keep architecture view active as your natural default layout
+            // Keep architecture view active as your natural default layout
+            isArchitectMode: true,
+            showCommandPalette: false,
+            fields: {
+                targetComponent: 'aitree', // Default project target
+                selectedArtifact: ''
+            },
+            backpackArtifacts: {
+                entities: [],
+                services: [],
+                screens: []
+            },
+            // Fallback object to catch early template renders before Pinia finishes attaching
+            aiTreeStore: {
+                chatInput: '',
+                activeBlueprintJson: null,
+                isArchitectMode: false
+            },
         };
     },
 

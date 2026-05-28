@@ -6,13 +6,9 @@
     <transition name="getAvailableComponents" read-only="true">
         <actions>
             <script>
-                // Dynamically clear all compiled script and screen caches to apply updates immediately
                 ec.cache.clearAllCaches()
-
-                // Dynamically list out target application components present in the workspace
                 def components = [
                     [value: "aitree", label: "AITree Framework Platform"],
-                    [value: "nursing-home", label: "Nursing Home Management System"],
                     [value: "agi-ai", label: "AGI Unified AI Component"],
                     [value: "agi-ide", label: "AGI Development IDE Shell"]
                 ]
@@ -26,25 +22,12 @@
         <parameter name="targetComponent"/>
         <actions>
             <script>
-                // Return semantically tagged artifact listings for each component scope
                 def artifacts = []
                 if (targetComponent == "aitree") {
                     artifacts = [
                         [value: "entity/AitreeData.xml", label: "AitreeNode", type: "entity"],
                         [value: "service/org/moqui/ide/McpServices.xml", label: "McpServiceCatalog", type: "service"],
                         [value: "screen/moquiai/MceShell.xml", label: "MceShell", type: "screen"]
-                    ]
-                } else if (targetComponent == "nursing-home") {
-                    artifacts = [
-                        [value: "entity/nursinghome/ResidentAlert.xml", label: "ResidentAlert", type: "entity"],
-                        [value: "service/nursinghome/AlertServices.xml", label: "AlertRoutingLogic", type: "service"],
-                        [value: "screen/nursinghome/StaffHuddle.xml", label: "StaffHuddleDashboard", type: "screen"]
-                    ]
-                } else if (targetComponent == "agi-ai") {
-                    artifacts = [
-                        [value: "entity/AgiConfig.xml", label: "AgiAgentConfig", type: "entity"],
-                        [value: "service/org/moqui/ai/GeminiServices.xml", label: "GeminiServices", type: "service"],
-                        [value: "screen/agi-ai/AgiManager.xml", label: "AgiManagerPanel", type: "screen"]
                     ]
                 } else if (targetComponent == "agi-ide") {
                     artifacts = [
@@ -64,7 +47,6 @@
         <parameter name="artifactPath"/>
         <actions>
             <script>
-                // Call backend parser logic to convert Moqui XML to canvas JSON blueprint
                 def mockStructure = [
                     name: "screen-structure",
                     attributes: [id: "AgiIdeRoot"],
@@ -87,255 +69,10 @@
     </transition>
 
     <widgets>
-        <!-- Pure Vue 3 / Quasar layout rendered literally to the client and hydrated by the active frontend application context -->
         <text type="html" template="false"><![CDATA[
-
-
-            <!-- The Floating HUD Search Command Palette Dialog -->
-            <dialog id="CommandPalette" style="width: 600px; max-width: 90vw; border-radius: 12px; border: none; box-shadow: 0 12px 40px rgba(0,0,0,0.15); padding: 0; outline: none; background: white;">
-                <!-- Dialog Header -->
-                <div class="bg-indigo-9 text-white q-pa-md flex justify-between items-center" style="border-top-left-radius: 12px; border-top-right-radius: 12px;">
-                    <div class="text-subtitle1 flex items-center">
-                        <q-icon name="psychology" class="q-mr-sm" size="sm"/> AGI Command Palette
-                    </div>
-                    <q-btn flat round dense icon="close" color="white" onclick="document.getElementById('CommandPalette').close()"/>
-                </div>
-                
-                <div class="bg-grey-1 q-pa-md" style="border-bottom-left-radius: 12px; border-bottom-right-radius: 12px;">
-                    <div class="q-mb-md">
-                        <m-drop-down name="selectedArtifact" label="Search and Select Artifact in Scope" 
-                                     options-url="/apps/agiide/IdeWorkspace/getArtifactOptions" 
-                                     :depends-on="{targetComponent: fields.targetComponent}"
-                                     :allow-empty="true" :options-load-init="false"
-                                     v-model="fields.selectedArtifact"></m-drop-down>
-                    </div>
-                    
-                    <!-- HUD AI Chat Stream Panel -->
-                    <div id="palette-chat-stream" class="bg-white rounded-borders border-grey-4 q-pa-sm shadow-2 overflow-auto q-mb-sm" 
-                          style="height: 250px; border: 1px solid #e0e0e0; border-radius: 8px;">
-                        <div class="text-caption text-grey-6 text-italic text-center q-mt-md">
-                            Command AGI Kernel overlay active. Ground layout modifications using selected context.
-                        </div>
-                    </div>
-                    
-                    <!-- HUD Prompt Input Field -->
-                    <div class="q-pa-xs">
-                        <q-input dense outlined v-model="aiTreeStore.chatInput" placeholder="Command AGI Kernel to refactor, pulse, or modify components..." @keydown.enter.prevent="sendWorkspaceMessage">
-                            <template v-slot:append>
-                                <q-btn round flat icon="send" color="indigo" @click="sendWorkspaceMessage" />
-                            </template>
-                        </q-input>
-                    </div>
-                </div>
-            </dialog>
-
-            <!-- 3 Column / 2 Sidebar Dynamic Control Grid Layout -->
-            <div class="row q-col-gutter-md">
-                <!-- 1. Left Sidebar: The Backpack (col-12 col-md-3) -->
-                <div class="col-12 col-md-3">
-                    <q-card flat bordered style="height: calc(100vh - 200px);" class="column justify-between bg-grey-1 q-pa-sm">
-                        <div class="column full-height">
-                            <!-- Component Selector drop-down -->
-                            <div class="q-mb-md">
-                                <m-drop-down name="targetComponent" label="Active Component Scope" 
-                                             options-url="/apps/agiide/IdeWorkspace/getAvailableComponents" 
-                                             :allow-empty="false" :options-load-init="true"
-                                             v-model="fields.targetComponent"></m-drop-down>
-                            </div>
-                            
-                            <!-- Dense dynamic list of active artifacts grouped by semantic type -->
-                            <div class="col-grow overflow-auto">
-                                <div class="q-mt-xs">
-                                    <div class="text-caption text-weight-bold text-grey-7 q-mb-xs">WORKSPACE BACKPACK</div>
-                                    <q-list dense class="bg-white rounded-borders border-grey-4 q-pa-xs">
-                                        <!-- Entities Group -->
-                                        <q-item-label header class="text-weight-medium text-grey-8 text-overline q-pt-sm q-pb-none" style="font-size: 0.7rem; line-height: 1;">Entities</q-item-label>
-                                        <q-item clickable v-for="item in (backpackArtifacts?.entities || [])" :key="item.value" @click="selectBackpackArtifact(item.value)" class="q-my-xs rounded-borders">
-                                            <q-item-section avatar class="min-width-auto q-pr-sm">
-                                                <q-icon name="dns" size="xs" color="blue-8"/>
-                                            </q-item-section>
-                                            <q-item-section class="text-caption text-grey-9 ellipsis" style="font-size: 0.75rem;">{{ item.label }}</q-item-section>
-                                        </q-item>
-                                        <q-item v-if="!(backpackArtifacts?.entities?.length)">
-                                            <q-item-section class="text-caption text-grey-5 italic q-pl-md" style="font-size: 0.75rem;">No entities</q-item-section>
-                                        </q-item>
-
-                                        <!-- Services Group -->
-                                        <q-item-label header class="text-weight-medium text-grey-8 text-overline q-pt-sm q-pb-none" style="font-size: 0.7rem; line-height: 1;">Services</q-item-label>
-                                        <q-item clickable v-for="item in (backpackArtifacts?.services || [])" :key="item.value" @click="selectBackpackArtifact(item.value)" class="q-my-xs rounded-borders">
-                                            <q-item-section avatar class="min-width-auto q-pr-sm">
-                                                <q-icon name="settings_ethernet" size="xs" color="green-8"/>
-                                            </q-item-section>
-                                            <q-item-section class="text-caption text-grey-9 ellipsis" style="font-size: 0.75rem;">{{ item.label }}</q-item-section>
-                                        </q-item>
-                                        <q-item v-if="!(backpackArtifacts?.services?.length)">
-                                            <q-item-section class="text-caption text-grey-5 italic q-pl-md" style="font-size: 0.75rem;">No services</q-item-section>
-                                        </q-item>
-
-                                        <!-- XML Screens Group -->
-                                        <q-item-label header class="text-weight-medium text-grey-8 text-overline q-pt-sm q-pb-none" style="font-size: 0.7rem; line-height: 1;">XML Screens</q-item-label>
-                                        <q-item clickable v-for="item in (backpackArtifacts?.screens || [])" :key="item.value" @click="selectBackpackArtifact(item.value)" class="q-my-xs rounded-borders">
-                                            <q-item-section avatar class="min-width-auto q-pr-sm">
-                                                <q-icon name="web" size="xs" color="purple-8"/>
-                                            </q-item-section>
-                                            <q-item-section class="text-caption text-grey-9 ellipsis" style="font-size: 0.75rem;">{{ item.label }}</q-item-section>
-                                        </q-item>
-                                        <q-item v-if="!(backpackArtifacts?.screens?.length)">
-                                            <q-item-section class="text-caption text-grey-5 italic q-pl-md" style="font-size: 0.75rem;">No XML screens</q-item-section>
-                                        </q-item>
-                                    </q-list>
-                                </div>
-                            </div>
-                        </div>
-                    </q-card>
-                </div>
-
-                <!-- 2. Central Stream Canvas (The Focal Stage) (col-12 col-md-9) -->
-                <div class="col-12 col-md-9">
-                    <div class="row q-col-gutter-md">
-                        <!-- Chat Control Plane Column -->
-                        <div class="col-12 col-md-4">
-                            <q-card flat bordered style="height: calc(100vh - 200px);" class="column justify-between bg-white">
-                                <q-card-section class="bg-indigo-9 text-white text-subtitle2 flex justify-between items-center q-py-xs">
-                                    <div><q-icon name="psychology" class="q-mr-xs"/> AGI Kernel Control Plane</div>
-                                </q-card-section>
-                                
-                                <q-card-section class="col-grow overflow-auto" id="ide-chat-stream">
-                                    <div class="text-caption text-grey-6 text-italic text-center q-mt-md">
-                                        Select an application project in the workspace backpack to mount the visualizer context.
-                                    </div>
-                                </q-card-section>
-
-                                <q-separator/>
-                                
-                                <q-card-section class="q-pa-sm">
-                                    <q-input dense outlined v-model="aiTreeStore.chatInput" placeholder="Command AGI Kernel to refactor, pulse, or modify components..." @keydown.enter.prevent="sendWorkspaceMessage">
-                                        <template v-slot:append>
-                                            <q-btn round flat icon="send" color="indigo" @click="sendWorkspaceMessage" />
-                                        </template>
-                                    </q-input>
-                                </q-card-section>
-                            </q-card>
-                        </div>
-
-                        <!-- Visualization Canvas Viewport Column -->
-                        <div class="col-12 col-md-8">
-                            <m-architect-view-port 
-                                :screen-data="aiTreeStore?.activeBlueprintJson" 
-                                :spec-path="fields?.selectedArtifact"></m-architect-view-port>
-                        </div>
-                    </div>
-                </div>
+            <div id="agi-ide-workspace-mount">
+                <ide-workspace-component></ide-workspace-component>
             </div>
-
-            <!-- Intercepting socket streams and binding them to our component's reactive properties -->
-            <script>
-                (function() {
-                    // 1. WebSocket Listener and visualFrame Token Processor
-                    (function() {
-                        function attachWebSocketListener(socket) {
-                            if (!socket || socket._agiAttached) return;
-                            socket._agiAttached = true;
-                            socket.addEventListener('message', function(event) {
-                                try {
-                                    var data = JSON.parse(event.data);
-                                    if (data && data.type === 'visualFrame') {
-                                        var payload = data.payload || data.result || data.data;
-                                        if (payload) {
-                                            var root = window.moqui?.webrootVue;
-                                            if (root && root.aiTreeStore) root.aiTreeStore.activeBlueprintJson = payload;
-                                        }
-                                    } else if (data && (data.type === 'message' || data.type === 'aiMessage')) {
-                                        var text = data.text || data.payload;
-                                        if (text) {
-                                            var streamContainer = document.getElementById('ide-chat-stream');
-                                            if (streamContainer) {
-                                                var html = `<div class="q-mb-sm text-left"><span class="bg-indigo-1 q-pa-sm rounded-borders inline-block text-body2 text-indigo-9">` + '${' + 'text}' + `</span></div>`;
-                                                streamContainer.innerHTML += html;
-                                                streamContainer.scrollTop = streamContainer.scrollHeight;
-                                            }
-                                        }
-                                    }
-                                } catch (e) {}
-                            });
-                        }
-
-                        // 1. Attach immediately if WebMCP connection is already warm and active
-                        if (window.webmcp && window.webmcp.status === 'connected' && window.webmcp.socket) {
-                            console.log('[AGI-IDE] WebMCP already connected. Attaching listener immediately.');
-                            attachWebSocketListener(window.webmcp.socket);
-                        }
-
-                        // 2. Listen to dynamic event-driven connection changes
-                        window.addEventListener('webmcp-status', function(e) {
-                            if (e.detail && e.detail.status === 'connected') {
-                                console.log('[AGI-IDE] WebMCP connected event detected. Attaching listeners.');
-                                if (window.webmcp && window.webmcp.socket) {
-                                    attachWebSocketListener(window.webmcp.socket);
-                                }
-                            }
-                        });
-                    })();
-
-                    window.addEventListener('keydown', function(e) {
-                        // Check for Alt + P combination
-                        if (e.altKey && e.key.toLowerCase() === 'p') {
-                            e.preventDefault(); // Stop default browser behaviors cleanly
-                            e.stopPropagation();
-                            
-                            if (window.moqui && window.moqui.webrootVue) {
-                                // Safe trigger to open your global palette component state
-                                console.log('[AGI-IDE] Hotkey Alt+P caught. Opening Command Palette...');
-                                window.dispatchEvent(new CustomEvent('toggle-command-palette'));
-                            }
-                            return false;
-                        }
-    
-                        // ALTERNATIVE: Check for Ctrl + M combination if you prefer control-key bindings
-                        if (e.ctrlKey && e.key.toLowerCase() === 'm') {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            
-                            console.log('[AGI-IDE] Hotkey Ctrl+M caught. Opening Command Palette...');
-                            window.dispatchEvent(new CustomEvent('toggle-command-palette'));
-                            return false;
-                        }
-                    });
-
-                    // 3. Mount Reactivity & Overrides to the main Vue app
-                    var checkInterval = setInterval(function() {
-                        var root = window.moqui?.webrootVue;
-                        if (root && root.fields) {
-                            clearInterval(checkInterval);
-                            if (!root.aiTreeStore) root.aiTreeStore = { chatInput: "", activeBlueprintJson: null };
-                            if (!root.backpackArtifacts) root.backpackArtifacts = { entities: [], services: [], screens: [] };
-                            
-                            root.selectBackpackArtifact = function(val) {
-                                root.fields.selectedArtifact = val;
-                                if (typeof root.handleArtifactSelection === 'function') root.handleArtifactSelection(root.fields.targetComponent, val);
-                            };
-                            
-                            root.openCommandPalette = function() {
-                                var dlg = document.getElementById('CommandPalette');
-                                if (dlg) {
-                                    if (typeof dlg.showModal === 'function') dlg.showModal();
-                                    else dlg.setAttribute('open', 'true');
-                                }
-                            };
-                            
-                            root.handleArtifactSelection = function(comp, artPath) {
-                                if (!artPath) return;
-                                $.ajax({
-                                    url: '/apps/agiide/IdeWorkspace/loadArtifactJson',
-                                    data: { targetComponent: comp, artifactPath: artPath },
-                                    type: 'GET',
-                                    success: function(data) { if (data) root.aiTreeStore.activeBlueprintJson = data; }
-                                });
-                            };
-                        }
-                    }, 200);
-                })();
-            </script>
         ]]></text>
     </widgets>
 </screen>
