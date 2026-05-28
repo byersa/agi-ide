@@ -16,6 +16,7 @@
 
     <subscreens default-item="IdeWorkspace">
         <subscreens-item name="IdeWorkspace" location="component://agi-ide/screen/agi-ide/IdeWorkspace.xml"/>
+        <subscreens-item name="amaTerminal" location="component://agi-ide/screen/agi-ide/amaTerminal.xml" menu-include="false"/>
     </subscreens>
 
     <widgets>

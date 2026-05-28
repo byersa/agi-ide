@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/screen-2.1.xsd"
+        require-authentication="false">
+
+    <pre-actions>
+        <script location="component://agi-ide/script/AgiTerminalBootstrapper.groovy"/>
+    </pre-actions>
+
+    <widgets>
+        <render-mode>
+            <text type="html"><![CDATA[
+                <script type="text/javascript">
+                    window.webmcpConfig = { hideTrigger: true, headless: true };
+                </script>
+
+                <div id="ama-standalone-app" style="min-height: 100vh; background-color: #0f172a;">
+                    <agi-agent-manager-actuator></agi-agent-manager-actuator>
+                </div>
+
+                <script type="text/javascript">
+                    // Poll directly for local script object readiness
+                    function bootTerminalStandalone() {
+                        if (window.Vue && window.Quasar && window.AgiAgentManagerActuator) {
+                            console.info("⚡ [AMA STANDALONE] All clean assets verified. Instantiating terminal context...");
+                            
+                            // Initialize the application with our component as the absolute root layout
+                            const app = Vue.createApp(window.AgiAgentManagerActuator);
+                            
+                            app.use(Quasar);
+                            app.mount('#ama-standalone-app');
+                            console.info("🚀 [AMA STANDALONE] Terminal frame active.");
+                        } else {
+                            // Retry quickly if scripts are still finalizing processing hooks
+                            setTimeout(bootTerminalStandalone, 50);
+                        }
+                    }
+                    
+                    // Fire immediately on load execution pass
+                    bootTerminalStandalone();
+                </script>
+            ]]></text>
+        </render-mode>
+    </widgets>
+</screen>

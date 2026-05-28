@@ -16,12 +16,14 @@ addUniqueScript("/agi-ai-assets/AgiComponentLibrary.js?v=${scriptTs}")
 
 // Boundary 2: Inject the developer workspace definition owned by agi-ide
 addUniqueScript("/agi-ide-assets/IdeWorkspaceComponent.qvt.js?v=${scriptTs}")
+addUniqueScript("/agi-ide-assets/AgiAgentManagerActuator.js?v=${scriptTs}")
 addUniqueScript("/agi-ide-assets/AgiWorkspaceApp.js?v=${scriptTs}")
 addUniqueScript("/agi-ide-assets/MoquiCanvasEditor.qvt.js?v=${scriptTs}")
 addUniqueScript("/agi-ide-assets/BlueprintClient.js?v=${scriptTs}")
 addUniqueScript("/agi-ide-assets/AgiIdeStore.js?v=${scriptTs}")
 
 addUniqueScript("/agi-ide-assets/AgiWorkspaceAppDefinition.js?v=${scriptTs}")
+
 // Boundary 3: Execute the final renamed runtime thread mounting driver
 addUniqueScript("/agi-ide-assets/AgiRuntimeDriver.js?v=${scriptTs}")
 

@@ -1,184 +1,240 @@
 // runtime/component/agi-ide/screen/agi-ide/assets/IdeWorkspaceComponent.qvt.js
 (function () {
+    window.webmcpConfig = { hideTrigger: true, headless: true };
+
     const componentDef = {
         name: 'IdeWorkspaceComponent',
 
         data() {
             return {
+                activeComponent: null,
                 showCommandPalette: false,
-                fields: {
-                    targetComponent: 'aitree',
-                    selectedArtifact: ''
-                },
-                backpackArtifacts: {
-                    entities: [],
-                    services: [],
-                    screens: []
-                },
-                aiTreeStore: {
-                    chatInput: '',
-                    activeBlueprintJson: null,
-                    isArchitectMode: false
-                }
+
+                canvasTransform: { x: 0, y: 0, scale: 1 },
+                isPanning: false,
+                panStart: { x: 0, y: 0 },
+
+                telemetryLogs: [
+                    { timestamp: new Date().toLocaleTimeString(), type: 'info', text: '📡 [ORCHESTRATOR] Blueprint Loom initialized successfully.' },
+                    { timestamp: new Date().toLocaleTimeString(), type: 'success', text: '⚡ [BROADCAST] AgiAgentBus channel bound to local window thread.' }
+                ],
+
+                availableApps: [],
+                activeGraphNodes: [],
+
+                globalHubs: [
+                    { id: 'aitree', label: 'AITree Framework Platform', x: 200, y: 150, color: '#3f51b5', description: 'Core Clinical & Communication Platform' },
+                    { id: 'nursing-home', label: 'Nursing Home Management System', x: 550, y: 150, color: '#00897b', description: 'HIPAA & Compliance Domain' },
+                    { id: 'agi-ai', label: 'AGI Unified AI Component', x: 375, y: 400, color: '#9c27b0', description: 'AI Engine Data Mappings' }
+                ]
             }
         },
 
         mounted() {
-            console.info("🎨 [AGI-IDE] Base Workspace Component mounted into view context.");
+            console.info("🎨 [BLUEPRINT LOOM] Initializing modern orchestration canvas plane...");
             this.fetchAvailableApps();
-            this.attachWebSocketListeners();
+            this.initAgentBus();
         },
 
         methods: {
             async fetchAvailableApps() {
                 try {
-                    const token = this.moquiSessionToken || document.getElementById("confMoquiSessionToken")?.value;
-                    const response = await fetch('/rest/s1/moquiai/AvailableApps', {
-                        method: 'GET',
-                        headers: { 'Accept': 'application/json', 'X-CSRF-Token': token }
-                    });
+                    const response = await fetch('./IdeWorkspace/getAvailableComponents');
+                    if (!response.ok) throw new Error(`HTTP status ${response.status}`);
                     const data = await response.json();
-                    this.aiTreeStore.availableApps = data.apps || [];
+                    this.availableApps = data || [];
                 } catch (e) {
-                    console.warn("⚠️ [AGI-IDE] Failed to fetch available apps list:", e);
+                    this.logTelemetry('error', `Component discovery failed: ${e.message}`);
                 }
             },
 
-            sendWorkspaceMessage() {
-                const text = this.aiTreeStore.chatInput;
-                if (!text || !text.trim()) return;
-
-                const streamContainer = document.getElementById('ide-chat-stream');
-                if (streamContainer) {
-                    streamContainer.innerHTML += `<div class="q-mb-sm text-right"><span class="bg-indigo-1 q-pa-sm rounded-borders inline-block text-body2 text-indigo-10">${text}</span></div>`;
+            async selectTargetApp(componentId) {
+                if (!componentId) {
+                    this.activeComponent = null;
+                    this.activeGraphNodes = [];
+                    this.logTelemetry('info', 'Switched context to Global Horizon View.');
+                    return;
                 }
-
-                if (window.webmcp && window.webmcp.readyState === WebSocket.OPEN) {
-                    window.webmcp.send(JSON.stringify({
-                        type: 'userMessage',
-                        componentId: 'agi-ide',
-                        channel: window.location.pathname,
-                        text: text,
-                        targetComponent: this.fields.targetComponent,
-                        artifactPath: this.fields.selectedArtifact
-                    }));
-                }
-                this.aiTreeStore.chatInput = '';
+                this.activeComponent = componentId;
+                this.canvasTransform = { x: 0, y: 0, scale: 1 };
+                this.logTelemetry('info', `Context shifting to application boundary: [${componentId}]...`);
+                await this.fetchComponentTopology(componentId);
             },
 
-            selectBackpackArtifact(val) {
-                this.fields.selectedArtifact = val;
-                this.handleArtifactSelection(this.fields.targetComponent, val);
+            async fetchComponentTopology(componentId) {
+                try {
+                    const response = await fetch(`./IdeWorkspace/getComponentTopology?targetApp=${encodeURIComponent(componentId)}`);
+                    if (!response.ok) throw new Error(`HTTP status ${response.status}`);
+                    const data = await response.json();
+                    this.activeGraphNodes = data.nodes || [];
+                    this.logTelemetry('success', `Loom canvas fully woven. Visualized ${this.activeGraphNodes.length} active architectural artifact nodes for [${componentId}].`);
+                } catch (e) {
+                    this.activeGraphNodes = [];
+                    this.logTelemetry('error', `Failed to extract application topology graph: ${e.message}`);
+                }
             },
 
-            handleArtifactSelection(comp, artPath) {
-                if (!artPath) return;
-                $.ajax({
-                    url: '/apps/agiide/IdeWorkspace/loadArtifactJson',
-                    data: { targetComponent: comp, artifactPath: artPath },
-                    type: 'GET',
-                    success: (data) => { if (data) this.aiTreeStore.activeBlueprintJson = data; }
-                });
-            },
+            initAgentBus() {
+                // REMEDIATION: Bind explicitly to window scope to ensure cross-window and console availability
+                window.agiAgentBus = new BroadcastChannel('AgiAgentBus');
 
-            attachWebSocketListeners() {
-                const vm = this;
-                function bindSocket(socket) {
-                    if (!socket || socket._agiAttached) return;
-                    socket._agiAttached = true;
-                    socket.addEventListener('message', function (event) {
-                        try {
-                            var data = JSON.parse(event.data);
-                            if (data && data.type === 'visualFrame') {
-                                var payload = data.payload || data.result || data.data;
-                                if (payload) vm.aiTreeStore.activeBlueprintJson = payload;
-                            }
-                        } catch (e) { }
-                    });
-                }
-                if (window.webmcp && window.webmcp.status === 'connected' && window.webmcp.socket) {
-                    bindSocket(window.webmcp.socket);
-                }
-                window.addEventListener('webmcp-status', function (e) {
-                    if (e.detail && e.detail.status === 'connected' && window.webmcp?.socket) {
-                        bindSocket(window.webmcp.socket);
+                window.agiAgentBus.onmessage = (event) => {
+                    const { type, agentId, text, status } = event.data;
+
+                    if (type === 'handshake') {
+                        this.logTelemetry('success', `🔗 [AMA LINKED] Target container [${agentId}] successfully registered on channel.`);
+                        return;
                     }
-                });
+
+                    this.logTelemetry('info', `[AMA FEEDBACK - ${agentId}] ${type.toUpperCase()}: ${text}`);
+                };
+            },
+
+            // TARGETED SPAWNER: Tied explicitly to an individual node's structural footprint
+            spawnTargetedAMA(node) {
+                // Generate an isolated, completely unique key signature for this specific execution loop
+                const cleanLabel = node.label.replace(/[^a-zA-Z0-9]/g, '_');
+                const amaId = `ama_${node.type}_${cleanLabel}`;
+
+                this.logTelemetry('info', `Initializing dedicated AMA container context [${amaId}]...`);
+
+                const targetUrl = `./amaTerminal?id=${amaId}&amaContext=${encodeURIComponent(node.type)}`;
+                const amaWindow = window.open(targetUrl, amaId, 'width=650,height=550,resizable=yes,scrollbars=yes');
+
+                if (!amaWindow) {
+                    this.logTelemetry('error', 'Browser blocked AMA window popup. Please verify popup location permissions.');
+                }
+            },
+
+            // Update the dispatch method to utilize the global window channel
+            dispatchRoutedCommand(node, taskText) {
+                if (window.agiAgentBus) {
+                    const cleanLabel = node.label.replace(/[^a-zA-Z0-9]/g, '_');
+                    const targetAmaId = `ama_${node.type}_${cleanLabel}`;
+
+                    this.logTelemetry('info', `Routing localized intent payload to [${targetAmaId}]...`);
+
+                    window.agiAgentBus.postMessage({
+                        amaTarget: targetAmaId,
+                        global: false,
+                        type: 'command',
+                        text: taskText
+                    });
+                } else {
+                    this.logTelemetry('error', 'Communication Failure: Global window.agiAgentBus is not initialized.');
+                }
+            },
+
+            logTelemetry(type, text) {
+                this.telemetryLogs.unshift({ timestamp: new Date().toLocaleTimeString(), type, text });
+            },
+
+            startPan(e) {
+                if (e.target.classList.contains('loom-infinite-stage') || e.target.classList.contains('loom-grid-overlay')) {
+                    this.isPanning = true;
+                    this.panStart = { x: e.clientX - this.canvasTransform.x, y: e.clientY - this.canvasTransform.y };
+                }
+            },
+            onPan(e) {
+                if (this.isPanning) {
+                    this.canvasTransform.x = e.clientX - this.panStart.x;
+                    this.canvasTransform.y = e.clientY - this.panStart.y;
+                }
+            },
+            endPan() { this.isPanning = false; },
+            handleZoom(e) {
+                e.preventDefault();
+                const factor = 1.1;
+                this.canvasTransform.scale = e.deltaY < 0 ? Math.min(this.canvasTransform.scale * factor, 2) : Math.max(this.canvasTransform.scale / factor, 0.4);
             }
         },
 
         template: `
-            <div id="agi-ide-workspace-root" class="q-pa-sm">
-                <div class="row q-col-gutter-md">
-                    <div class="col-12 col-md-3">
-                        <q-card flat bordered style="height: calc(100vh - 200px);" class="column justify-between bg-grey-1 q-pa-sm">
-                            <div class="column full-height">
-                                <div class="q-mb-md">
-                                    <m-drop-down name="targetComponent" label="Active Component Scope" 
-                                                 options-url="/apps/agiide/IdeWorkspace/getAvailableComponents" 
-                                                 :allow-empty="false" :options-load-init="true"
-                                                 v-model="fields.targetComponent"></m-drop-down>
-                                </div>
-                                <div class="col-grow overflow-auto">
-                                    <div class="text-caption text-weight-bold text-grey-7 q-mb-xs">WORKSPACE BACKPACK</div>
-                                    <q-list dense class="bg-white rounded-borders border-grey-4 q-pa-xs">
-                                        <q-item-label header class="text-weight-medium text-grey-8 text-overline q-pt-sm q-pb-none" style="font-size: 0.7rem;">Entities</q-item-label>
-                                        <q-item clickable v-for="item in (backpackArtifacts.entities || [])" :key="item.value" @click="selectBackpackArtifact(item.value)">
-                                            <q-item-section avatar><q-icon name="dns" size="xs" color="blue-8"/></q-item-section>
-                                            <q-item-section class="text-caption text-grey-9 ellipsis">{{ item.label }}</q-item-section>
-                                        </q-item>
-                                    </q-list>
-                                </div>
-                            </div>
-                        </q-card>
+            <q-layout view="hHh Lpr fFf" class="blueprint-loom-shell bg-grey-2" style="height: 100vh; overflow: hidden;">
+                
+                <q-header class="text-white q-py-xs q-px-md shadow-4 row justify-between items-center" style="background: #0f172a; z-index: 2000;">
+                    <div class="row items-center q-gutter-sm">
+                        <q-icon name="hub" size="sm" color="amber-6" />
+                        <div class="text-subtitle1 text-weight-bold" style="font-family: monospace; letter-spacing: 1px;">AGI // BLUEPRINT LOOM</div>
                     </div>
+                    
+                    <div class="row items-center">
+                        <q-select 
+                            dark dense outlined options-dense bg-color="slate-800"
+                            label="Target Domain Scope"
+                            v-model="activeComponent"
+                            :options="availableApps"
+                            emit-value map-options
+                            @update:model-value="selectTargetApp"
+                            style="min-width: 280px;"
+                        />
+                    </div>
+                </q-header>
 
-                    <div class="col-12 col-md-9">
-                        <div class="row q-col-gutter-md">
-                            <div class="col-12 col-md-4">
-                                <q-card flat bordered style="height: calc(100vh - 200px);" class="column justify-between bg-white">
-                                    <q-card-section class="bg-indigo-9 text-white text-subtitle2 q-py-xs">
-                                        <div><q-icon name="psychology" class="q-mr-xs"/> AGI Kernel Control Plane</div>
-                                    </q-card-section>
-                                    <q-card-section class="col-grow overflow-auto" id="ide-chat-stream">
-                                        <div class="text-caption text-grey-6 text-italic text-center q-mt-md">Select a component to begin visualizing.</div>
-                                    </q-card-section>
-                                    <q-separator/>
-                                    <q-card-section class="q-pa-sm">
-                                        <q-input dense outlined v-model="aiTreeStore.chatInput" placeholder="Command AGI Kernel..." @keydown.enter.prevent="sendWorkspaceMessage">
-                                            <template v-slot:append><q-btn round flat icon="send" color="indigo" @click="sendWorkspaceMessage" /></template>
-                                        </q-input>
+                <q-page-container>
+                    <q-page class="relative-position overflow-hidden loom-infinite-stage"
+                         @mousedown="startPan" @mousemove="onPan" @mouseup="endPan" @mouseleave="endPan" @wheel="handleZoom"
+                         style="height: calc(100vh - 120px); cursor: grab; user-select: none; background-color: #0f172a;">
+                        
+                        <div class="absolute-full pointer-events-none loom-grid-overlay" 
+                             :style="{
+                                 backgroundImage: 'radial-gradient(#334155 1.5px, transparent 1.5px)',
+                                 backgroundSize: (30 * canvasTransform.scale) + 'px ' + (30 * canvasTransform.scale) + 'px',
+                                 backgroundPosition: canvasTransform.x + 'px ' + canvasTransform.y + 'px'
+                             }">
+                        </div>
+
+                        <div class="loom-transform-layer absolute"
+                             :style="{ transform: 'translate(' + canvasTransform.x + 'px, ' + canvasTransform.y + 'px) scale(' + canvasTransform.scale + ')' }">
+                            
+                            <template v-if="!activeComponent">
+                                <q-card v-for="hub in globalHubs" :key="hub.id"
+                                        class="absolute text-white shadow-24 cursor-pointer"
+                                        @click="selectTargetApp(hub.id)"
+                                        :style="{ left: hub.x + 'px', top: hub.y + 'px', width: '280px', background: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }">
+                                    <q-card-section class="q-pa-md">
+                                        <div class="row items-center q-gutter-sm q-mb-xs">
+                                            <q-icon name="token" :style="{ color: hub.color }" size="sm" />
+                                            <div class="text-subtitle2 font-weight-bold text-grey-2">{{ hub.label }}</div>
+                                        </div>
+                                        <div class="text-caption text-grey-5">{{ hub.description }}</div>
                                     </q-card-section>
                                 </q-card>
-                            </div>
-                            <div class="col-12 col-md-8">
-                                <m-architect-view-port :screen-data="aiTreeStore.activeBlueprintJson" :spec-path="fields.selectedArtifact" />
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                            </template>
 
-                <dialog id="CommandPalette" style="width: 600px; max-width: 90vw; border-radius: 12px; border: none; box-shadow: 0 12px 40px rgba(0,0,0,0.15); padding: 0; background: white;">
-                    <div class="bg-indigo-9 text-white q-pa-md flex justify-between items-center">
-                        <div class="text-subtitle1 flex items-center"><q-icon name="psychology" class="q-mr-sm" size="sm"/> AGI Command Palette</div>
-                        <q-btn flat round dense icon="close" color="white" onclick="document.getElementById('CommandPalette').close()"/>
-                    </div>
-                    <div class="bg-grey-1 q-pa-md">
-                        <div class="q-mb-md">
-                            <m-drop-down name="selectedArtifact" label="Search and Select Artifact" 
-                                         options-url="/apps/agiide/IdeWorkspace/getArtifactOptions" 
-                                         :depends-on="{targetComponent: fields.targetComponent}"
-                                         :allow-empty="true" v-model="fields.selectedArtifact" />
+                            <template v-else>
+                                <q-card v-for="node in activeGraphNodes" :key="node.id"
+                                        class="absolute text-white shadow-12"
+                                        :style="{ left: node.x + 'px', top: node.y + 'px', width: '280px', background: '#1e293b', border: '1px solid #475569', borderRadius: '6px' }">
+                                    
+                                    <q-card-section class="q-py-xs q-px-sm bg-slate-800 row justify-between items-center" style="background: #273549; border-bottom: 1px solid #475569;">
+                                        <div class="row items-center q-gutter-xs">
+                                            <q-icon :name="node.type === 'screen' ? 'wallpaper' : 'dns'" color="amber-6" size="xs" />
+                                            <span class="text-caption font-weight-bold monospace text-grey-2" style="font-size: 11px;">{{ node.label }}</span>
+                                        </div>
+                                    </q-card-section>
+                                    
+                                    <q-card-section class="q-pa-sm column q-gutter-xs">
+                                        <q-btn color="cyan-7" text-color="slate-900" size="xs" label="Spawn Agent Actuator (AMA)" icon="launch" @click="spawnTargetedAMA(node)" class="text-weight-bold" />
+                                        <q-btn outline color="cyan-4" size="xs" label="Run Speculative Refactor" icon="bolt" @click="dispatchRoutedCommand(node, 'Execute speculative analysis loop on ' + node.label)" />
+                                    </q-card-section>
+                                </q-card>
+                            </template>
+
                         </div>
-                        <div class="q-pa-xs">
-                            <q-input dense outlined v-model="aiTreeStore.chatInput" placeholder="Command AGI..." @keydown.enter.prevent="sendWorkspaceMessage" />
-                        </div>
+                    </q-page>
+                </q-page-container>
+
+                <q-footer class="bg-black text-green-4 monospace q-pa-sm" style="height: 120px; overflow-y: auto; border-top: 2px solid #334155; font-size: 12px; line-height: 1.4;">
+                    <div v-for="(log, lIdx) in telemetryLogs" :key="lIdx">
+                        <span class="text-grey-6">[{{ log.timestamp }}]</span>
+                        <span :class="log.type === 'error' ? 'text-red' : (log.type === 'success' ? 'text-amber' : 'text-green')"> {{ log.text }}</span>
                     </div>
-                </dialog>
-            </div>
+                </q-footer>
+
+            </q-layout>
         `
     };
 
-    // Formally expose the reference definition to the window layout chain
     window.IdeWorkspaceComponent = componentDef;
 })();

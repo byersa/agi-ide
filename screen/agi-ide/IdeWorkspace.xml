@@ -1,16 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/screen-2.1.xsd"
-        require-authentication="true" allow-extra-path="true">
+        require-authentication="true" allow-extra-path="false">
+
+    <subscreens>
+        <subscreens-item name="amaTerminal" location="component://agi-ide/screen/agi-ide/amaTerminal.xml" menu-include="false"/>
+    </subscreens>
 
     <transition name="getAvailableComponents" read-only="true">
         <actions>
             <script>
-                ec.cache.clearAllCaches()
                 def components = [
                     [value: "aitree", label: "AITree Framework Platform"],
-                    [value: "agi-ai", label: "AGI Unified AI Component"],
-                    [value: "agi-ide", label: "AGI Development IDE Shell"]
+                    [value: "nursing-home", label: "Nursing Home Management System"],
+                    [value: "agi-ai", label: "AGI Unified AI Component"]
                 ]
                 ec.web.sendJsonResponse(components)
             </script>
@@ -18,51 +21,82 @@
         <default-response type="none"/>
     </transition>
 
-    <transition name="getArtifactOptions" read-only="true">
-        <parameter name="targetComponent"/>
+    <transition name="getComponentTopology" read-only="true">
         <actions>
             <script>
-                def artifacts = []
-                if (targetComponent == "aitree") {
-                    artifacts = [
-                        [value: "entity/AitreeData.xml", label: "AitreeNode", type: "entity"],
-                        [value: "service/org/moqui/ide/McpServices.xml", label: "McpServiceCatalog", type: "service"],
-                        [value: "screen/moquiai/MceShell.xml", label: "MceShell", type: "screen"]
-                    ]
-                } else if (targetComponent == "agi-ide") {
-                    artifacts = [
-                        [value: "entity/IdeSettings.xml", label: "IdePreferenceStore", type: "entity"],
-                        [value: "service/org/moqui/ide/McpBridgeConnection.groovy", label: "McpBridgeConnection", type: "service"],
-                        [value: "screen/agi-ide/IdeWorkspace.xml", label: "IdeWorkspace", type: "screen"]
+                def targetApp = ec.web.parameters.targetApp ?: ""
+                
+                // Base structure definition
+                def topology = [
+                    nodes: [],
+                    edges: []
+                ]
+                
+                if (!targetApp) {
+                    ec.web.sendJsonResponse(topology)
+                    return
+                }
+                
+                // Natively localize directory path boundaries based on user target selection
+                File componentDir = new File("runtime/component/${targetApp}")
+                if (!componentDir.exists()) {
+                    ec.web.sendJsonResponse(topology)
+                    return
+                }
+                
+                int startX = 100
+                int startY = 150
+                
+                // 1. Scan and parse XML Screen definitions
+                File screenDir = new File(componentDir, "screen")
+                if (screenDir.exists()) {
+                    screenDir.eachFileRecurse { file ->
+                        if (file.name.endsWith(".xml")) {
+                            topology.nodes.add([
+                                id: "scr_${file.name.replace('.', '_')}",
+                                type: "screen",
+                                label: file.name,
+                                x: startX,
+                                y: startY,
+                                expanded: false
+                            ])
+                            startY += 120
+                        }
+                    }
+                }
+                
+                // Reset placement vectors for secondary service column column
+                startX = 450
+                startY = 150
+                
+                // 2. Scan and parse Entity definitions
+                File entityDir = new File(componentDir, "entity")
+                if (entityDir.exists()) {
+                    entityDir.eachFileRecurse { file ->
+                        if (file.name.endsWith(".xml")) {
+                            topology.nodes.add([
+                                id: "ent_${file.name.replace('.', '_')}",
+                                type: "entity",
+                                label: file.name,
+                                x: startX,
+                                y: startY,
+                                expanded: false
+                            ])
+                            startY += 120
+                        }
+                    }
+                }
+                
+                // Fallback scaffolding: If the newly created component directory is pristine, populate base targets
+                if (topology.nodes.isEmpty()) {
+                    topology.nodes = [
+                        [id: "scr_default", type: "screen", label: "MainDashboard.xml", x: 100, y: 150, expanded: false],
+                        [id: "srv_default", type: "service", label: "StandardValidationRoutine.groovy", x: 450, y: 150, expanded: false],
+                        [id: "ent_default", type: "entity", label: "DataExtensionModel.xml", x: 800, y: 150, expanded: false]
                     ]
                 }
-                ec.web.sendJsonResponse(artifacts)
-            </script>
-        </actions>
-        <default-response type="none"/>
-    </transition>
-
-    <transition name="loadArtifactJson" read-only="true">
-        <parameter name="targetComponent"/>
-        <parameter name="artifactPath"/>
-        <actions>
-            <script>
-                def mockStructure = [
-                    name: "screen-structure",
-                    attributes: [id: "AgiIdeRoot"],
-                    children: [
-                        [name: "parameter", attributes: [name: "residentId"]],
-                        [
-                            name: "form-single", 
-                            attributes: [name: "AlertForm", id: "resident-alert-form"],
-                            children: [
-                                [name: "text-line", attributes: [name: "residentName", label: "Resident Name"]],
-                                [name: "text-line", attributes: [name: "location", label: "Room / Location"]]
-                            ]
-                        ]
-                    ]
-                ]
-                ec.web.sendJsonResponse(mockStructure)
+                
+                ec.web.sendJsonResponse(topology)
             </script>
         </actions>
         <default-response type="none"/>
