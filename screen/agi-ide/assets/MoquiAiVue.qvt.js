@@ -115,7 +115,7 @@ if (!window.moqui.webrootVue) {
 
             async fetchAvailableApps() {
                 try {
-                    const response = await fetch('/rest/s1/moquiai/AvailableApps', {
+                    const response = await fetch('/rest/s1/agi-ai/AvailableApps', {
                         method: 'GET',
                         headers: {
                             'Accept': 'application/json',

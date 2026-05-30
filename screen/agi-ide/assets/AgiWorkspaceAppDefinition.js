@@ -53,7 +53,7 @@ window.AgiWorkspaceAppDefinition = {
         async fetchAvailableApps() {
             try {
                 const token = this.moquiSessionToken || document.getElementById("confMoquiSessionToken")?.value;
-                const response = await fetch('/rest/s1/moquiai/AvailableApps', {
+                const response = await fetch('/rest/s1/agi-ai/AvailableApps', {
                     method: 'GET',
                     headers: {
                         'Accept': 'application/json',

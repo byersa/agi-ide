@@ -54,13 +54,13 @@ const BlueprintClient = {
 
                 const fetchRegistries = async () => {
                     try {
-                        const uiResp = await fetch('/rest/s1/moquiai/getRegistry?type=ui-macro');
+                        const uiResp = await fetch('/rest/s1/agi-ai/getRegistry?type=ui-macro');
                         if (uiResp.ok) {
                             const uiData = await uiResp.json();
                             uiRegistry.value = uiData.registry || { categories: [] };
                         }
 
-                        const serviceResp = await fetch('/rest/s1/moquiai/getRegistry?type=service-macro');
+                        const serviceResp = await fetch('/rest/s1/agi-ai/getRegistry?type=service-macro');
                         if (serviceResp.ok) {
                             const serviceData = await serviceResp.json();
                             serviceRegistry.value = serviceData.registry || { categories: [] };
@@ -366,7 +366,7 @@ const BlueprintClient = {
 
     async loadMacros() {
         try {
-            const response = await fetch('/rest/s1/moquiai/getUiMacros');
+            const response = await fetch('/rest/s1/agi-ai/getUiMacros');
             const data = await response.json();
             this.macros = data.macros || {};
             console.log("Aitree UI Macros Loaded:", this.macros);
@@ -378,14 +378,14 @@ const BlueprintClient = {
     async fetchBlueprint(componentName, screenPath) {
         // Fetch from the getBlueprint REST GET endpoint
         debugger;
-        const response = await fetch(`/rest/s1/moquiai/getBlueprint?componentName=${componentName}&screenPath=${screenPath}`);
+        const response = await fetch(`/rest/s1/agi-ai/getBlueprint?componentName=${componentName}&screenPath=${screenPath}`);
         const data = await response.json();
         return data.blueprint;
     },
 
     setupSSE(componentName, screenPath, onUpdate, onCommand) {
         // Setup SSE listener for hot-reload
-        const url = `/rest/s1/moquiai/registerClient?componentName=${componentName}&screenPath=${screenPath}`;
+        const url = `/rest/s1/agi-ai/registerClient?componentName=${componentName}&screenPath=${screenPath}`;
         const eventSource = new EventSource(url);
 
         eventSource.addEventListener('update', (event) => {
