@@ -7,36 +7,50 @@
         <script location="component://agi-ide/script/AgiTerminalBootstrapper.groovy"/>
     </pre-actions>
 
+    <actions>
+        <set field="urlComponent" from="context.componentName ?: ec.web.parameters.componentName ?: 'agi-ai'"/>
+        <set field="urlScreen" from="context.screenPath ?: ec.web.parameters.screenPath ?: 'SampleForm'"/>
+    </actions>
+
     <widgets>
         <render-mode>
             <text type="html"><![CDATA[
                 <script type="text/javascript">
                     window.webmcpConfig = { hideTrigger: true, headless: true };
+                    window.AGI_INITIAL_COMPONENT = "${urlComponent}";
+                    window.AGI_INITIAL_SCREEN = "${urlScreen}";
+                    
+                    // Explicitly seed the window.moqui global state so all downstream scripts can read it safely
+                    window.moqui = window.moqui || {};
+                    window.moqui.moquiSessionToken = "${ec.web.sessionToken}";
                 </script>
 
+                <input type="hidden" id="confMoquiSessionToken" value="${ec.web.sessionToken}" />
+
+                <script src="/agi-ide-assets/BlueprintClient.js" type="text/javascript"></script>
+                <script src="/agi-ide-assets/AgiToolPalette.qvt.js" type="text/javascript"></script>
+                <script src="/agi-ide-assets/MoquiCanvasEditor.qvt.js" type="text/javascript"></script>
+                <script src="/agi-ide-assets/amaTerminal.qvt.js" type="text/javascript"></script>
+
                 <div id="ama-standalone-app" style="min-height: 100vh; background-color: #0f172a;">
-                    <agi-agent-manager-actuator></agi-agent-manager-actuator>
+                    <ama-terminal-host></ama-terminal-host>
                 </div>
 
                 <script type="text/javascript">
-                    // Poll directly for local script object readiness
                     function bootTerminalStandalone() {
-                        if (window.Vue && window.Quasar && window.AgiAgentManagerActuator) {
-                            console.info("⚡ [AMA STANDALONE] All clean assets verified. Instantiating terminal context...");
+                        if (window.Vue && window.Quasar && window.AgiTerminalHost && window.AgiToolPalette && window.MoquiCanvasEditor) {
+                            console.info("⚡ [AMA STANDALONE] Direct browser boot initialization sequence verified.");
                             
-                            // Initialize the application with our component as the absolute root layout
-                            const app = Vue.createApp(window.AgiAgentManagerActuator);
+                            const app = Vue.createApp(window.AgiTerminalHost);
+                            app.component('agi-tool-palette', window.AgiToolPalette);
+                            app.component('moqui-canvas-editor', window.MoquiCanvasEditor);
                             
                             app.use(Quasar);
                             app.mount('#ama-standalone-app');
-                            console.info("🚀 [AMA STANDALONE] Terminal frame active.");
                         } else {
-                            // Retry quickly if scripts are still finalizing processing hooks
                             setTimeout(bootTerminalStandalone, 50);
                         }
                     }
-                    
-                    // Fire immediately on load execution pass
                     bootTerminalStandalone();
                 </script>
             ]]></text>

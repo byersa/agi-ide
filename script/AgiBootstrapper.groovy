@@ -11,20 +11,11 @@ def addUniqueScript = { url ->
 ec.logger.info("In AgiBootstrapper.")
 long scriptTs = context.get("ts") ?: System.currentTimeMillis()
 
-// Boundary 1: Inject the global component macros owned by the core agi-ai engine
-addUniqueScript("/agi-ai-assets/AgiComponentLibrary.js?v=${scriptTs}")
-
-// Boundary 2: Inject the developer workspace definition owned by agi-ide
-addUniqueScript("/agi-ide-assets/IdeWorkspaceComponent.qvt.js?v=${scriptTs}")
-addUniqueScript("/agi-ide-assets/AgiAgentManagerActuator.js?v=${scriptTs}")
-addUniqueScript("/agi-ide-assets/AgiWorkspaceApp.js?v=${scriptTs}")
-addUniqueScript("/agi-ide-assets/MoquiCanvasEditor.qvt.js?v=${scriptTs}")
-addUniqueScript("/agi-ide-assets/BlueprintClient.js?v=${scriptTs}")
-addUniqueScript("/agi-ide-assets/AgiIdeStore.js?v=${scriptTs}")
-
-addUniqueScript("/agi-ide-assets/AgiWorkspaceAppDefinition.js?v=${scriptTs}")
-
-// Boundary 3: Execute the final renamed runtime thread mounting driver
-addUniqueScript("/agi-ide-assets/AgiRuntimeDriver.js?v=${scriptTs}")
+// The Pure Client-Side Editors (.qvt.js)
+addUniqueScript("/agi-ide-assets/AgiCanvasEditor.qvt.js?v=${scriptTs}")
+addUniqueScript("/agi-ide-assets/AgiScreenEditor.qvt.js?v=${scriptTs}")
+addUniqueScript("/agi-ide-assets/AgiComponentEditor.qvt.js?v=${scriptTs}")
+addUniqueScript("/agi-ide-assets/AgiSubWorkspace.qvt.js?v=${scriptTs}")
+addUniqueScript("/agi-ide-assets/AgiWorkspace.qvt.js?v=${scriptTs}")
 
 return context

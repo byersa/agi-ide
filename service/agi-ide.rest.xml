@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rest-api xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/rest-api-3.xsd"
+          name="agi-ide" version="s1" require-csrf="false" require-authentication="false">
+    
+    <resource name="getBlueprint">
+        <method type="get" require-authentication="false">
+            <service name="org.moqui.ide.ScreenEditorServices.get#Blueprint"/>
+        </method>
+    </resource>
+
+    <resource name="saveBlueprint">
+        <method type="post" require-authentication="false">
+            <service name="org.moqui.ide.ScreenEditorServices.save#Blueprint"/>
+        </method>
+    </resource>
+
+    <resource name="registerClient">
+        <method type="get" require-authentication="false">
+            <service name="org.moqui.ide.ScreenEditorServices.register#Client"/>
+        </method>
+    </resource>
+
+    <resource name="getUiMacros">
+        <method type="get" require-authentication="false">
+            <service name="org.moqui.ide.ScreenEditorServices.get#UiMacros"/>
+        </method>
+    </resource>
+
+    <resource name="compileRawXmlToBlueprint">
+        <method type="post" require-authentication="false">
+            <service name="org.moqui.ide.ScreenEditorServices.compile#RawXmlToBlueprint"/>
+        </method>
+    </resource>
+    <!-- Secure rest channel hook for automated agent interactions -->
+    <resource name="scaffoldComponent">
+        <method type="post" require-authentication="false">
+            <service name="org.moqui.ide.ScreenEditorServices.create#NewComponentScaffold"/>
+        </method>
+    </resource>
+</rest-api>

@@ -1,0 +1,520 @@
+
+
+=== FILE: blueprints/agi-ide/AgiWorkspace.md ===
+# SCREEN/COMPONENT: AgiWorkspace
+# SUBTITLE: Where the IDE work is done
+
+## 🛡️ CORE METADATA & RULE BOUNDARIES
+* **Target Output Files:** 
+  * Backend: `runtime/component/agi-ide/screen/agi-ide/AgiWorkspace.xml`
+  * Frontend: None specified.
+* **App Identity:** "Nursing Home Management System"
+* **Security & HIPAA Enforcement:**
+  * Sensitive Fields: None specified.
+  * Audit Logging: False
+
+## 📝 DESCRIPTION
+This screen acts as the main orchestration area for agi-ide.
+The standard display mode will be the multiple screen mode in which multiple AgiSubWorkspace screens will be visible. The replacement mode is an alternate mode in which one AgiSubWorkspace is expanded to occupy all of the AgiWorkspace content area.
+The detached mode is when a AgiSubWorkspace screen is dragged from the AgiWorkspace area and dropped in another browser tab or in another browser all together.
+
+It facilitates the communication and interactions of the AgiSubWorkspace screens.
+
+### Subscreens
+None specified.
+
+### Subcomponents
+- AgiSubWorkspace
+- AgiCreateAppDialog
+
+## 🛰️ INTER-COMPONENT BUS (BROADCASTCHANNEL)
+* **Channel Name:** `agi-ide-context-bus`
+* **Outbound Broadcast Events:**
+  * Context Change: Broadcasts state change containing current artifact and subartifact identity to other active agent subworkspaces when a context switch is initiated.
+* **Inbound Event Listeners:**
+  * Context Change Listener: Receives notice from active agent subworkspaces, updates local stored context state (artifact and subartifact identity), and triggers synchronizations.
+
+### Custom Specification Notes (Subworkspace notification)
+Primarily used context switching. This screen maintains the identity of the current artifact and the subartifact.
+When the context changes - as notified by one agent subworkspace, the change is stored and notice is sent to the other agent subworkspace.
+
+## 📥 INPUT PARAMETERS & PROPS
+* **Moqui Screen Parameters:** None specified.
+* **Vue Component Props:** None specified.
+
+## 💾 INSTANCE STATE & DATA VARIABLES
+* **Reactive UI Keys:** None specified.
+* `activeLayoutGrid` (Object): Map tracking panel states:
+  ```javascript
+  {
+    AgiScreenEditor: { state: 'docked' | 'maximized' | 'external', windowRef: Object },
+    AgiCanvasEditor: { state: 'docked' | 'maximized' | 'external', windowRef: Object },
+    AgiComponentEditor: { state: 'docked' | 'maximized' | 'external', windowRef: Object }
+  }
+  ```
+
+## 🔄 LIFECYCLE & ALWAYS-ACTIONS
+* **Server Side:** `<always-actions>` / `<pre-actions>`
+  * None specified.
+* **Client Side:** Vue `mounted()` / `unmounted()` hooks
+  * None specified.
+
+## ⚙️ BEHAVIORS & BACKEND DATA CONTRACTS
+* **Transitions / API Routes:** None specified.
+* **Vue Internal Methods:**
+  * App switching: When a request is made to load another app, a saved status check is done on the currently loaded app (if exists) and the user is prompted to save or cancel depending on the save status before loading the new app.
+  * App creation: When a request is made to create a new app, a saved status check is done on the currently loaded app (if exists) and the user is prompted to save or cancel depending on the save status before popping up the AgiCreateAppDialog.
+  * App deletion: None specified.
+  * Subworkspace window management: The window display mode - multiple screen mode, replacement screen mode or detached window mode - will dynamically be controlled. When the user picks a mode, the screens will orient themselves to that mode. Depending on the user-selected mode, the corresponding subworkspace - primary or agent - will be displayed and made active.
+  * `detachPanelToExternalWindow(panelName)`: Spawns a clean browser window popup (`window.open`), injects essential Quasar styling context headers, mounts the targeted component slice natively, and hooks it to the global `BroadcastChannel`.
+
+## 🎨 VISUAL CONFIGURATION / WIDGETS
+* **Declarative Layout Tree:**
+  There will be a thin header section. It will have one dropdown to control the window display mode: multiple screen mode, replacement screen mode or detached window mode.
+  There will be another dropdown that shows the available screens. The same dropdown will allow subcomponents to be deactivated or new ones to be added.
+
+  The content pane can hold multiple AgiSubWorkspace windows.
+
+## 💾 ENTITY DATA MODELS
+* **Extended Mantle UDM Entities:** None specified.
+
+## 🔍 VERIFICATION STEPS (MANUAL TESTING)
+1. None specified.
+
+=== FILE: blueprints/agi-ide/assets/AgiSubWorkspace.md ===
+# SCREEN/COMPONENT: AgiSubWorkspace
+# SUBTITLE: None specified.
+
+## 🛡️ CORE METADATA & RULE BOUNDARIES
+* **Target Output Files:** 
+  * Backend: `runtime/component/agi-ide/screen/agi-ide/assets/AgiSubWorkspace.xml`
+  * Frontend: `runtime/component/agi-ide/screen/agi-ide/assets/AgiSubWorkspace.js`
+* **App Identity:** "Nursing Home Management System"
+* **Security & HIPAA Enforcement:**
+  * Sensitive Fields: None specified.
+  * Audit Logging: False
+
+## 📝 DESCRIPTION
+SubWorkspace components house the editors that do the agi-ide work.
+They also handle the peer-to-peer communication with other AgiSubWorkspace screens. 
+
+### Subscreens
+None specified.
+
+### Subcomponents
+* AgiCanvasEditor
+* AgiComponentEditor
+* AgiScreenEditor
+
+## 🛰️ INTER-COMPONENT BUS (BROADCASTCHANNEL)
+* **Channel Name:** `agi-ide-context-bus`
+* **Outbound Broadcast Events:**
+  * `peer-communication`: Broadcaster for peer-to-peer status/coordination updates with other AgiSubWorkspace instances.
+* **Inbound Event Listeners:**
+  * `peer-communication`: Listener that handles state synchronization from other AgiSubWorkspace components.
+
+## 📥 INPUT PARAMETERS & PROPS
+* **Moqui Screen Parameters:** None specified.
+* **Vue Component Props:**
+  * `Input artifact state`: Everything needed to manage an artifact
+
+## 💾 INSTANCE STATE & DATA VARIABLES
+* **Reactive UI Keys:**
+  * `Artifact state`: Local active state of the currently managed artifact
+
+## 🔄 LIFECYCLE & ALWAYS-ACTIONS
+* **Server Side:** `<always-actions>` / `<pre-actions>`
+  * None specified.
+* **Client Side:** Vue `mounted()` / `unmounted()` hooks
+  * None specified.
+
+## ⚙️ BEHAVIORS & BACKEND DATA CONTRACTS
+* **Transitions / API Routes:**
+  * `ReceiveArtifactStatus`: Action to receive status of the active artifact.
+  * `SetArtifact`: Action to set the active artifact.
+  * `SetArtifactStatus`: Action to set/update artifact status.
+  * `GetArtifactSavedStatus`: Action to query the saved state of the artifact.
+  * `SaveArtifact`: Action to save artifact content to the backend.
+  * `AddArtifactFeature`: Action to add a new feature to the active artifact.
+* **Vue Internal Methods:** None specified.
+
+## 🎨 VISUAL CONFIGURATION / WIDGETS
+* **Declarative Layout Tree:**
+  The visual content of an AgiSubWorkspace screen is determined by the subcomponent editor screens. 
+
+## 💾 ENTITY DATA MODELS
+* **Extended Mantle UDM Entities:** None specified.
+
+## 🔍 VERIFICATION STEPS (MANUAL TESTING)
+1. None specified.
+
+=== FILE: blueprints/agi-ide/assets/AgiScreenEditor.md ===
+# SCREEN/COMPONENT: AgiScreenEditor
+# SUBTITLE: None specified.
+
+## 🛡️ CORE METADATA & RULE BOUNDARIES
+* **Target Output Files:** 
+  * Backend: `runtime/component/agi-ide/screen/agi-ide/assets/AgiScreenEditor.xml`
+  * Frontend: `runtime/component/agi-ide/screen/agi-ide/assets/AgiScreenEditor.js`
+* **App Identity:** "Nursing Home Management System"
+* **Security & HIPAA Enforcement:**
+  * Sensitive Fields: None specified.
+  * Audit Logging: False
+
+## 📝 DESCRIPTION
+SubWorkspace components house the editors that do the agi-ide work.
+They also handle the peer-to-peer communication with other AgiSubWorkspace screens. 
+
+### Subscreens
+None specified.
+
+### Subcomponents
+* AgiCanvasEditor
+* AgiComponentEditor
+* AgiScreenEditor
+
+## 🛰️ INTER-COMPONENT BUS (BROADCASTCHANNEL)
+* **Channel Name:** `agi-ide-context-bus`
+* **Outbound Broadcast Events:**
+  * `peer-communication`: Broadcaster for peer-to-peer status/coordination updates with other AgiSubWorkspace instances.
+  * `xml-source-mutated`: Fired on textarea input keystroke changes.
+    * Payload Schema: `={ rawXmlText: String }`
+* **Inbound Event Listeners:**
+  * `peer-communication`: Listener that handles state synchronization from other AgiSubWorkspace components.
+  * `canvas-element-selected`: Receives payload `={ componentName: String, screenPath: String, elementId: String, elementType: String }`. Triggers a localized string regex search matching `name="[elementId]"` or `id="[elementId]"`, programmatically scrolls the text area viewport to that exact position line index, and applies a momentary CSS border highlight flash effect.
+
+## 📥 INPUT PARAMETERS & PROPS
+* **Moqui Screen Parameters:** None specified.
+* **Vue Component Props:**
+  * `Input artifact state`: Everything needed to manage an artifact
+
+## 💾 INSTANCE STATE & DATA VARIABLES
+* **Reactive UI Keys:**
+  * `Artifact state`: Local active state of the currently managed artifact
+
+## 🔄 LIFECYCLE & ALWAYS-ACTIONS
+* **Server Side:** `<always-actions>` / `<pre-actions>`
+  * None specified.
+* **Client Side:** Vue `mounted()` / `unmounted()` hooks
+  * None specified.
+
+## ⚙️ BEHAVIORS & BACKEND DATA CONTRACTS
+* **Transitions / API Routes:**
+  * `ReceiveArtifactStatus`: Action to receive status of the active artifact.
+  * `SetArtifact`: Action to set the active artifact.
+  * `SetArtifactStatus`: Action to set/update artifact status.
+  * `GetArtifactSavedStatus`: Action to query the saved state of the artifact.
+  * `SaveArtifact`: Action to save artifact content to the backend.
+  * `AddArtifactFeature`: Action to add a new feature to the active artifact.
+* **Vue Internal Methods:** None specified.
+
+## 🎨 VISUAL CONFIGURATION / WIDGETS
+* **Declarative Layout Tree:**
+  The visual content of an AgiSubWorkspace screen is determined by the subcomponent editor screens. 
+
+## 💾 ENTITY DATA MODELS
+* **Extended Mantle UDM Entities:** None specified.
+
+## 🔍 VERIFICATION STEPS (MANUAL TESTING)
+1. None specified.
+
+=== FILE: blueprints/agi-ide/assets/AgiComponentEditor.md ===
+# SCREEN/COMPONENT: AgiComponentEditor
+# SUBTITLE: None specified.
+
+## 🛡️ CORE METADATA & RULE BOUNDARIES
+* **Target Output Files:** 
+  * Backend: `runtime/component/agi-ide/screen/agi-ide/assets/AgiComponentEditor.xml`
+  * Frontend: `runtime/component/agi-ide/screen/agi-ide/assets/AgiComponentEditor.js`
+* **App Identity:** "Nursing Home Management System"
+* **Security & HIPAA Enforcement:**
+  * Sensitive Fields: None specified.
+  * Audit Logging: False
+
+## 📝 DESCRIPTION
+SubWorkspace components house the editors that do the agi-ide work.
+They also handle the peer-to-peer communication with other AgiSubWorkspace screens. 
+
+### Subscreens
+None specified.
+
+### Subcomponents
+* AgiCanvasEditor
+* AgiComponentEditor
+* AgiScreenEditor
+
+## 🛰️ INTER-COMPONENT BUS (BROADCASTCHANNEL)
+* **Channel Name:** `agi-ide-context-bus`
+* **Outbound Broadcast Events:**
+  * `peer-communication`: Broadcaster for peer-to-peer status/coordination updates with other AgiSubWorkspace instances.
+  * `xml-source-mutated`: Fired on textarea input keystroke changes.
+    * Payload Schema: `={ rawXmlText: String }`
+* **Inbound Event Listeners:**
+  * `peer-communication`: Listener that handles state synchronization from other AgiSubWorkspace components.
+  * `canvas-element-selected`: Receives payload `={ componentName: String, screenPath: String, elementId: String, elementType: String }`. Triggers a localized string regex search matching `name="[elementId]"` or `id="[elementId]"`, programmatically scrolls the text area viewport to that exact position line index, and applies a momentary CSS border highlight flash effect.
+
+## 📥 INPUT PARAMETERS & PROPS
+* **Moqui Screen Parameters:** None specified.
+* **Vue Component Props:**
+  * `Input artifact state`: Everything needed to manage an artifact
+
+## 💾 INSTANCE STATE & DATA VARIABLES
+* **Reactive UI Keys:**
+  * `Artifact state`: Local active state of the currently managed artifact
+
+## 🔄 LIFECYCLE & ALWAYS-ACTIONS
+* **Server Side:** `<always-actions>` / `<pre-actions>`
+  * None specified.
+* **Client Side:** Vue `mounted()` / `unmounted()` hooks
+  * None specified.
+
+## ⚙️ BEHAVIORS & BACKEND DATA CONTRACTS
+* **Transitions / API Routes:**
+  * `ReceiveArtifactStatus`: Action to receive status of the active artifact.
+  * `SetArtifact`: Action to set the active artifact.
+  * `SetArtifactStatus`: Action to set/update artifact status.
+  * `GetArtifactSavedStatus`: Action to query the saved state of the artifact.
+  * `SaveArtifact`: Action to save artifact content to the backend.
+  * `AddArtifactFeature`: Action to add a new feature to the active artifact.
+* **Vue Internal Methods:** None specified.
+
+## 🎨 VISUAL CONFIGURATION / WIDGETS
+* **Declarative Layout Tree:**
+  The visual content of an AgiSubWorkspace screen is determined by the subcomponent editor screens. 
+
+## 💾 ENTITY DATA MODELS
+* **Extended Mantle UDM Entities:** None specified.
+
+## 🔍 VERIFICATION STEPS (MANUAL TESTING)
+1. None specified.
+
+=== FILE: blueprints/agi-ide/assets/AgiCanvasEditor.md ===
+# SCREEN/COMPONENT: AgiCanvasEditor
+# SUBTITLE: None specified.
+
+## 🛡️ CORE METADATA & RULE BOUNDARIES
+* **Target Output Files:** 
+  * Backend: `runtime/component/agi-ide/screen/agi-ide/assets/AgiCanvasEditor.xml`
+  * Frontend: `runtime/component/agi-ide/screen/agi-ide/assets/AgiCanvasEditor.js`
+* **App Identity:** "Nursing Home Management System"
+* **Security & HIPAA Enforcement:**
+  * Sensitive Fields: None specified.
+  * Audit Logging: False
+
+## 📝 DESCRIPTION
+This Vue component displays the rendered component and allows the user to perform the usual function associated with a visual screen editor. These would include selecting an element, positioning and sizing an element, adding an element from an AgiCanvasPalette, etc. 
+
+### Subscreens
+None specified.
+
+### Subcomponents
+* AgiCanvasPalette
+
+## 🛰️ INTER-COMPONENT BUS (BROADCASTCHANNEL)
+* **Channel Name:** `agi-ide-context-bus`
+* **Outbound Broadcast Events:**
+  * Element Status Change: Sends notice to the parent AgiSubWorkspace component when an element's status changes in the editor (which in turn communicates it to the AgiWorkspace grandparent component to be distributed to other AgiSubWorkspace components).
+  * `canvas-element-selected`: Fired instantly when clicking any interactive form element row or layout primitive box. 
+    * Payload Schema: `={ componentName: String, screenPath: String, elementId: String, elementType: String }`
+* **Inbound Event Listeners:**
+  * Element Status Change Listener: Receives notice forwarded via the parent when other AgiSubWorkspace components detect status changes from their child editor component, allowing this editor to update its contents accordingly.
+  * `xml-source-mutated`: Receives payload `={ rawXmlText: String }`. Automatically triggers a 750ms debounced POST request to `/rest/s1/agi-ide/compileRawXmlToBlueprint` to dynamically refresh the visual layout widgets tree.
+
+## 📥 INPUT PARAMETERS & PROPS
+* **Moqui Screen Parameters:** None specified.
+* **Vue Component Props:**
+  * `Input artifact state`: Everything needed to manage an artifact
+  * `editorMode` (String): Options: `'screen'` (default) or `'component'`. Dictates if the canvas should parse standard Moqui XML views via server sandboxing or handle raw Vue templates.
+
+## 💾 INSTANCE STATE & DATA VARIABLES
+* **Reactive UI Keys:**
+  * `Artifact state`: Local active state of the currently managed artifact
+
+## 🔄 LIFECYCLE & ALWAYS-ACTIONS
+* **Server Side:** `<always-actions>` / `<pre-actions>`
+  * None specified.
+* **Client Side:** Vue `mounted()` / `unmounted()` hooks
+  * None specified.
+
+## ⚙️ BEHAVIORS & BACKEND DATA CONTRACTS
+* **Transitions / API Routes:**
+  * `ReceiveArtifactStatus`: Action to receive status of the active artifact.
+  * `SetArtifact`: Action to set the active artifact.
+  * `SetArtifactStatus`: Action to set/update artifact status.
+  * `GetArtifactSavedStatus`: Action to query the saved state of the artifact.
+  * `SaveArtifact`: Action to save artifact content to the backend.
+  * `AddArtifactFeature`: Action to add a new feature to the active artifact.
+* **Vue Internal Methods:**
+  * Element Selection: Selects an element within the visual editor.
+  * Element Positioning: Adjusts the positions of selected elements.
+  * Element Sizing: Resizes selected elements.
+  * Add Element from Palette: Inserts a new element from `AgiCanvasPalette`.
+
+## 🎨 VISUAL CONFIGURATION / WIDGETS
+* **Declarative Layout Tree:** None specified.
+
+## 💾 ENTITY DATA MODELS
+* **Extended Mantle UDM Entities:** None specified.
+
+## 🔍 VERIFICATION STEPS (MANUAL TESTING)
+1. None specified.
+
+=== FILE: blueprints/agi-ide/AgiDashboard.md ===
+# SCREEN/COMPONENT: AgiDashboard
+# SUBTITLE: None specified.
+
+## 🛡️ CORE METADATA & RULE BOUNDARIES
+* **Target Output Files:** 
+  * Backend: `runtime/component/agi-ide/screen/agi-ide/AgiDashboard.xml`
+  * Frontend: None specified.
+* **App Identity:** "Nursing Home Management System"
+* **Security & HIPAA Enforcement:**
+  * Sensitive Fields: None specified.
+  * Audit Logging: False
+
+## 📝 DESCRIPTION
+This screen will serve as a dashboard and, perhaps, a welcome screen for the agi-ide app.
+It will be customizable by the user and present differently per each individual user's preferences
+
+## 🛰️ INTER-COMPONENT BUS (BROADCASTCHANNEL)
+* **Channel Name:** `agi-ide-context-bus`
+* **Outbound Broadcast Events:**
+  * None specified.
+* **Inbound Event Listeners:**
+  * None specified.
+
+## 📥 INPUT PARAMETERS & PROPS
+* **Moqui Screen Parameters:** None specified.
+* **Vue Component Props:** None specified.
+
+## 💾 INSTANCE STATE & DATA VARIABLES
+* **Reactive UI Keys:** None specified.
+
+## 🔄 LIFECYCLE & ALWAYS-ACTIONS
+* **Server Side:** `<always-actions>` / `<pre-actions>`
+  * None specified.
+* **Client Side:** Vue `mounted()` / `unmounted()` hooks
+  * None specified.
+
+## ⚙️ BEHAVIORS & BACKEND DATA CONTRACTS
+* **Transitions / API Routes:** None specified.
+* **Vue Internal Methods:** None specified.
+
+## 🎨 VISUAL CONFIGURATION / WIDGETS
+* **Declarative Layout Tree:** None specified.
+
+## 💾 ENTITY DATA MODELS
+* **Extended Mantle UDM Entities:** None specified.
+
+## 🔍 VERIFICATION STEPS (MANUAL TESTING)
+1. None specified.
+
+=== FILE: blueprints/agi-ide/AgiInstructions.md ===
+# SCREEN/COMPONENT: AgiInstructions
+# SUBTITLE: None specified.
+
+## 🛡️ CORE METADATA & RULE BOUNDARIES
+* **Target Output Files:** 
+  * Backend: `runtime/component/agi-ide/screen/agi-ide/AgiInstructions.xml`
+  * Frontend: None specified.
+* **App Identity:** "Nursing Home Management System"
+* **Security & HIPAA Enforcement:**
+  * Sensitive Fields: None specified.
+  * Audit Logging: False
+
+## 📝 DESCRIPTION
+This screen will be both a tutoring page and a context sensitive help page.
+It will be agentic in nature with a floating palette that is context aware.
+
+## 🛰️ INTER-COMPONENT BUS (BROADCASTCHANNEL)
+* **Channel Name:** `agi-ide-context-bus`
+* **Outbound Broadcast Events:**
+  * None specified.
+* **Inbound Event Listeners:**
+  * None specified.
+
+## 📥 INPUT PARAMETERS & PROPS
+* **Moqui Screen Parameters:** None specified.
+* **Vue Component Props:** None specified.
+
+## 💾 INSTANCE STATE & DATA VARIABLES
+* **Reactive UI Keys:** None specified.
+
+## 🔄 LIFECYCLE & ALWAYS-ACTIONS
+* **Server Side:** `<always-actions>` / `<pre-actions>`
+  * None specified.
+* **Client Side:** Vue `mounted()` / `unmounted()` hooks
+  * None specified.
+
+## ⚙️ BEHAVIORS & BACKEND DATA CONTRACTS
+* **Transitions / API Routes:** None specified.
+* **Vue Internal Methods:** None specified.
+
+## 🎨 VISUAL CONFIGURATION / WIDGETS
+* **Declarative Layout Tree:** None specified.
+
+## 💾 ENTITY DATA MODELS
+* **Extended Mantle UDM Entities:** None specified.
+
+## 🔍 VERIFICATION STEPS (MANUAL TESTING)
+1. None specified.
+
+=== FILE: blueprints/agi-ide.md ===
+# SCREEN/COMPONENT: agi-ide
+# SUBTITLE: Architectural Blueprint: AGI-IDE Meta-Shell
+
+## 🛡️ CORE METADATA & RULE BOUNDARIES
+* **Target Output Files:** 
+  * Backend: `runtime/component/agi-ide/screen/agi-ide.xml`
+  * Frontend: None specified.
+* **App Identity:** "Nursing Home Management System"
+* **Security & HIPAA Enforcement:**
+  * Sensitive Fields: None specified.
+  * Audit Logging: False
+
+## 📝 DESCRIPTION
+agi-ide is the entry point for the agi-ide app.
+
+### Subscreens / Components
+- AgiWorkspace.xml
+- AgiInstructions.xml
+- AgiDashboard.xml
+
+## 🛰️ INTER-COMPONENT BUS (BROADCASTCHANNEL)
+* **Channel Name:** `agi-ide-context-bus`
+* **Outbound Broadcast Events:**
+  * None specified.
+* **Inbound Event Listeners:**
+  * None specified.
+
+## 📥 INPUT PARAMETERS & PROPS
+* **Moqui Screen Parameters:** None specified.
+* **Vue Component Props:** None specified.
+
+## 💾 INSTANCE STATE & DATA VARIABLES
+* **Reactive UI Keys:** None specified.
+
+## 🔄 LIFECYCLE & ALWAYS-ACTIONS
+* **Server Side:** `<always-actions>` / `<pre-actions>`
+  * None specified.
+* **Client Side:** Vue `mounted()` / `unmounted()` hooks
+  * None specified.
+
+## ⚙️ BEHAVIORS & BACKEND DATA CONTRACTS
+* **Transitions / API Routes:** None specified.
+* **Vue Internal Methods:** None specified.
+
+## 🎨 VISUAL CONFIGURATION / WIDGETS
+* **Declarative Layout Tree:**
+  This screen will display a short banner across the top with 
+  - an app identity section on the left, 
+  - a menu for the subscreens in the middle
+  - an account status and dropdown button on the right
+
+  The bottom, content section will be reserved for the subscreens
+
+## 💾 ENTITY DATA MODELS
+* **Extended Mantle UDM Entities:** None specified.
+
+## 🔍 VERIFICATION STEPS (MANUAL TESTING)
+1. None specified.
