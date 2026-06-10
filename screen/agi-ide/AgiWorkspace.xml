@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-4.0.xsd"
+        require-authentication="true">
+
+    <parameter name="workspaceId"/>
+
+    <actions>
+        <!-- Dynamic injection of runtime workspace engine scripts -->
+        <script location="component://agi-ide/script/AgiBootstrapper.groovy"/>
+    </actions>
+
+    <widgets>
+        <container id="agi-workspace-container">
+            <render-mode>
+                <text type="html"><![CDATA[
+                    <!-- Thin Header section with display mode and screen control dropdowns -->
+                    <div id="agi-workspace-header" class="row items-center justify-between q-pa-sm bg-grey-2 border-bottom">
+                        <div class="row q-gutter-md">
+                            <!-- Window Display Mode Dropdown -->
+                            <q-select
+                                v-model="windowDisplayMode"
+                                :options="displayModeOptions"
+                                label="Window Display Mode"
+                                dense
+                                outlined
+                                style="min-width: 220px;"
+                            ></q-select>
+
+                            <!-- Available Screens / Subcomponents Dropdown -->
+                            <q-select
+                                v-model="activeScreens"
+                                :options="availableScreensOptions"
+                                label="Available Screens"
+                                multiple
+                                use-chips
+                                dense
+                                outlined
+                                style="min-width: 280px;"
+                            ></q-select>
+                        </div>
+                    </div>
+
+                    <!-- Main content pane mounting the Vue layout engine -->
+                    <div id="agi-workspace-root-app" class="q-pa-md">
+                        <component :is="currentLayoutComponent"></component>
+                    </div>
+                ]]></text>
+            </render-mode>
+        </container>
+    </widgets>
+</screen>

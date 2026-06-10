@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-4.0.xsd"
+        require-authentication="true">
+
+    <actions>
+        <!-- Resolve developer profile context and mock recent activities if database tables are unpopulated -->
+        <script><![CDATA[
+            def recentArtifacts = [
+                [workspaceId: "AgiWorkspace", artifactType: "Screen", lastModified: "2026-06-08 10:45", path: "runtime/component/agi-ide/screen/agi-ide/AgiWorkspace.xml"],
+                [workspaceId: "AgiCanvasEditor", artifactType: "Component", lastModified: "2026-06-08 10:40", path: "runtime/component/agi-ide/blueprints/agi-ide/assets/AgiCanvasEditor.md"],
+                [workspaceId: "AgiDashboard", artifactType: "Screen", lastModified: "2026-06-08 10:35", path: "runtime/component/agi-ide/screen/agi-ide/AgiDashboard.xml"],
+                [workspaceId: "AgiInstructions", artifactType: "Screen", lastModified: "2026-06-08 10:30", path: "runtime/component/agi-ide/screen/agi-ide/AgiInstructions.xml"],
+                [workspaceId: "agi-ide", artifactType: "Screen", lastModified: "2026-06-08 10:25", path: "runtime/component/agi-ide/screen/agi-ide.xml"]
+            ]
+            context.recentArtifacts = recentArtifacts
+
+            // Mock operational system metrics
+            context.activeAgentsCount = 3
+            context.connectedServicesCount = 4
+            context.systemLoadStatus = "Normal"
+        ]]></script>
+    </actions>
+
+    <widgets>
+        <container id="dashboard-container" style="q-pa-md q-gutter-y-md">
+            
+            <!-- 1. Welcome Area Card -->
+            <container-box id="welcome-card">
+                <box-header>
+                    <label text="Welcome to Moqui IDE, ${ec.user.username ?: 'Developer'}!" type="h4"/>
+                </box-header>
+                <box-body>
+                    <container style="row q-col-gutter-md">
+                        <container style="col-12 col-sm-4">
+                            <label text="Active Agent Runtimes: ${activeAgentsCount}" style="text-bold text-h6 text-primary"/>
+                        </container>
+                        <container style="col-12 col-sm-4">
+                            <label text="Connected Background Services: ${connectedServicesCount}" style="text-bold text-h6 text-secondary"/>
+                        </container>
+                        <container style="col-12 col-sm-4">
+                            <label text="System Load Status: ${systemLoadStatus}" style="text-bold text-h6 text-positive"/>
+                        </container>
+                    </container>
+                </box-body>
+            </container-box>
+
+            <!-- 2. Recent Activities Desk -->
+            <container-box id="recent-activities-card">
+                <box-header>
+                    <label text="Recent Activities Desk (Last 5 Modified Artifacts)" type="h4"/>
+                </box-header>
+                <box-body>
+                    <form-list name="RecentArtifactsForm" list="recentArtifacts" skip-form-use-attr="true">
+                        <field name="workspaceId">
+                            <header-field title="Artifact ID"/>
+                            <default-field>
+                                <link url="../workspace" text="${workspaceId}" parameter-map="[workspaceId: workspaceId]" style="text-primary"/>
+                            </default-field>
+                        </field>
+                        <field name="artifactType">
+                            <header-field title="Type"/>
+                            <default-field>
+                                <label text="${artifactType}"/>
+                            </default-field>
+                        </field>
+                        <field name="lastModified">
+                            <header-field title="Last Modified"/>
+                            <default-field>
+                                <label text="${lastModified}"/>
+                            </default-field>
+                        </field>
+                        <field name="path">
+                            <header-field title="Path"/>
+                            <default-field>
+                                <label text="${path}" style="text-caption text-grey"/>
+                            </default-field>
+                        </field>
+                    </form-list>
+                </box-body>
+            </container-box>
+
+            <!-- 3. Agent Quick Links Deck -->
+            <container-box id="quick-links-card">
+                <box-header>
+                    <label text="Agent Quick Links Deck" type="h4"/>
+                </box-header>
+                <box-body>
+                    <container style="q-gutter-x-sm">
+                        <link url="../workspace" text="Launch Collage Workspace" parameter-map="[workspaceId: 'AgiWorkspace']" style="q-btn bg-primary text-white q-px-md"/>
+                        <link url="../instructions" text="Access Help System" style="q-btn q-btn-outline text-primary q-px-md"/>
+                    </container>
+                </box-body>
+            </container-box>
+            
+        </container>
+    </widgets>
+</screen>

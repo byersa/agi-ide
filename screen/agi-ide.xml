@@ -14,12 +14,15 @@
         <script location="component://agi-ide/script/AgiBootstrapper.groovy"/>
     </always-actions>
 
-    <subscreens default-item="IdeWorkspace">
-        <subscreens-item name="IdeWorkspace" location="component://agi-ide/screen/agi-ide/IdeWorkspace.xml"/>
-        <subscreens-item name="amaTerminal" location="component://agi-ide/screen/agi-ide/amaTerminal.xml" menu-include="false"/>
+    <subscreens default-item="AgiWorkspace">
+        <subscreens-item name="AgiDashboard" location="component://agi-ide/screen/agi-ide/AgiDashboard.xml"/>
+        <subscreens-item name="AgiWorkspace" location="component://agi-ide/screen/agi-ide/AgiWorkspace.xml"/>
+        <subscreens-item name="AgiInstructions" location="component://agi-ide/screen/agi-ide/AgiInstructions.xml"/>
     </subscreens>
 
     <widgets>
-        <subscreens-active/>
+        <container id="workspace-wrap">
+            <subscreens-active/>
+        </container>
     </widgets>
 </screen>

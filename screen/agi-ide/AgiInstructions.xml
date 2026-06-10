@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-4.0.xsd"
+        require-authentication="true">
+
+    <transition name="fetchContextHelpData" read-only="true">
+        <actions>
+            <!-- Fetch framework help manuals matching contextual focus component keys -->
+            <script><![CDATA[
+                def topic = ec.web.parameters.topic ?: "intro"
+                def content = ""
+                if (topic == "AgiWorkspace" || topic == "workspace") {
+                    content = "### Collage Workspace Overview\\nThe AgiWorkspace orchestration canvas lets you manage multiple subworkspaces, dock panels (docked), maximize viewports (maximized), and detach individual editors to external window frames (external) using the BroadcastChannel bus."
+                } else if (topic == "AgiCanvasEditor" || topic == "canvas") {
+                    content = "### Canvas Editor Tutorial\\nThis visual renderer parses standard Moqui XML screens or component Vue configurations depending on the active editorMode ('screen' or 'component'). Clicking elements fires the canvas-element-selected event."
+                } else if (topic == "AgiScreenEditor" || topic == "AgiComponentEditor" || topic == "editor") {
+                    content = "### Source Code Editors\\nSource code text panels emit the xml-source-mutated event on input changes to dynamically reload the layout preview, and listen for incoming canvas-element-selected events to highlight the specific lines inside the viewport."
+                } else if (topic == "bus") {
+                    content = "### Inter-Component Broadcast Bus\\nAll panel workspaces communicate over a uniform global channel named agi-ide-context-bus to sync state changes, coordinates, and keystrokes instantly."
+                } else {
+                    content = "### Introduction to Moqui IDE\\nUse the menu bar above to load components. Telemetry from the active workspace panel will automatically load matching help manuals here in real time."
+                }
+                ec.web.sendJsonResponse([topic: topic, content: content])
+            ]]></script>
+        </actions>
+        <default-response type="none"/>
+    </transition>
+
+    <actions>
+        <set field="defaultHelpTitle" value="Introduction to Moqui IDE"/>
+        <set field="defaultHelpContent" value="### Welcome to the Moqui IDE Tutoring System\nThis context-sensitive documentation updates dynamically as you navigate around screens and component files."/>
+    </actions>
+
+    <widgets>
+        <container id="instructions-container" style="row q-col-gutter-md q-pa-md">
+            
+            <!-- Left Navigation Panel -->
+            <container id="left-nav" style="col-12 col-md-3">
+                <container-box id="topics-box">
+                    <box-header>
+                        <label text="Developer Manual Index" type="h5"/>
+                    </box-header>
+                    <box-body>
+                        <container style="q-gutter-y-sm">
+                            <link url="." text="1. Getting Started" parameter-map="[topic: 'intro']" style="d-block text-primary text-bold"/>
+                            <link url="." text="2. Workspace Orchestration" parameter-map="[topic: 'workspace']" style="d-block text-primary text-bold"/>
+                            <link url="." text="3. Canvas Editor Guide" parameter-map="[topic: 'canvas']" style="d-block text-primary text-bold"/>
+                            <link url="." text="4. Source Panels Tutorial" parameter-map="[topic: 'editor']" style="d-block text-primary text-bold"/>
+                            <link url="." text="5. Broadcast Bus telemetry" parameter-map="[topic: 'bus']" style="d-block text-primary text-bold"/>
+                        </container>
+                    </box-body>
+                </container-box>
+            </container>
+
+            <!-- Right Reading Arena and Floating Help context palette -->
+            <container id="right-arena" style="col-12 col-md-9 position-relative">
+                <container-box id="reading-desk">
+                    <box-header>
+                        <label text="Help &amp; Reference Library" type="h5"/>
+                    </box-header>
+                    <box-body>
+                        <render-mode>
+                            <text type="html"><![CDATA[
+                                <div id="agi-instructions-mount">
+                                    <h4 class="q-my-sm text-bold">{{ activeHelpTitle }}</h4>
+                                    <hr class="q-my-sm"/>
+                                    <div class="markdown-body q-my-md text-body1" v-html="compiledMarkdown"></div>
+
+                                    <!-- Floating Context Palette -->
+                                    <div v-if="activeTopicHelp" class="floating-palette bg-primary text-white q-pa-md rounded-borders shadow-2 position-absolute" style="bottom: 20px; right: 20px; max-width: 320px; z-index: 999;">
+                                        <div class="row items-center justify-between q-mb-sm">
+                                            <span class="text-subtitle2 text-bold">Quick-Copy Macro Boilerplate</span>
+                                            <q-btn flat dense round size="sm" icon="content_copy" class="text-white" @click="copyTemplate"></q-btn>
+                                        </div>
+                                        <pre class="bg-dark text-white q-pa-xs text-caption rounded-borders" style="overflow-x: auto; white-space: pre-wrap; word-break: break-all;">{{ activeTopicHelp }}</pre>
+                                    </div>
+                                </div>
+                                
+                                <script>
+                                    (function() {
+                                        const appEl = document.getElementById('agi-instructions-mount');
+                                        if (!appEl) return;
+                                        
+                                        if (typeof Vue !== 'undefined') {
+                                            const { ref, onMounted, onUnmounted, computed } = Vue;
+                                            
+                                            const app = Vue.createApp({
+                                                setup() {
+                                                    const activeHelpTitle = ref('${defaultHelpTitle}');
+                                                    const activeHelpContent = ref('${defaultHelpContent}');
+                                                    const activeTopicHelp = ref('<link url="." text="Sample Link"/>');
+                                                    
+                                                    const compiledMarkdown = computed(() => {
+                                                        let raw = activeHelpContent.value || '';
+                                                        raw = raw.replace(/### (.*)/g, '<h5 class="text-bold">$1</h5>');
+                                                        raw = raw.replace(/## (.*)/g, '<h4 class="text-bold">$1</h4>');
+                                                        raw = raw.replace(/\\n/g, '<br/>').replace(/\n/g, '<br/>');
+                                                        return raw;
+                                                    });
+
+                                                    const copyTemplate = () => {
+                                                        navigator.clipboard.writeText(activeTopicHelp.value);
+                                                        if (typeof Q !== 'undefined' && Q.notify) {
+                                                            Q.notify({ message: 'Copied template to clipboard!', color: 'positive' });
+                                                        } else {
+                                                            alert('Copied to clipboard!');
+                                                        }
+                                                    };
+
+                                                    let bus = null;
+
+                                                    const handleContextChange = (event) => {
+                                                        const data = event.data;
+                                                        if (data && (data.artifactId || data.subArtifactId)) {
+                                                            const targetTopic = data.artifactId || data.subArtifactId;
+                                                            fetch(`fetchContextHelpData?topic=${encodeURIComponent(targetTopic)}`)
+                                                                .then(res => res.json())
+                                                                .then(json => {
+                                                                    activeHelpTitle.value = `Context Help: ${targetTopic}`;
+                                                                    activeHelpContent.value = json.content;
+                                                                    activeTopicHelp.value = `<transition name="${targetTopic}">\n  <default-response url="."/>\n</transition>`;
+                                                                })
+                                                                .catch(err => console.error('Error fetching help context', err));
+                                                        }
+                                                    };
+
+                                                    onMounted(() => {
+                                                        try {
+                                                            bus = new BroadcastChannel('agi-ide-context-bus');
+                                                            bus.onmessage = handleContextChange;
+                                                        } catch (e) {
+                                                            console.warn('BroadcastChannel failed to initialize', e);
+                                                        }
+                                                    });
+
+                                                    onUnmounted(() => {
+                                                        if (bus) bus.close();
+                                                    });
+
+                                                    return {
+                                                        activeHelpTitle,
+                                                        activeHelpContent,
+                                                        compiledMarkdown,
+                                                        activeTopicHelp,
+                                                        copyTemplate
+                                                    };
+                                                }
+                                            });
+                                            
+                                            app.mount('#agi-instructions-mount');
+                                        }
+                                    })();
+                                </script>
+                            ]]></text>
+                        </render-mode>
+                    </box-body>
+                </container-box>
+            </container>
+            
+        </container>
+    </widgets>
+</screen>
