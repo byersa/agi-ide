@@ -2,6 +2,31 @@
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
             xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-4.0.xsd">
 
+    <webapp-list>
+        <!-- Purely isolates agi-ide's routing rule to its own component space -->
+    <webapp-list>
+        <webapp name="agi-ide" path="/agi-ide" https-enabled="false"
+                root-screen-location="component://agi-ide/screen/agi-ide.xml">
+            <before-request>
+                <actions>
+                    <script><![CDATA[
+                        // Force clean content negotiation for your blueprint layout requests
+                        def accept = ec.web.request.getHeader("Accept")
+                        def renderModeParam = ec.web.requestParameters.renderMode
+                        
+                        if ((accept && accept.contains("application/json")) || renderModeParam == "qmeta") {
+                            // 1. Force the internal rendering engine to use your clean metadata dialect
+                            ec.web.requestParameters.renderMode = "qmeta"
+                            
+                            // 2. Force the server response headers to use clean JSON syntax instead of text/html
+                            ec.web.response.setContentType("application/json")
+                        }
+                    ]]></script>
+                </actions>
+            </before-request>
+        </webapp>
+    </webapp-list>
+
     <screen-facade>
         <screen location="component://webroot/screen/webroot.xml">
             <subscreens-item name="agi-ide" menu-title="AGI IDE" menu-index="96"

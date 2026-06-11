@@ -1,28 +1,209 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-4.0.xsd"
-        require-authentication="false">
+        require-authentication="false"
+        default-subscreen="AgiWorkspace">
 
-    <always-actions>
-        <set field="webmcpToken" from="System.getenv('WEBMCP_SERVER_TOKEN') ?: 'fallback_local_dev_token'"/>
-        <set field="ts" from="System.currentTimeMillis()"/>
-        
-        <!-- 1. Foundational Core Engine Bootstrapper -->
-        <script location="component://agi-ai/script/AgiBackendBootstrapper.groovy"/>
-        
-        <!-- 2. Application-Specific Workspace Overrides -->
-        <script location="component://agi-ide/script/AgiBootstrapper.groovy"/>
-    </always-actions>
+    <transition name="getRawXml" read-only="true">
+        <actions>
+            <script><![CDATA[
+                // 1. Fallback safe defaults
+                def rawPath = screenPath ?: "AgiWorkspace"
+                def componentName = "agi-ide" // Default fallback
+                def fileName = rawPath
 
-    <subscreens default-item="AgiWorkspace">
+                // 2. Dynamically extract component name if passed as a composite path (e.g., "nursing-home/FacilityDetails")
+                if (rawPath.contains("/")) {
+                    def pathParts = rawPath.split("/")
+                    componentName = pathParts[0]
+                    fileName = pathParts[1]
+                } else if (context.componentName) {
+                    // Allow an explicit separate variable override parameter if passed by the fetch headers
+                    componentName = context.componentName
+                }
+
+                // 3. Build standard Moqui convention path matrix definitions programmatically
+                def fileLocation = "component://${componentName}/screen/${componentName}/${fileName}.xml"
+                
+                try {
+                    def resourceReference = ec.resource.getLocationReference(fileLocation)
+                    
+                    // FALLBACK ATTEMPT: Scan the generic root screen folder if the nested component folder structural match fails
+                    if (!resourceReference || !resourceReference.exists) {
+                        fileLocation = "component://${componentName}/screen/${fileName}.xml"
+                        resourceReference = ec.resource.getLocationReference(fileLocation)
+                    }
+                    
+                    // 4. Stream the pristine text payload down the REST channel
+                    if (resourceReference && resourceReference.exists) {
+                        def rawTextPayload = resourceReference.getText()
+                        ec.web.sendTextResponse(rawTextPayload, "text/xml", null)
+                        ec.logger.info("⚡ Dynamic source-streamer localized asset at: [${fileLocation}]")
+                    } else {
+                        ec.web.sendTextResponse("", "text/xml", null)
+                    }
+                } catch (Exception ex) {
+                    ec.logger.error("Failed to execute flexible dynamic XML resource extraction", ex)
+                    ec.web.sendTextResponse("", "text/xml", null)
+                }
+            ]]></script>
+        </actions>
+        <default-response type="none"/>
+    </transition>
+
+<transition name="getFormMetadata" read-only="true">
+        <actions>
+            <script><![CDATA[
+                def targetForm = screenPath ?: "SampleForm"
+                def componentName = "agi-ide"
+
+                if (targetForm.contains("/")) {
+                    def pathParts = targetForm.split("/")
+                    componentName = pathParts[0]
+                    targetForm = pathParts[1]
+                }
+
+                String fileLocation = "component://${componentName}/screen/${componentName}/${targetForm}.xml".toString()
+                
+                try {
+                    def resourceRef = ec.resource.getLocationReference(fileLocation)
+                    if (!resourceRef || !resourceRef.exists) {
+                        fileLocation = "component://${componentName}/screen/${targetForm}.xml".toString()
+                        resourceRef = ec.resource.getLocationReference(fileLocation)
+                    }
+
+                    if (resourceRef && resourceRef.exists) {
+                        // 1. Initialize the base screen renderer context
+                        org.moqui.impl.screen.ScreenRenderImpl sri = new org.moqui.impl.screen.ScreenRenderImpl(ec.screen)
+                        
+                        // 2. Set standard configuration states
+                        sri.rootScreen(fileLocation)
+                        sri.renderMode("qmeta".toString())
+                        
+                        // FIXED: Pull the webapp name from the servlet context instead of the web facade property block
+                        String resolvedWebappName = ec.web.request.servletContext.getInitParameter("moqui-name")
+                        sri.webappName(resolvedWebappName ? resolvedWebappName.toString() : "agi-ide")
+                        
+                        // 3. Bind a dedicated text stream writer to catch the compiled metadata output
+                        java.io.StringWriter sw = new java.io.StringWriter()
+                        sri.internalWriter = sw
+                        
+                        // 4. Force isolated internal parsing structures without running an endless browser loop
+                        sri.rootScreenDef = ec.screen.getScreenDefinition(fileLocation)
+                        sri.screenUrlInfo = org.moqui.impl.screen.ScreenUrlInfo.getScreenUrlInfo(sri, sri.rootScreenDef, new ArrayList<String>(), null, 0)
+                        sri.screenUrlInstance = sri.screenUrlInfo.getInstance(sri, false)
+                        
+                        // Process the widget nodes straight into our local StringWriter string buffer
+                        sri.doActualRender()
+                        
+                        // 5. Send the compiled text map down the wire
+                        def jsonMetadataTree = sw.toString()
+                        ec.web.sendTextResponse(jsonMetadataTree, "application/json", null)
+                    } else {
+                        ec.web.sendTextResponse('{"error": "Target layout asset file not found on disk context."}', "application/json", null)
+                    }
+                } catch (Exception ex) {
+                    ec.logger.error("Failed to build dynamic component widget metadata tree via isolated rendering pass", ex)
+                    ec.web.sendTextResponse('{"error": "Exception occurred during direct screen compilation pass. See server console logs."}', "application/json", null)
+                }
+            ]]></script>
+        </actions>
+        <default-response type="none"/>
+    </transition>
+
+    <pre-actions>
+         html_stylesheets.add('/agi-ide-assets/agi-ide.css')
+    </pre-actions>
+
+    <subscreens>
         <subscreens-item name="AgiDashboard" location="component://agi-ide/screen/agi-ide/AgiDashboard.xml"/>
         <subscreens-item name="AgiWorkspace" location="component://agi-ide/screen/agi-ide/AgiWorkspace.xml"/>
         <subscreens-item name="AgiInstructions" location="component://agi-ide/screen/agi-ide/AgiInstructions.xml"/>
     </subscreens>
 
     <widgets>
-        <container id="workspace-wrap">
-            <subscreens-active/>
-        </container>
+        <render-mode>
+            <text type="html"><![CDATA[
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <title>AGI Agentic Workspace IDE</title>
+                    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900|Material+Icons">
+                    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/quasar@2.17.1/dist/quasar.css">
+                </head>
+                <body class="bg-grey-1">
+                    
+                    <div id="agi-ide-root" class="window-height">
+                        <q-layout view="hHh Lpr fFf" class="full-height">
+                            <q-page-container class="full-height">
+                                <q-page class="q-pa-none full-height">
+                                    ${sri.renderSubscreen()}
+                                </q-page>
+                            </q-page-container>
+                        </q-layout>
+                    </div>
+
+                    <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.js"></script>
+                    <script src="https://cdn.jsdelivr.net/npm/quasar@2.17.1/dist/quasar.umd.js"></script>
+                    <script src="https://unpkg.com/vue-demi"></script>
+                    <script src="https://unpkg.com/pinia@2.3.1"></script>
+
+                    <script src="/agi-ide-assets/AgiSubWorkspace.qvt.js"></script>
+                    <script src="/agi-ide-assets/AgiCanvasEditor.qvt.js"></script>
+                    <script src="/agi-ide-assets/AgiScreenEditor.qvt.js"></script>
+                    <script src="/agi-ide-assets/AgiWorkspace.qvt.js"></script>
+
+                    <script>
+                    (function() {
+                        function bootstrapAgiIde() {
+                            if (typeof Vue === 'undefined' || typeof Quasar === 'undefined') {
+                                console.error("CRITICAL: Framework runtimes are missing in memory.");
+                                return;
+                            }
+                    
+                            if (window.agiIdeAppInstance) {
+                                console.info("⚡ AGI IDE App instance already mounted, bypassing duplicate mount loop.");
+                                return;
+                            }
+                    
+                            const mainVue = {
+                                components: {
+                                    'agi-workspace': window.AgiWorkspace
+                                }
+                            };
+                    
+                            try {
+                                const app = Vue.createApp(mainVue);
+                                app.use(Quasar);
+                                app.use(Pinia.createPinia());
+                    
+                                // Dynamically map every child component tool currently resting in our registry cache
+                                if (window.AgiComponents) {
+                                    Object.keys(window.AgiComponents).forEach(function(tagName) {
+                                        app.component(tagName, window.AgiComponents[tagName]);
+                                        console.info("Successfully mapped active component target:", tagName);
+                                    });
+                                }
+                    
+                                window.agiIdeAppInstance = app.mount('#agi-ide-root');
+                                console.info("🚀 AGI IDE App mounted cleanly.");
+                            } catch (err) {
+                                console.error("Mounting execution anomaly caught:", err);
+                            }
+                        }
+
+                        // Determine if the DOM is ready right now, or safely queue for execution
+                        if (document.readyState === 'loading') {
+                            document.addEventListener('DOMContentLoaded', bootstrapAgiIde);
+                        } else {
+                            bootstrapAgiIde();
+                        }
+                    })();
+                    </script>
+                </body>
+                </html>
+            ]]></text>
+        </render-mode>
     </widgets>
 </screen>

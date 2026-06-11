@@ -1,4 +1,4 @@
-(function() {
+(function () {
     const AgiSubWorkspace = {
         name: 'AgiSubWorkspace',
         template: `
@@ -61,4 +61,7 @@
     };
 
     window.AgiSubWorkspace = AgiSubWorkspace;
+
+    if (!window.AgiComponents) window.AgiComponents = {};
+    window.AgiComponents['agi-sub-workspace'] = AgiSubWorkspace;
 })();

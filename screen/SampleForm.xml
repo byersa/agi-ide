@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-2.1.xsd">
+    <parameter name="facilityId"/>
+    
+    <transition name="storeAdmission">
+        <service-call name="org.moqui.impl.BasicServices.noop"/>
+        <default-response url="."/>
+    </transition>
+
+    <widgets>
+        <container id="admission_hull">
+            <form-single name="patient_intake" transition="storeAdmission">
+                <field name="fullName" title="Full Name">
+                    <text-line size="40" placeholder="Jane Doe"/>
+                </field>
+                <field name="classification" title="Care Tier">
+                    <drop-down>
+                        <option key="ICU" text="Intensive Care"/>
+                        <option key="GEN" text="General Ward"/>
+                    </drop-down>
+                </field>
+                <field name="huddleThreads">
+                    <discussion-tree entity-name="FacilityObservation" context-id="HUDDLE_2026"/>
+                </field>
+                <field name="saveAction">
+                    <submit text="Commit Admission"/>
+                </field>
+            </form-single>
+        </container>
+    </widgets>
+</screen>

@@ -1,10 +1,10 @@
 (function () {
-    const AgiScreenEditor = {
-        name: 'AgiScreenEditor',
+    const AgiComponentEditor = {
+        name: 'AgiComponentEditor',
         template: `
-            <div :class="['screen-editor-container fit column no-wrap q-pa-sm', activeHighlightedMariaId ? 'glow-active' : '']" style="height: 100%;">
+            <div :class="['component-editor-container fit column no-wrap q-pa-sm', activeHighlightedMariaId ? 'glow-active' : '']" style="height: 100%;">
                 <div class="q-mb-sm row items-center justify-between">
-                    <div class="text-subtitle2 text-grey-8">XML Screen Editor</div>
+                    <div class="text-subtitle2 text-grey-8">XML Component Editor</div>
                     <q-chip v-if="activeHighlightedMariaId" color="primary" text-color="white" icon="gps_fixed" dense size="sm" @click="clearHighlight" clickable>
                         Synced: {{ activeHighlightedMariaId.split('#')[1] || activeHighlightedMariaId }}
                     </q-chip>
@@ -36,6 +36,7 @@
             // Initialize cross-window communication channel
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
 
+            // Configure message event listener
             // 2. Listen for selection events broadcasting from the Visual Canvas
             this.contextBus.onmessage = (msg) => {
                 if (msg.data && msg.data.event === 'element-selected-by-id') {
@@ -44,14 +45,14 @@
                 }
             };
 
-            // Fetch raw XML screen text definition
+            // Fetch raw XML component text definition
             fetch('/agi-ide/getRawXml?screenPath=' + encodeURIComponent(this.screenPath))
                 .then(res => res.text())
                 .then(text => {
                     this.rawXmlSource = text;
                 })
                 .catch(err => {
-                    console.warn("Failed fetching screen XML, loading fallback blueprint code structure", err);
+                    console.warn("Failed fetching component XML, loading fallback blueprint code structure", err);
                     this.rawXmlSource = `<?xml version="1.0" encoding="UTF-8"?>
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" require-authentication="true">
     <widgets>
@@ -130,33 +131,48 @@
                 this.activeHighlightedMariaId = '';
             },
             highlightAndScrollToSourceElement(mariaId) {
-                // Extract the target widget name from the mariaId compound token
-                const elementName = mariaId.split('#')[1]; // yields "username"
-                if (!elementName) return;
+                if (!mariaId) return;
 
-                const textarea = this.$el.querySelector('.xml-textarea');
+                // 1. Extract the raw name/id after the '#' divider token safely
+                // Works for "SampleForm#admission_hull" or "path/to/file.xml#fullName"
+                const elementId = mariaId.split('#')[1];
+                if (!elementId) return;
+
+                // 2. Target your local text wrapper layout container
+                const textarea = this.$el.querySelector('textarea') || document.querySelector('.xml-textarea');
                 if (!textarea) return;
 
                 const textContent = textarea.value;
-                // Search the text buffer for the field or container declaration string
-                const targetSearchString = `name="${elementName}"`;
-                const index = textContent.indexOf(targetSearchString);
 
+                // 3. DEFENSIVE PATTERN MATCH: Scan for name="id" OR id="id" inside the XML layout markup
+                let targetString = `name="${elementId}"`;
+                let index = textContent.indexOf(targetString);
+
+                if (index === -1) {
+                    targetString = `id="${elementId}"`;
+                    index = textContent.indexOf(targetString);
+                }
+
+                // 4. If located inside the text buffer, execute the viewport jump
                 if (index !== -1) {
-                    // Programmatically focus and highlight the text characters inside the source window
                     textarea.focus();
-                    textarea.setSelectionRange(index, index + targetSearchString.length);
 
-                    // Compute scroll offset to bring the code line into viewport focus
-                    const numLines = textContent.substring(0, index).split('\n').length;
-                    const lineHeight = 18; // Matches your custom CSS line-height rule
-                    textarea.scrollTop = (numLines - 3) * lineHeight;
+                    // Highlight the target text block markers
+                    textarea.setSelectionRange(index, index + targetString.length);
+
+                    // Compute exact line heights scroll coordinates programmatically
+                    const linesUpToMatch = textContent.substring(0, index).split('\n').length;
+                    const baselineLineHeight = 20; // Adjust slightly to match your panel CSS
+
+                    // Center the found line inside the panel viewport area
+                    textarea.scrollTop = (linesUpToMatch - 4) * baselineLineHeight;
+                    console.info(`🎯 Text editor synchronized cursor to line ${linesUpToMatch} for element: ${elementId}`);
                 }
             },
         }
     };
 
-    window.AgiScreenEditor = AgiScreenEditor;
+    window.AgiComponentEditor = AgiComponentEditor;
     if (!window.AgiComponents) window.AgiComponents = {};
-    window.AgiComponents['agi-screen-editor'] = AgiScreenEditor;
+    window.AgiComponents['agi-component-editor'] = AgiComponentEditor;
 })();
