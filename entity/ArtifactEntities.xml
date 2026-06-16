@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+
+    <entity entity-name="HuddleArtifact" package="huddle.artifact" 
+            enable-audit-log="true" description="Main container for Moqui XML artifacts (Entities, Services, Screens)">
+        <field name="artifactId" type="id" is-pk="true"/>
+        <field name="parentArtifactId" type="id"/>
+        <field name="artifactName" type="text-medium"/>
+        <field name="artifactTypeEnumId" type="id" description="Enums for Entity, Service, Screen"/>
+        <field name="fullPath" type="text-long"/>
+        <field name="description" type="text-medium"/>
+        <field name="checksum" type="text-short"/>
+        <field name="lastIndexedDate" type="date-time"/>
+        <field name="statusId" type="id"/>
+
+        <relationship type="one" title="Parent" related="huddle.artifact.HuddleArtifact">
+            <key-map field-name="parentArtifactId" related-field-name="artifactId"/>
+        </relationship>
+        <relationship type="one" title="Type" related="moqui.basic.Enumeration">
+            <key-map field-name="artifactTypeEnumId" related-field-name="enumId"/>
+        </relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType enumTypeId="HuddleArtifactType" description="Huddle Artifact Type"/>
+            <moqui.basic.Enumeration enumId="HatEntity" enumTypeId="HuddleArtifactType" description="Entity"/>
+            <moqui.basic.Enumeration enumId="HatService" enumTypeId="HuddleArtifactType" description="Service"/>
+            <moqui.basic.Enumeration enumId="HatScreen" enumTypeId="HuddleArtifactType" description="Screen"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="HuddleArtifactDetail" package="huddle.artifact" 
+            enable-audit-log="true" description="Detailed components of an artifact (Fields, Parameters, Transitions)">
+        <field name="artifactDetailId" type="id" is-pk="true"/>
+        <field name="artifactId" type="id" not-null="true"/>
+        <field name="detailName" type="text-medium" not-null="true"/>
+        <field name="detailTypeEnumId" type="id" description="Enums for Field, Parameter, Transition, etc."/>
+        <field name="isSensitive" type="text-indicator" description="Y/N flag for HIPAA/PHI tracking"/>
+        
+        <relationship type="one" related="huddle.artifact.HuddleArtifact">
+            <key-map field-name="artifactId"/>
+        </relationship>
+        <relationship type="one" title="DetailType" related="moqui.basic.Enumeration">
+            <key-map field-name="detailTypeEnumId" related-field-name="enumId"/>
+        </relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType enumTypeId="HuddleDetailType" description="Huddle Artifact Detail Type"/>
+            <moqui.basic.Enumeration enumId="HdtField" enumTypeId="HuddleDetailType" description="Entity Field"/>
+            <moqui.basic.Enumeration enumId="HdtParameter" enumTypeId="HuddleDetailType" description="Service Parameter"/>
+            <moqui.basic.Enumeration enumId="HdtTransition" enumTypeId="HuddleDetailType" description="Screen Transition"/>
+        </seed-data>
+    </entity>
+
+</entities>

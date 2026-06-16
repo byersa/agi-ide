@@ -12,6 +12,8 @@ ec.logger.info("In AgiBootstrapper.")
 long scriptTs = context.get("ts") ?: System.currentTimeMillis()
 
 // The Pure Client-Side Editors (.qvt.js)
+addUniqueScript("/agi-ide-assets/AgiMcpOrchestrator.js?v=${scriptTs}")
+addUniqueScript("/agi-ide-assets/AgiEditorShare.qvt.js?v=${scriptTs}")
 addUniqueScript("/agi-ide-assets/AgiCanvasEditor.qvt.js?v=${scriptTs}")
 addUniqueScript("/agi-ide-assets/AgiScreenEditor.qvt.js?v=${scriptTs}")
 addUniqueScript("/agi-ide-assets/AgiComponentEditor.qvt.js?v=${scriptTs}")

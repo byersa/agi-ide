@@ -37,4 +37,14 @@
             <service name="org.moqui.ide.ScreenEditorServices.create#NewComponentScaffold"/>
         </method>
     </resource>
+    <resource name="getAllTools">
+        <method type="get" require-authentication="false">
+            <service name="org.moqui.ide.AgiMcpServices.getAllTools"/>
+        </method>
+    </resource>
+    <resource name="geminiProxy">
+        <method type="post" require-authentication="false">
+            <service name="org.moqui.ide.AgiMcpServices.executeAdkProxyLoop"/>
+        </method>
+    </resource>
 </rest-api>

@@ -6,7 +6,9 @@
     <parameter name="workspaceId"/>
 
     <actions>
+    <!--
         <script location="component://agi-ide/script/AgiBootstrapper.groovy"/>
+        -->
     </actions>
 
     <widgets>

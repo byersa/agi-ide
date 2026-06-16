@@ -124,6 +124,15 @@
     <widgets>
         <render-mode>
             <text type="html"><![CDATA[
+                <script type="text/javascript">
+                    // The server explicitly binds the true session token to a safe global marker
+                    window.AGI_SERVER_CSRF_TOKEN = "${ec.web.getSessionToken()}";
+                    console.info("🔒 Server-injected security token initialized into global window scope.");
+            </script>
+            ]]></text>
+        </render-mode>
+        <render-mode>
+            <text type="html"><![CDATA[
                 <!DOCTYPE html>
                 <html>
                 <head>
@@ -149,9 +158,13 @@
                     <script src="https://unpkg.com/vue-demi"></script>
                     <script src="https://unpkg.com/pinia@2.3.1"></script>
 
+                    <script src="/agi-ide-assets/AgiMcpOrchestrator.js"></script>
+                    <script src="/agi-ide-assets/AgiCommandPalette.qvt.js"></script>
                     <script src="/agi-ide-assets/AgiSubWorkspace.qvt.js"></script>
+                    <script src="/agi-ide-assets/AgiEditorShare.qvt.js"></script>
                     <script src="/agi-ide-assets/AgiCanvasEditor.qvt.js"></script>
                     <script src="/agi-ide-assets/AgiScreenEditor.qvt.js"></script>
+                    <script src="/agi-ide-assets/AgiComponentEditor.qvt.js"></script>
                     <script src="/agi-ide-assets/AgiWorkspace.qvt.js"></script>
 
                     <script>

@@ -105,6 +105,7 @@
     // 2. Main Canvas Editor Component
     const AgiCanvasEditor = {
         name: 'AgiCanvasEditor',
+        mixins: [window.AgiEditorShareMixin],
         components: {
             AgiCanvasNode
         },
@@ -145,11 +146,14 @@
         },
         mounted() {
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
-
             this.contextBus.onmessage = (msg) => {
                 if (msg.data && msg.data.event === 'element-selected-by-id') {
                     this.selectedMariaId = msg.data.mariaId;
                     this.scrollToNode(msg.data.mariaId);
+                } else if (event.data && event.data.event === 'artifact-state-mutated' && event.data.panelName === 'AgiCanvasEditor') {
+                    console.info("🎨 AgiCanvasEditor intercepting layout mutation. Re-rendering view tree...");
+                    // Vue reactivity takes over here and instantly repaints the workspace panels
+                    this.blueprintTree = [event.data.mutatedTree];
                 }
             };
 

@@ -51,6 +51,17 @@
                             outlined
                             style="min-width: 320px;"
                         ></q-select>
+
+                        <q-btn 
+                            color="deep-purple-7" 
+                            icon="terminal" 
+                            label="AI Palette" 
+                            dense 
+                            class="q-px-md"
+                            @click="triggerCommandPaletteOverlay"
+                        >
+                            <q-tooltip class="bg-slate-900 text-caption">Launch AGI AI Assistant Core</q-tooltip>
+                        </q-btn>
                     </div>
                 </div>
 
@@ -73,6 +84,7 @@
                         </agi-sub-workspace>
                     </div>
                 </div>
+                <agi-command-palette></agi-command-palette>
             </div>
         `,
         mounted() {
@@ -87,6 +99,8 @@
                     }
                 });
             }, 1000);
+
+            this.hydrateMcpOrchestratorFromDatabase();
         },
         beforeUnmount() {
             window.removeEventListener('beforeunload', this.closeExternalWindows);
@@ -180,7 +194,96 @@
                         this.activeLayoutGrid[name].state = 'docked';
                     }
                 });
-            }
+            },
+
+            hydrateMcpOrchestratorFromDatabase() {
+                // SAFETY BLOCK: Check if the orchestrator engine has mounted to the window scope yet
+                if (!window.AgiMcpEngine) {
+                    console.warn("⏳ AgiMcpEngine not found yet. Backing off and retrying in 50ms...");
+                    setTimeout(() => this.hydrateMcpOrchestratorFromDatabase(), 50);
+                    return; // Halt this execution pass until the engine is bound
+                }
+
+                console.info("📡 AgiWorkspace initiating database tool hydration stream...");
+
+                fetch('/rest/s1/agi-ide/getAllTools', {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' }
+                })
+                    .then(res => res.json())
+                    .then(data => {
+                        // Condition A: We have active tools stored in the database
+                        if (data && data.toolsList && data.toolsList.length > 0) {
+                            data.toolsList.forEach(tool => {
+                                try {
+                                    const executionFactory = new Function(tool.scriptBody);
+                                    const executableFunction = executionFactory();
+
+                                    window.AgiMcpEngine.registerTool({
+                                        command: tool.command,
+                                        description: tool.description,
+                                        scope: tool.scope,
+                                        execute: executableFunction
+                                    });
+                                } catch (err) {
+                                    console.error(`❌ Hydration dropped for tool [${tool.command}]:`, err);
+                                }
+                            });
+                            console.info(`✅ Successfully synchronized ${data.toolsList.length} database tools to AgiMcpOrchestrator.`);
+                        }
+                        // Condition B: The server connection worked, but the tool library is empty
+                        else {
+                            console.info("ℹ️ Database tool table is empty. Injecting local testing fallbacks...");
+                            this.injectLocalFallbackTools();
+                        }
+                    })
+                    .catch(err => {
+                        console.warn("⚠️ Database connection failed or timed out. Injecting local testing fallbacks:", err);
+                        this.injectLocalFallbackTools();
+                    });
+            },
+
+            injectLocalFallbackTools() {
+                window.AgiMcpEngine.registerTool({
+                    command: '/add-mock-field',
+                    description: 'Fallback testing field tool',
+                    scope: 'AgiCanvasEditor',
+                    execute: (currentTree, targetMariaId) => {
+                        console.log("🏃 Executing /add-mock-field utility pass against tree...");
+                        const newTree = JSON.parse(JSON.stringify(currentTree));
+                        const mockNode = {
+                            type: 'FormField',
+                            name: 'mockControl_' + Date.now(),
+                            text: 'Mocked Input Field Element',
+                            mariaId: 'SampleForm#mockControl_' + Date.now(),
+                            children: []
+                        };
+
+                        if (newTree.children) newTree.children.push(mockNode);
+                        return newTree;
+                    }
+                });
+                console.info("🎯 Local fallback tool registry is ready for testing execution.");
+            },
+            // Inside AgiWorkspace.qvt.js -> methods:
+            triggerCommandPaletteOverlay() {
+                console.info("📡 AgiWorkspace broadcasting manual click activation pass to layout overlay panel...");
+
+                // We pass an event down the common runtime bus to wake up the hidden palette element cleanly
+                if (this.contextBus) {
+                    this.contextBus.postMessage({
+                        event: 'force-open-command-palette',
+                        panelName: this.activeScreens[0] || 'AgiCanvasEditor', // Fallback context matching active view
+                        artifactLocation: this.screenPath
+                    });
+                } else {
+                    // Fallback: If contextBus initialization is delayed, fall straight back to direct component search
+                    const paletteComponent = window.AgiComponents?.['agi-command-palette'];
+                    if (paletteComponent && typeof paletteComponent.openPalette === 'function') {
+                        paletteComponent.openPalette();
+                    }
+                }
+            },
         }
     };
 

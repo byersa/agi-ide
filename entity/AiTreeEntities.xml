@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-2.1.xsd">
+
+    <!-- ========================================================= -->
+    <!-- Agenda Container Entities (Replaces legacy Meeting)         -->
+    <!-- ========================================================= -->
+
+    <entity entity-name="AgendaContainer" package="aitree.meeting" authorize-skip="true">
+        <description>
+            The digital representation of any concept to which agenda messages (topics or replies) 
+            can be attached. Represents the high-level boundary of a discussion context.
+            Modeled after legacy sh.MeetingTemplate.
+        </description>
+
+        <field name="agendaContainerId" type="id" is-pk="true" title="ID"/>
+        <field name="name" type="text-medium" title="Name"/>
+        <field name="shortName" type="text-medium" title="Short Name"/>
+        <field name="statusId" type="id" title="Status"/>
+        <field name="containerTypeEnumId" type="id" title="Type">
+            <description>Detailed type: RealTime, Virtual, Quality, Todo, Repository, etc.</description>
+        </field>
+        <field name="containerCategoryEnumId" type="id" title="Category">
+            <description>High-level category: AitCategoryAbstract or AitCategoryInstance.</description>
+        </field>
+        <field name="orgId" type="id" title="Owning Organization">
+            <description>Base ownership hierarchy for PartyRelationship permission tree</description>
+        </field>
+        <field name="fromDate" type="date-time" title="From Date"/>
+        <field name="thruDate" type="date-time" title="Thru Date"/>
+
+        <index name="AGD_CONT_FROM_DT"><index-field name="fromDate"/></index>
+
+        <relationship type="one" title="ContainerStatus" related="moqui.basic.StatusItem">
+            <key-map field-name="statusId"/>
+        </relationship>
+        <relationship type="one" title="ContainerType" related="moqui.basic.Enumeration">
+            <key-map field-name="containerTypeEnumId"/>
+        </relationship>
+        <relationship type="one" title="ContainerCategory" related="moqui.basic.Enumeration">
+            <key-map field-name="containerCategoryEnumId"/>
+        </relationship>
+        <relationship type="one" title="OwningOrg" related="mantle.party.Organization">
+            <key-map field-name="orgId" related="partyId"/>
+        </relationship>
+
+        <seed-data>
+            <!-- Categories -->
+            <moqui.basic.EnumerationType description="Agenda Container Category" enumTypeId="AgendaContainerCategory"/>
+            <moqui.basic.Enumeration enumId="AitCategoryAbstract" description="Abstract Blueprint" enumTypeId="AgendaContainerCategory"/>
+            <moqui.basic.Enumeration enumId="AitCategoryInstance" description="Concrete Instance" enumTypeId="AgendaContainerCategory"/>
+
+            <!-- Detailed Types -->
+            <moqui.basic.EnumerationType description="Agenda Container Type" enumTypeId="AgendaContainerType"/>
+            <moqui.basic.Enumeration enumId="AitContainerRealTime" parentEnumId="AitCategoryInstance" description="Realtime instance" enumTypeId="AgendaContainerType"/>
+            <moqui.basic.Enumeration enumId="AitContainerTodo" parentEnumId="AitCategoryInstance" description="Todo instance" enumTypeId="AgendaContainerType"/>
+            <moqui.basic.Enumeration enumId="AitContainerAbstract" parentEnumId="AitCategoryAbstract" description="Abstract Template" enumTypeId="AgendaContainerType"/>
+            <moqui.basic.Enumeration enumId="AitContainerRepo" parentEnumId="AitCategoryAbstract" description="Topic Repository" enumTypeId="AgendaContainerType"/>
+
+            <!-- Status Items -->
+            <moqui.basic.StatusType description="Agenda Container Status" statusTypeId="AgendaContainerStatus"/>
+            <moqui.basic.StatusItem description="Active" statusId="AgdStatusActive" statusTypeId="AgendaContainerStatus"/>
+            <moqui.basic.StatusItem description="Completed" statusId="AgdStatusCompleted" statusTypeId="AgendaContainerStatus"/>
+
+            <!-- Dropdown Options (Abstract Templates) -->
+            <aitree.meeting.AgendaContainer agendaContainerId="HdlMorningAbstract" name="Morning Huddle" shortName="Huddle" containerCategoryEnumId="AitCategoryAbstract" containerTypeEnumId="AitContainerAbstract" statusId="AgdStatusActive"/>
+            <aitree.meeting.AgendaContainer agendaContainerId="HdlLeadershipAbstract" name="Leadership Sync" shortName="Leadership" containerCategoryEnumId="AitCategoryAbstract" containerTypeEnumId="AitContainerAbstract" statusId="AgdStatusActive"/>
+            <aitree.meeting.AgendaContainer agendaContainerId="HdlClinicalAbstract" name="Clinical Review" shortName="Clinical" containerCategoryEnumId="AitCategoryAbstract" containerTypeEnumId="AitContainerAbstract" statusId="AgdStatusActive"/>
+
+            <!-- Repository -->
+            <aitree.meeting.AgendaContainer agendaContainerId="BASE_REPO" name="Base Repository Container" shortName="Base Repo" containerCategoryEnumId="AitCategoryAbstract" containerTypeEnumId="AitContainerRepo" statusId="AgdStatusActive"/>
+
+            <!-- Relationships -->
+            <aitree.meeting.AgendaContainerRelationship parentAgendaContainerId="HdlMorningAbstract" childAgendaContainerId="BASE_REPO" statusId="AgdStatusActive"/>
+            <aitree.meeting.AgendaContainerRelationship parentAgendaContainerId="HdlLeadershipAbstract" childAgendaContainerId="BASE_REPO" statusId="AgdStatusActive"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="AgendaContainerRelationship" package="aitree.meeting" authorize-skip="true">
+        <description>
+            Connects containers (e.g., Abstract Templates to Repositories).
+            Allows shared boilerplate messages within the repo to be 'available' to multiple meeting templates.
+        </description>
+        <field name="agendaContainerRelationshipId" type="id" is-pk="true"/>
+        <field name="parentAgendaContainerId" type="id"/>
+        <field name="childAgendaContainerId" type="id"/>
+        <field name="statusId" type="id"/>
+        <field name="fromDate" type="date-time"/>
+        <field name="thruDate" type="date-time"/>
+
+        <relationship type="one" title="ParentContainer" related="aitree.meeting.AgendaContainer">
+            <key-map field-name="parentAgendaContainerId" related="agendaContainerId"/>
+        </relationship>
+        <relationship type="one" title="ChildContainer" related="aitree.meeting.AgendaContainer">
+            <key-map field-name="childAgendaContainerId" related="agendaContainerId"/>
+        </relationship>
+        <relationship type="one" title="Status" related="moqui.basic.StatusItem">
+            <key-map field-name="statusId"/>
+        </relationship>
+    </entity>
+
+
+    <!-- ========================================================= -->
+    <!-- Agenda Message Entities (Replaces legacy Topics/Messages) -->
+    <!-- ========================================================= -->
+
+    <entity entity-name="AgendaMessage" package="aitree.meeting">
+        <description>
+            A recursive packet of information. Top-Level Topics are attached directly to an AgendaContainer.
+            Threaded Replies are attached directly to another AgendaMessage (parentMessageId).
+            Modeled after legacy sh.AgendaTopic.
+        </description>
+
+        <field name="agendaMessageId" type="id" is-pk="true"/>
+        <field name="parentMessageId" type="id">
+            <description>Populated if this message is a threaded reply to another message</description>
+        </field>
+        <field name="agendaContainerId" type="id">
+            <description>Populated if this is a top-level Topic attached to a Container</description>
+        </field>
+        
+        <!-- Ownership & Permission Boundaries -->
+        <field name="orgId" type="id">
+            <description>Base ownership for native PartyRelationship permission traversing.</description>
+        </field>
+        <field name="partyId" type="id">
+            <description>Specific person ownership/authorship</description>
+        </field>
+        <field name="statusId" type="id"/>
+
+        <!-- Scheduling -->
+        <field name="scheduleTypeId" type="id"/>
+        <field name="fromDate" type="date-time"/>
+        <field name="thruDate" type="date-time"/>
+
+        <!-- Relationships -->
+        <relationship type="one" title="ParentAgendaMessage" related="aitree.meeting.AgendaMessage">
+            <key-map field-name="parentMessageId" related="agendaMessageId"/>
+        </relationship>
+        <relationship type="one" title="AgendaContainer" related="aitree.meeting.AgendaContainer">
+            <key-map field-name="agendaContainerId"/>
+        </relationship>
+        <relationship type="one" title="OwningOrg" related="mantle.party.Organization">
+            <key-map field-name="orgId" related="partyId"/>
+        </relationship>
+        <relationship type="one" title="MessageAuthor" related="mantle.party.Person">
+            <key-map field-name="partyId"/>
+        </relationship>
+        <relationship type="one" title="MessageStatus" related="moqui.basic.StatusItem">
+            <key-map field-name="statusId"/>
+        </relationship>
+    </entity>
+
+    <entity entity-name="AgendaMessageContent" package="aitree.meeting">
+        <description>
+            Decoupled content payload for AgendaMessages (similar to legacy AgendaContent).
+            Supports multiple content nodes per message.
+        </description>
+
+        <field name="agendaMessageId" type="id" is-pk="true"/>
+        <field name="contentId" type="id" is-pk="true"/>
+        <field name="contentTypeEnumId" type="id"/>
+        
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="contentLocation" type="text-medium">
+            <description>Path to external resources if applicable</description>
+        </field>
+
+        <relationship type="one" title="AgendaMessage" related="aitree.meeting.AgendaMessage">
+            <key-map field-name="agendaMessageId"/>
+        </relationship>
+        <relationship type="one" title="ContentType" related="moqui.basic.Enumeration">
+            <key-map field-name="contentTypeEnumId"/>
+        </relationship>
+
+        <seed-data>
+            <moqui.basic.EnumerationType description="Message Content Type" enumTypeId="MsgContentType"/>
+            <moqui.basic.Enumeration description="HTML Text" enumId="mctHtml" enumTypeId="MsgContentType"/>
+            <moqui.basic.Enumeration description="Image" enumId="mctImage" enumTypeId="MsgContentType"/>
+            <moqui.basic.Enumeration description="PDF Image" enumId="mctPDFImage" enumTypeId="MsgContentType"/>
+        </seed-data>
+    </entity>
+
+
+    <!-- ========================================================= -->
+    <!-- Agenda Attribute Metadata (Replaces legacy Facets)        -->
+    <!-- ========================================================= -->
+
+    <entity entity-name="AgendaMessageAttribute" package="aitree.meeting">
+        <description>
+            Key-Value pairs for attaching arbitrary metadata, UI states, or structural tags 
+            to an AgendaMessage. Replaces the legacy Facet permission/domain/schedule tables.
+            Utilizes native Moqui upsert caching.
+        </description>
+
+        <!-- The Primary Keys -->
+        <field name="agendaMessageId" type="id" is-pk="true"/>
+        <field name="attrName" type="text-short" is-pk="true">
+            <description>E.g., "SortPriority", "DomainRole", "UI_State"</description>
+        </field>
+        <field name="sequenceNum" type="number-integer" is-pk="true" default="1">
+            <description>Escape hatch for identical multi-valued tags (e.g., matching 3 separate departments)</description>
+        </field>
+
+        <!-- The Payload -->
+        <field name="attrValue" type="text-medium">
+            <description>The physical string value</description>
+        </field>
+        <field name="attrEnumTypeId" type="id">
+            <description>Optional: Enforces strict validation mapping to moqui.basic.Enumeration</description>
+        </field>
+
+        <relationship type="one" title="AgendaMessage" related="aitree.meeting.AgendaMessage">
+            <key-map field-name="agendaMessageId"/>
+        </relationship>
+        <relationship type="one" title="AttributeTypeEnum" related="moqui.basic.Enumeration">
+            <key-map field-name="attrEnumTypeId" related="enumId"/>
+        </relationship>
+    </entity>
+
+</entities>

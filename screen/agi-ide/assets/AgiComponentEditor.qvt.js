@@ -1,6 +1,7 @@
 (function () {
     const AgiComponentEditor = {
         name: 'AgiComponentEditor',
+        mixins: [window.AgiEditorShareMixin],
         template: `
             <div :class="['component-editor-container fit column no-wrap q-pa-sm', activeHighlightedMariaId ? 'glow-active' : '']" style="height: 100%;">
                 <div class="q-mb-sm row items-center justify-between">
@@ -25,6 +26,11 @@
                 required: true
             }
         },
+        computed: {
+            artifactLocation() {
+                return this.screenPath;
+            }
+        },
         data() {
             return {
                 rawXmlSource: '',
@@ -33,9 +39,6 @@
             };
         },
         mounted() {
-            // Initialize cross-window communication channel
-            this.contextBus = new BroadcastChannel('agi-ide-context-bus');
-
             // Configure message event listener
             // 2. Listen for selection events broadcasting from the Visual Canvas
             this.contextBus.onmessage = (msg) => {

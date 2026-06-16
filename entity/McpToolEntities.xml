@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+    <entity entity-name="AgiMcpTool" package="agi.ide.mcp" cache="true" enable-audit-log="false">
+        <field name="mcpToolId" type="id" is-pk="true"/>
+        <field name="command" type="text-short" encrypt="false"/> 
+        <field name="description" type="text-medium"/>
+        <field name="scope" type="text-short"/> 
+        <field name="scriptBody" type="text-long"/> 
+    </entity>
+</entities>
