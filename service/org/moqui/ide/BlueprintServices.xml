@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-3.0.xsd">
+
+    <service verb="get" noun="Blueprint" type="inline">
+        <in-parameters>
+            <parameter name="artifactPath" type="String" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="metaJsonData" type="String"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                // a. Safely extract the active "ServletContext" from ec.web.servletContext.
+                def servletContext = null
+                try {
+                    servletContext = ec.web?.servletContext
+                } catch (Exception e) {
+                    // Ignored
+                }
+
+                // b. Check an internal context map attribute named "AGI_ACTIVE_BLUEPRINTS" for the requested 'artifactPath'.
+                def activeBlueprintsCache = servletContext?.getAttribute("AGI_ACTIVE_BLUEPRINTS")
+                if (activeBlueprintsCache == null && servletContext != null) {
+                    synchronized (servletContext) {
+                        activeBlueprintsCache = servletContext.getAttribute("AGI_ACTIVE_BLUEPRINTS")
+                        if (activeBlueprintsCache == null) {
+                            activeBlueprintsCache = new java.util.concurrent.ConcurrentHashMap<String, String>()
+                            servletContext.setAttribute("AGI_ACTIVE_BLUEPRINTS", activeBlueprintsCache)
+                        }
+                    }
+                }
+
+                String metaJsonData = activeBlueprintsCache?.get(artifactPath)
+
+                // c. If found in the cache map, return that metaJsonData immediately.
+                if (metaJsonData != null) {
+                    context.metaJsonData = metaJsonData
+                    return
+                }
+
+                // d. If it is a cache miss, query the "org.moqui.ai.ArtifactBlueprint" entity for the record matching 'artifactPath'.
+                def blueprintRecord = ec.entity.find("org.moqui.ai.ArtifactBlueprint")
+                    .condition("artifactPath", artifactPath)
+                    .one()
+
+                // e. If the entity record exists, put its metaJsonData into the "AGI_ACTIVE_BLUEPRINTS" cache map and return it.
+                if (blueprintRecord != null) {
+                    metaJsonData = blueprintRecord.metaJsonData
+                    if (activeBlueprintsCache != null) {
+                        activeBlueprintsCache.put(artifactPath, metaJsonData)
+                    }
+                    context.metaJsonData = metaJsonData
+                    return
+                }
+
+                // f. FALLBACK INITIALIZATION: If the record does not exist in the entity table yet, use the dynamic screen parsing logic found inside the 'getFormMetadata' transition of agi-ide.xml to compile the XML on disk into a 'qmeta' JSON tree string format. Save this generated tree string to the ArtifactBlueprint entity table, put it into the ServletContext cache map, and return it as the out-parameter.
+                def targetForm = artifactPath
+                def componentName = "agi-ide"
+
+                if (targetForm.contains("/")) {
+                    def pathParts = targetForm.split("/")
+                    componentName = pathParts[0]
+                    targetForm = pathParts[1]
+                }
+
+                String fileLocation = "component://${componentName}/screen/${componentName}/${targetForm}.xml".toString()
+
+                try {
+                    def resourceRef = ec.resource.getLocationReference(fileLocation)
+                    if (!resourceRef || !resourceRef.exists) {
+                        fileLocation = "component://${componentName}/screen/${targetForm}.xml".toString()
+                        resourceRef = ec.resource.getLocationReference(fileLocation)
+                    }
+
+                    if (resourceRef && resourceRef.exists) {
+                        // 1. Initialize the base screen renderer context
+                        org.moqui.impl.screen.ScreenRenderImpl sri = new org.moqui.impl.screen.ScreenRenderImpl(ec.screen)
+                        
+                        // 2. Set standard configuration states
+                        sri.rootScreen(fileLocation)
+                        sri.renderMode("qmeta".toString())
+                        
+                        // Pull the webapp name from the servlet context instead of the web facade property block
+                        String resolvedWebappName = servletContext?.getInitParameter("moqui-name")
+                        sri.webappName(resolvedWebappName ? resolvedWebappName.toString() : "agi-ide")
+                        
+                        // 3. Bind a dedicated text stream writer to catch the compiled metadata output
+                        java.io.StringWriter sw = new java.io.StringWriter()
+                        sri.internalWriter = sw
+                        
+                        // 4. Force isolated internal parsing structures without running an endless browser loop
+                        sri.rootScreenDef = ec.screen.getScreenDefinition(fileLocation)
+                        sri.screenUrlInfo = org.moqui.impl.screen.ScreenUrlInfo.getScreenUrlInfo(sri, sri.rootScreenDef, new java.util.ArrayList<String>(), null, 0)
+                        sri.screenUrlInstance = sri.screenUrlInfo.getInstance(sri, false)
+                        
+                        // Process the widget nodes straight into our local StringWriter string buffer
+                        sri.doActualRender()
+                        
+                        metaJsonData = sw.toString()
+                        
+                        // Save this generated tree string to the ArtifactBlueprint entity table
+                        ec.entity.makeValue("org.moqui.ai.ArtifactBlueprint")
+                            .set("artifactPath", artifactPath)
+                            .set("metaJsonData", metaJsonData)
+                            .set("lastUpdatedBy", ec.user.userId)
+                            .create()
+                            
+                        // Put it into the ServletContext cache map
+                        if (activeBlueprintsCache != null) {
+                            activeBlueprintsCache.put(artifactPath, metaJsonData)
+                        }
+                        
+                        context.metaJsonData = metaJsonData
+                    } else {
+                        ec.logger.warn("Layout XML file not found on disk at location: ${fileLocation}")
+                        context.metaJsonData = null
+                    }
+                } catch (Exception ex) {
+                    ec.logger.error("Failed to build dynamic component widget metadata tree via isolated rendering pass for artifactPath: ${artifactPath}", ex)
+                    throw ex
+                }
+            ]]></script>
+        </actions>
+    </service>
+
+    <service verb="store" noun="Blueprint" type="inline">
+        <in-parameters>
+            <parameter name="artifactPath" type="String" required="true"/>
+            <parameter name="metaJsonData" type="String" required="true"/>
+        </in-parameters>
+        <actions>
+            <script><![CDATA[
+                // a. Extract the "ServletContext" cache map named "AGI_ACTIVE_BLUEPRINTS".
+                def servletContext = null
+                try {
+                    servletContext = ec.web?.servletContext
+                } catch (Exception e) {
+                    // Ignored
+                }
+
+                def activeBlueprintsCache = servletContext?.getAttribute("AGI_ACTIVE_BLUEPRINTS")
+                if (activeBlueprintsCache == null && servletContext != null) {
+                    synchronized (servletContext) {
+                        activeBlueprintsCache = servletContext.getAttribute("AGI_ACTIVE_BLUEPRINTS")
+                        if (activeBlueprintsCache == null) {
+                            activeBlueprintsCache = new java.util.concurrent.ConcurrentHashMap<String, String>()
+                            servletContext.setAttribute("AGI_ACTIVE_BLUEPRINTS", activeBlueprintsCache)
+                        }
+                    }
+                }
+
+                // b. Write or overwrite the incoming metaJsonData string directly to the cache map under the 'artifactPath' key.
+                if (activeBlueprintsCache != null) {
+                    activeBlueprintsCache.put(artifactPath, metaJsonData)
+                }
+
+                // c. Update or create the corresponding "org.moqui.ai.ArtifactBlueprint" entity record with the new metaJsonData string, setting 'lastUpdatedBy' to ec.user.userId. Do not add any manual timestamp fields.
+                def blueprintValue = ec.entity.find("org.moqui.ai.ArtifactBlueprint")
+                    .condition("artifactPath", artifactPath)
+                    .one()
+
+                if (blueprintValue != null) {
+                    blueprintValue.set("metaJsonData", metaJsonData)
+                    blueprintValue.set("lastUpdatedBy", ec.user.userId)
+                    blueprintValue.update()
+                } else {
+                    ec.entity.makeValue("org.moqui.ai.ArtifactBlueprint")
+                        .set("artifactPath", artifactPath)
+                        .set("metaJsonData", metaJsonData)
+                        .set("lastUpdatedBy", ec.user.userId)
+                        .create()
+                }
+
+                // Construct a structured Map payload representing the modification event
+                def broadcastUpdate = {
+                    def payload = [
+                        type: "blueprint-updated",
+                        artifactPath: artifactPath,
+                        newData: metaJsonData
+                    ]
+                    def payloadJson = groovy.json.JsonOutput.toJson(payload)
+
+                    // Try standard ec.web.sendNotificationStream if available
+                    try {
+                        ec.web?.sendNotificationStream(payloadJson)
+                    } catch (Throwable t) {
+                        // ignore if method not supported
+                    }
+
+                    // Broadcast to established AgiWebSocketEndpoint channels
+                    try {
+                        def channelsMap = org.moqui.ai.AgiWebSocketEndpoint.getChannels()
+                        if (channelsMap) {
+                            for (def entry in channelsMap.entrySet()) {
+                                def sessions = entry.value
+                                if (sessions) {
+                                    for (def session in sessions) {
+                                        if (session.isOpen()) {
+                                            try {
+                                                session.getBasicRemote().sendText(payloadJson)
+                                            } catch (Exception se) {
+                                                // ignore session send errors
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Throwable t) {
+                        ec.logger.warn("Failed to broadcast blueprint update via WebSocket: " + t.getMessage())
+                    }
+                }
+
+                // Register transaction synchronization to execute WebSocket broadcast on commit success
+                try {
+                    if (ec.transaction.isTransactionActive()) {
+                        ec.transaction.registerSynchronization(new jakarta.transaction.Synchronization() {
+                            @Override void beforeCompletion() {}
+                            @Override void afterCompletion(int status) {
+                                if (status == jakarta.transaction.Status.STATUS_COMMITTED) {
+                                    broadcastUpdate()
+                                }
+                            }
+                        })
+                    } else {
+                        broadcastUpdate()
+                    }
+                } catch (Throwable t) {
+                    ec.logger.warn("Error registering transaction synchronization for blueprint broadcast, broadcasting immediately: " + t.getMessage())
+                    broadcastUpdate()
+                }
+            ]]></script>
+        </actions>
+    </service>
+
+</services>
