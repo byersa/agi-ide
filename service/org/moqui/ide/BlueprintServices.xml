@@ -131,6 +131,75 @@
         </in-parameters>
         <actions>
             <script><![CDATA[
+                // In-memory JSON validation routine to enforce HIPAA and layout container audit rules
+                def slurper = new groovy.json.JsonSlurper()
+                def rootObject = null
+                try {
+                    rootObject = slurper.parseText(metaJsonData)
+                } catch (Exception e) {
+                    ec.message.addError("DOM-VALIDATION-FAILURE: Invalid JSON format: " + e.getMessage())
+                    return
+                }
+
+                def collectedErrors = new java.util.ArrayList<String>()
+                def sensitiveKeywords = ["history", "ssn", "medical", "patient", "admission"]
+
+                def scanNodes
+                scanNodes = { node, parentContainers ->
+                    if (node == null) return
+                    if (node instanceof Map) {
+                        def type = node.get("@type")
+                        def name = node.get("name")?.toString() ?: ""
+                        def title = node.get("title")?.toString() ?: ""
+                        
+                        def isSensitive = sensitiveKeywords.any { kw -> 
+                            name.toLowerCase().contains(kw) || title.toLowerCase().contains(kw) 
+                        }
+                        
+                        def currentParentContainers = new java.util.ArrayList(parentContainers)
+                        if (type == "Container") {
+                            currentParentContainers.add(node)
+                        }
+                        
+                        if (type == "FormField") {
+                            if (isSensitive) {
+                                // HIPAA RULE: must have encrypt == true or encrypt == 'true'
+                                def encrypt = node.get("encrypt")
+                                if (encrypt != true && encrypt != "true") {
+                                    collectedErrors.add("Sensitive FormField '${name ?: title}' is missing encryption constraint ('encrypt' must be 'true')")
+                                }
+                                
+                                // AUDIT RULE: must have surrounding or parent Container with enable-audit-log == true or 'true'
+                                def hasAuditedParent = currentParentContainers.any { parent ->
+                                    def auditLog = parent.get("enable-audit-log")
+                                    return auditLog == true || auditLog == "true"
+                                }
+                                if (!hasAuditedParent) {
+                                    collectedErrors.add("Sensitive FormField '${name ?: title}' is missing surrounding container audit log constraint ('enable-audit-log' must be 'true' on a parent Container)")
+                                }
+                            }
+                        }
+                        
+                        def children = node.get("children")
+                        if (children instanceof java.util.Collection) {
+                            for (child in children) {
+                                scanNodes(child, currentParentContainers)
+                            }
+                        }
+                    } else if (node instanceof java.util.Collection) {
+                        for (item in node) {
+                            scanNodes(item, parentContainers)
+                        }
+                    }
+                }
+
+                scanNodes(rootObject, [])
+
+                if (collectedErrors) {
+                    ec.message.addError("DOM-VALIDATION-FAILURE: " + collectedErrors.join(", "))
+                    return
+                }
+
                 // a. Extract the "ServletContext" cache map named "AGI_ACTIVE_BLUEPRINTS".
                 def servletContext = null
                 try {

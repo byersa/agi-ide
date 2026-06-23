@@ -201,7 +201,7 @@
                 }
                 // Open a persistent socket channel targeting the current active panel context 
                 const currentChannel = this.activePanel || 'global_canvas';
-                const socketUrl = `ws://${window.location.host}/pub/${currentChannel}?token=816554a337e2d73431bd2903642f993b`;
+                const socketUrl = `ws://${window.location.host}/agi-ws/${currentChannel}?token=816554a337e2d73431bd2903642f993b`;
 
                 console.info("🔌 Opening communication line to server-side ADK core...", socketUrl);
                 this.wsConnection = new WebSocket(socketUrl);
@@ -209,6 +209,34 @@
                 this.wsConnection.onmessage = (event) => {
                     try {
                         const payload = JSON.parse(event.data);
+
+                        // 🎯 NEW INTERCEPTOR BRANCH: Catch our dynamic tool mutations
+                        if (payload.event === 'artifact-state-mutated') {
+                            console.info("📡 [WIRE] Forwarding server layout mutation to workspace bus...");
+                            if (this.contextBus) {
+                                this.contextBus.postMessage({
+                                    event: 'artifact-state-mutated',
+                                    mutatedTree: payload.mutatedTree
+                                });
+                            }
+                            return;
+                        }
+
+                        if (payload.type === 'blueprint-updated') {
+                            console.info("🔄 [SYNC] Server broadcasted an active Meta-JSON blueprint modification:", payload.artifactPath);
+
+                            // Check if the canvas editor is mounted and update its reactive tree data reference
+                            const canvasEditor = window.AgiComponents?.['agi-canvas-editor'];
+                            if (canvasEditor && canvasEditor.blueprintTree) {
+                                // Re-hydrate the reactive canvas array; Vue 3 will automatically trigger a UI redraw pass
+                                canvasEditor.blueprintTree[0] = typeof payload.newData === 'string'
+                                    ? JSON.parse(payload.newData)
+                                    : payload.newData;
+
+                                console.info("🎨 [RENDER] Canvas Editor synchronized and forced a reactive redraw stream.");
+                            }
+                            return;
+                        }
 
                         // Track 1: Incrementally append text tokens as they stream back from the ADK agent 
                         if (payload.type === 'textToken') {
@@ -310,25 +338,40 @@
                         this.isAgiAgentThinking = false;
                         if (result.error) throw new Error(result.error);
 
-                        // Parse out the structured tool command returned by your server's GeminiServices script block
-                        const actionCommand = JSON.parse(result.completionText.trim());
+                        let actionCommand = null;
+                        let displayResponseText = "";
+                        const rawText = (result.completionText || "").trim();
 
-                        // 🎯 OPTIONAL CHAINING REMEDIATION
-                        // Safely resolve the canvas layout node, defaulting to an empty map object if unhydrated
-                        const canvasEditor = window.AgiComponents?.['agi-canvas-editor'];
-                        const layoutBlueprintTree = canvasEditor?.blueprintTree?.[0] || {};
+                        // 🎯 SAFELY DETECT OR PROBE PAYLOAD STRUCTURE
+                        if (rawText.startsWith("{") || rawText.startsWith("[")) {
+                            try {
+                                actionCommand = JSON.parse(rawText);
+                            } catch (e) {
+                                console.warn("Failed parsing text that looked like JSON, treating as text explanation.");
+                                displayResponseText = rawText;
+                            }
+                        } else {
+                            displayResponseText = rawText;
+                        }
 
-                        // Pass it directly into our verified client execution gate!
-                        window.AgiMcpEngine.executeTool(
-                            actionCommand.command,
-                            layoutBlueprintTree,
-                            this.activeArtifactLocation
-                        );
+                        // If it's a legacy JSON command string, pipe it into the client canvas executor
+                        if (actionCommand && actionCommand.command) {
+                            const canvasEditor = window.AgiComponents?.['agi-canvas-editor'];
+                            const layoutBlueprintTree = canvasEditor?.blueprintTree?.[0] || {};
 
-                        // Push success state to local workspace log layout
+                            window.AgiMcpEngine.executeTool(
+                                actionCommand.command,
+                                layoutBlueprintTree,
+                                this.activeArtifactLocation
+                            );
+
+                            displayResponseText = `Successfully executed layout modification: **${actionCommand.command}**.`;
+                        }
+
+                        // Push the actual message (either Gemini's narrative or our success token) to the UI logs
                         this.aiConversationLog.push({
                             sender: 'assistant',
-                            text: `Successfully executed layout modification: **${actionCommand.command}**.`
+                            text: displayResponseText || "Server operation completed successfully."
                         });
                     })
                     .catch(err => {

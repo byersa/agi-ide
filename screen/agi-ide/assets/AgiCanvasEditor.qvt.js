@@ -147,103 +147,109 @@
         mounted() {
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
             this.contextBus.onmessage = (msg) => {
-                if (msg.data && msg.data.event === 'element-selected-by-id') {
+                if (!msg.data) return;
+
+                // Track A: Node visual highlight tracking
+                if (msg.data.event === 'element-selected-by-id') {
                     this.selectedMariaId = msg.data.mariaId;
                     this.scrollToNode(msg.data.mariaId);
-                } else if (event.data && event.data.event === 'artifact-state-mutated' && event.data.panelName === 'AgiCanvasEditor') {
-                    console.info("🎨 AgiCanvasEditor intercepting layout mutation. Re-rendering view tree...");
-                    // Vue reactivity takes over here and instantly repaints the workspace panels
-                    this.blueprintTree = [event.data.mutatedTree];
                 }
-            };
 
-            // Fetch compiled metadata JSON payload
-            fetch('/agi-ide/getFormMetadata?screenPath=' + encodeURIComponent(this.screenPath), {
-                method: 'GET',
-                headers: {
-                    'Accept': 'application/json'
+                // 🎯 Track B: Catch layout tool mutations from the browser workspace bus
+                else if (msg.data.event === 'artifact-state-mutated') {
+                    console.info("🎨 [RENDER] AgiCanvasEditor intercepted layout mutation. Swapping tree...");
+
+                    // Replace the root node array. Vue 3 automatically handles the reactive redraw!
+                    this.blueprintTree = [msg.data.mutatedTree];
                 }
-            })
-                .then(res => res.text()) // Grab raw response text buffer
-                .then(rawText => {
-                    let sanitizedText = rawText.trim();
 
-                    // 1. SELF-HEALING: Stitch missing sibling object commas
-                    sanitizedText = sanitizedText.replace(/\}\s*\{/g, '},{');
-
-                    // 2. SELF-HEALING: Map json-ld "@type" tokens to flat standard "type" keys
-                    sanitizedText = sanitizedText.replace(/"@type"/g, '"type"');
-
-                    // Compile safe JSON structure map
-                    const data = JSON.parse(sanitizedText);
-
-                    // 3. STRUCTURAL NORMALIZATION: Map Moqui's root "widgets" array to "children"
-                    if (data && data.widgets && !data.children) {
-                        console.info("Mapping backend root 'widgets' payload array to 'children' schema.");
-                        data.children = data.widgets;
-                    }
-
-                    // Normalize single object layout envelopes safely into the template array
-                    if (data && !Array.isArray(data)) {
-                        this.blueprintTree = [data];
-                    } else {
-                        this.blueprintTree = data || [];
+                // Fetch compiled metadata JSON payload
+                fetch('/agi-ide/getFormMetadata?screenPath=' + encodeURIComponent(this.screenPath), {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json'
                     }
                 })
-                .catch(err => {
-                    console.warn("Telemetry processing circuit interrupted, utilizing fallbacks:", err);
-                    this.blueprintTree = [
-                        {
-                            mariaId: "node_1",
-                            type: "Container",
-                            id: "main-layout",
-                            screen: this.screenPath,
-                            children: [
-                                {
-                                    mariaId: "node_2",
-                                    type: "FormSingle",
-                                    id: "SampleForm",
-                                    screen: this.screenPath,
-                                    children: [
-                                        { mariaId: "node_3", type: "FormField", name: "username", text: "Username Input Field", screen: this.screenPath }
-                                    ]
-                                }
-                            ]
+                    .then(res => res.text()) // Grab raw response text buffer
+                    .then(rawText => {
+                        let sanitizedText = rawText.trim();
+
+                        // 1. SELF-HEALING: Stitch missing sibling object commas
+                        sanitizedText = sanitizedText.replace(/\}\s*\{/g, '},{');
+
+                        // 2. SELF-HEALING: Map json-ld "@type" tokens to flat standard "type" keys
+                        sanitizedText = sanitizedText.replace(/"@type"/g, '"type"');
+
+                        // Compile safe JSON structure map
+                        const data = JSON.parse(sanitizedText);
+
+                        // 3. STRUCTURAL NORMALIZATION: Map Moqui's root "widgets" array to "children"
+                        if (data && data.widgets && !data.children) {
+                            console.info("Mapping backend root 'widgets' payload array to 'children' schema.");
+                            data.children = data.widgets;
                         }
-                    ];
-                });
-        },
-        beforeUnmount() {
-            if (this.contextBus) {
-                this.contextBus.close();
-            }
-        },
-        methods: {
-            handleVisualNodeClick(clickedNode) {
-                this.selectedMariaId = clickedNode.mariaId;
 
-                this.contextBus.postMessage({
-                    event: 'element-selected-by-id',
-                    mariaId: clickedNode.mariaId,
-                    screen: clickedNode.screen
-                });
-
-                this.scrollToNode(clickedNode.mariaId);
+                        // Normalize single object layout envelopes safely into the template array
+                        if (data && !Array.isArray(data)) {
+                            this.blueprintTree = [data];
+                        } else {
+                            this.blueprintTree = data || [];
+                        }
+                    })
+                    .catch(err => {
+                        console.warn("Telemetry processing circuit interrupted, utilizing fallbacks:", err);
+                        this.blueprintTree = [
+                            {
+                                mariaId: "node_1",
+                                type: "Container",
+                                id: "main-layout",
+                                screen: this.screenPath,
+                                children: [
+                                    {
+                                        mariaId: "node_2",
+                                        type: "FormSingle",
+                                        id: "SampleForm",
+                                        screen: this.screenPath,
+                                        children: [
+                                            { mariaId: "node_3", type: "FormField", name: "username", text: "Username Input Field", screen: this.screenPath }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ];
+                    });
             },
-            scrollToNode(mariaId) {
-                this.$nextTick(() => {
-                    const el = this.$el.querySelector(`[mariaid="${mariaId}"]`) || document.querySelector(`[mariaid="${mariaId}"]`);
-                    if (el) {
-                        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                        el.classList.add('pulse-highlight');
-                        setTimeout(() => el.classList.remove('pulse-highlight'), 1000);
-                    }
-                });
-            }
-        }
-    };
+                beforeUnmount() {
+                if (this.contextBus) {
+                    this.contextBus.close();
+                }
+            },
+            methods: {
+                handleVisualNodeClick(clickedNode) {
+                    this.selectedMariaId = clickedNode.mariaId;
 
-    window.AgiCanvasEditor = AgiCanvasEditor;
-    if (!window.AgiComponents) window.AgiComponents = {};
-    window.AgiComponents['agi-canvas-editor'] = AgiCanvasEditor;
-})();
+                    this.contextBus.postMessage({
+                        event: 'element-selected-by-id',
+                        mariaId: clickedNode.mariaId,
+                        screen: clickedNode.screen
+                    });
+
+                    this.scrollToNode(clickedNode.mariaId);
+                },
+                scrollToNode(mariaId) {
+                    this.$nextTick(() => {
+                        const el = this.$el.querySelector(`[mariaid="${mariaId}"]`) || document.querySelector(`[mariaid="${mariaId}"]`);
+                        if (el) {
+                            el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                            el.classList.add('pulse-highlight');
+                            setTimeout(() => el.classList.remove('pulse-highlight'), 1000);
+                        }
+                    });
+                }
+            }
+        };
+
+        window.AgiCanvasEditor = AgiCanvasEditor;
+        if(!window.AgiComponents) window.AgiComponents = {};
+        window.AgiComponents['agi-canvas-editor'] = AgiCanvasEditor;
+    })();

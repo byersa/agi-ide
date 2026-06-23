@@ -245,7 +245,7 @@
 
             injectLocalFallbackTools() {
                 window.AgiMcpEngine.registerTool({
-                    command: '/add-mock-field',
+                    commandstore: '/add-mock-field',
                     description: 'Fallback testing field tool',
                     scope: 'AgiCanvasEditor',
                     execute: (currentTree, targetMariaId) => {

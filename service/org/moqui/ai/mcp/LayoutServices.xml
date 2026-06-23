@@ -1,0 +1,111 @@
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-3.0.xsd">
+
+    <!-- 🎯 Change the path name right here -->
+    <service verb="modify" noun="Blueprint" type="inline" 
+             name="org.moqui.ai.mcp.LayoutServices.modify#Blueprint">
+        <description>Modify a blueprint layout tree on the server</description>
+        <in-parameters>
+            <parameter name="artifactPath" type="String" required="true"/>
+            <parameter name="metaJsonData" type="String" required="true"/>
+        </in-parameters>
+        <actions>
+            <script><![CDATA[
+                ec.service.sync().name("org.moqui.ide.BlueprintServices.store#Blueprint")
+                    .parameters([artifactPath: artifactPath, metaJsonData: metaJsonData])
+                    .call()
+            ]]></script>
+        </actions>
+    </service>
+
+    <service verb="add" noun="FormField">
+        <description>Use this tool when the user requests to add, create, or insert a new input field, form element, or data column into the active user interface layout canvas. Do not attempt to write text commands; execute this tool with the appropriate node target parameters to modify the layout structure directly.</description>
+        <in-parameters>
+            <parameter name="targetNodeId" required="true">
+                <description>The unique ID string of the parent container element, section, or form panel inside the active layout tree where this new field should be appended.</description>
+            </parameter>
+            <parameter name="label" required="true">
+                <description>The human-readable label or title text that will display next to the field in the user interface (e.g., 'Medical History').</description>
+            </parameter>
+            <parameter name="encrypt" type="String" default-value="false">
+                <description>MUST be set to 'true' if the field captures sensitive data, medical history, or Personally Identifiable Information (PII) to comply with HIPAA guidelines.</description>
+            </parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="status" type="String"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import groovy.json.JsonSlurper
+                import groovy.json.JsonOutput
+
+                // 🎯 DEBUG 1: Trace what the AI Agent passed into the service
+                ec.logger.info("🚀 [TOOL EXECUTION] add#FormField called with: targetNodeId=${targetNodeId}, label=${label}, encrypt=${encrypt}")
+                // 1. Enforce Domain Rule: HIPAA Sensitive Data Auto-Encryption
+                boolean secureField = "true".equalsIgnoreCase(encrypt)
+                String cleanName = label.replaceAll("\\s+", "")
+
+                // 2. Load the persistent Meta-JSON Source of Truth
+                // For now, we simulate pulling the current canvas buffer state.
+                // In production, this pulls from your active file/database entity.
+                String currentMetaJsonStr = context.activeLayoutBuffer ?: "{ \"id\": \"root\", \"tagName\": \"form\", \"children\": [] }"
+                Map layoutTree = new JsonSlurper().parseText(currentMetaJsonStr)
+
+                // 3. Define a closure to deep-search and mutate the tree surgically
+                def injectFieldNode
+                injectFieldNode = { Map node ->
+                    if (node.id == targetNodeId) {
+                        if (node.children == null) node.children = []
+                        node.children.add([
+                            id: java.util.UUID.randomUUID().toString(),
+                            tagName: "field",
+                            attributes: [
+                                name: cleanName,
+                                label: label,
+                                encrypt: secureField ? "true" : "false"
+                            ]
+                        ])
+                        return true
+                    }
+                    if (node.children) {
+                        for (child in node.children) {
+                            if (injectFieldNode(child)) return true
+                        }
+                    }
+                    return false
+                }
+
+                // 4. Run the surgical mutation against the in-memory tree object
+                boolean mutated = injectFieldNode(layoutTree)
+
+                if (mutated) {
+                    // 🎯 DEBUG 2: Confirm successful tree modification
+                    ec.logger.info("🌲 [TOOL MUTATION SUCCESS] Node surgically injected under parent: ${targetNodeId}")
+                    String updatedMetaJson = JsonOutput.toJson(layoutTree)
+                    
+                    // 5. Persist the updated string back to the server storage layer here
+                    // e.g., ec.service.sync().name("update#LayoutAsset").parameter("metaJson", updatedMetaJson).call()
+
+                    // 🎯 FIX: Serialize the packet to text and call sendWebSocketText
+                    String jsonPacket = groovy.json.JsonOutput.toJson([
+                        event: "artifact-state-mutated",
+                        mutatedTree: layoutTree
+                    ])
+                    
+                    // 🎯 DEBUG 3: Inspect the final string output payload right before shipping
+                    ec.logger.info("📡 [NOTIFICATION BROADCAST] Shipping JSON packet to topic 'agi-ide-canvas': ${jsonPacket}")
+                    ec.makeNotificationMessage()
+                        .topic("agi-ide-canvas")
+                        .message(jsonPacket)
+                        .send()
+                    context.status = "SUCCESS"
+                } else {
+                    // 🎯 DEBUG 4: Trace mapping failures clearly
+                    ec.logger.warn("❌ [TOOL MUTATION FAILED] Target node container [${targetNodeId}] was NOT found in the active tree buffer.")
+                    ec.logger.warn("Target node container [${targetNodeId}] not found in Meta-JSON layout tree.")
+                    context.status = "NODE_NOT_FOUND"
+                }
+            ]]></script>
+        </actions>
+    </service>
+</services>
