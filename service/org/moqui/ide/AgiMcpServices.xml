@@ -59,4 +59,75 @@
             <parameter name="completionText" required="true" type="String"/>
         </out-parameters>
     </service>
+
+    <service verb="get" noun="FormMetadata" type="inline">
+        <description>
+            Compiles a raw Moqui XML screen form artifact path into a flattened Meta-JSON schema definition string.
+        </description>
+        <in-parameters>
+            <parameter name="screenPath" type="String" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="metadataJson" type="String"/>
+        </out-parameters>
+        <actions>
+            <log message="In get#FormMetadata, screenPath: ${screenPath}" />
+            <script><![CDATA[
+                def targetForm = screenPath
+                def componentName = "agi-ide"
+
+//                if (targetForm.contains("/")) {
+//                    def pathParts = targetForm.split("/")
+//                    componentName = pathParts[0]
+//                    targetForm = pathParts[1]
+//                }
+
+//                String fileLocation = "component://${componentName}/screen/${componentName}/${targetForm}.xml".toString()
+                String fileLocation = screenPath
+                ec.logger.info("In getFormMetadata, fileLocation: " + fileLocation);
+
+                try {
+                    def resourceRef = ec.resource.getLocationReference(fileLocation)
+                    if (!resourceRef || !resourceRef.exists) {
+                        fileLocation = "component://${componentName}/screen/${targetForm}.xml".toString()
+                        resourceRef = ec.resource.getLocationReference(fileLocation)
+                    }
+
+                    if (resourceRef && resourceRef.exists) {
+                        // 1. Initialize the base screen renderer context
+                        org.moqui.impl.screen.ScreenRenderImpl sri = new org.moqui.impl.screen.ScreenRenderImpl(ec.screen)
+                        
+                        // 2. Set standard configuration states
+                        sri.rootScreen(fileLocation)
+                        sri.renderMode("qmeta".toString())
+                        
+                        // FIXED: Pull the webapp name from the servlet context instead of the web facade property block
+                        String resolvedWebappName = ec.web.request.servletContext.getInitParameter("moqui-name")
+                        sri.webappName(resolvedWebappName ? resolvedWebappName.toString() : "agi-ide")
+                        
+                        // 3. Bind a dedicated text stream writer to catch the compiled metadata output
+                        java.io.StringWriter sw = new java.io.StringWriter()
+                        sri.internalWriter = sw
+                        
+                        // 4. Force isolated internal parsing structures without running an endless browser loop
+                        sri.rootScreenDef = ec.screen.getScreenDefinition(fileLocation)
+                        sri.screenUrlInfo = org.moqui.impl.screen.ScreenUrlInfo.getScreenUrlInfo(sri, sri.rootScreenDef, new ArrayList<String>(), null, 0)
+                        sri.screenUrlInstance = sri.screenUrlInfo.getInstance(sri, false)
+                        
+                        // Process the widget nodes straight into our local StringWriter string buffer
+                        sri.doActualRender()
+                        
+                        // 5. Assign the compiled text map down to the out-parameter variable
+                        metadataJson = sw.toString()
+                    } else {
+                        metadataJson = '{"error": "Target layout asset file not found on disk context."}'
+                    }
+                } catch (Exception ex) {
+                    ec.logger.error("Failed to build dynamic component widget metadata tree via isolated rendering pass", ex)
+                    metadataJson = '{"error": "Exception occurred during direct screen compilation pass. See server console logs."}'
+                }
+            ]]></script>
+        </actions>
+    </service>
+
 </services>

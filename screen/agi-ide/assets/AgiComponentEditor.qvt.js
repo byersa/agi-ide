@@ -5,7 +5,10 @@
         template: `
             <div :class="['component-editor-container fit column no-wrap q-pa-sm', activeHighlightedMariaId ? 'glow-active' : '']" style="height: 100%;">
                 <div class="q-mb-sm row items-center justify-between">
-                    <div class="text-subtitle2 text-grey-8">XML Component Editor</div>
+                    <div class="row items-center q-gutter-x-sm">
+                        <div class="text-subtitle2 text-grey-8">XML Component Editor</div>
+                        <q-btn icon="save" label="Save Changes" dense flat @click="executeBufferSave" />
+                    </div>
                     <q-chip v-if="activeHighlightedMariaId" color="primary" text-color="white" icon="gps_fixed" dense size="sm" @click="clearHighlight" clickable>
                         Synced: {{ activeHighlightedMariaId.split('#')[1] || activeHighlightedMariaId }}
                     </q-chip>
@@ -24,6 +27,10 @@
             screenPath: {
                 type: String,
                 required: true
+            },
+            layoutTree: {
+                type: Object,
+                default: () => ({ id: "root", tagName: "form", children: [] })
             }
         },
         computed: {
@@ -35,8 +42,21 @@
             return {
                 rawXmlSource: '',
                 contextBus: null,
-                activeHighlightedMariaId: ''
+                activeHighlightedMariaId: '',
+                localBlueprintTree: { id: "root", tagName: "form", children: [] }
             };
+        },
+        watch: {
+            layoutTree: {
+                handler(newTree) {
+                    if (newTree) {
+                        console.info(`🔄 Editor [${this.$options.name}] deeply sync'd localBlueprintTree to new workspace layout state.`);
+                        this.localBlueprintTree = JSON.parse(JSON.stringify(newTree));
+                    }
+                },
+                immediate: true,
+                deep: true
+            }
         },
         mounted() {
             // Configure message event listener
@@ -48,15 +68,17 @@
                 }
             };
 
-            // Fetch raw XML component text definition
-            fetch('/agi-ide/getRawXml?screenPath=' + encodeURIComponent(this.screenPath))
-                .then(res => res.text())
-                .then(text => {
-                    this.rawXmlSource = text;
+            // Fetch raw XML component text definition with axios
+            const vm = this;
+            const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
+            const axiosConfig = ideStore ? ideStore.getAxiosConfig : {};
+            axios.get('/agi-ide/getRawXml?screenPath=' + encodeURIComponent(this.screenPath), axiosConfig)
+                .then(function (response) {
+                    vm.rawXmlSource = response.data || '';
                 })
-                .catch(err => {
+                .catch(function (err) {
                     console.warn("Failed fetching component XML, loading fallback blueprint code structure", err);
-                    this.rawXmlSource = `<?xml version="1.0" encoding="UTF-8"?>
+                    vm.rawXmlSource = `<?xml version="1.0" encoding="UTF-8"?>
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" require-authentication="true">
     <widgets>
         <container id="main-layout">
@@ -81,6 +103,11 @@
             }
         },
         methods: {
+            executeBufferSave() {
+                console.info(`💾 Editor [${this.$options.name}] triggering upstream workspace buffer save request.`);
+                // Emit the custom event. Pass the current layout tree state as the payload.
+                this.$emit('trigger-save', this.localBlueprintTree || this.layoutTree);
+            },
             onTextareaInput(event) {
                 this.rawXmlSource = event.target.value;
                 // Broadcast changes to update layout preview

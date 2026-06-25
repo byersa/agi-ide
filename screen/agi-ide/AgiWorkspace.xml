@@ -11,13 +11,13 @@
         -->
     </actions>
 
-    <widgets>
-        <container id="agi-workspace-container">
-            <render-mode>
-                <text type="html"><![CDATA[
-                    <agi-workspace screen-path="SampleForm"></agi-workspace>
-                ]]></text>
-            </render-mode>
-        </container>
-    </widgets>
+<widgets>
+    <container id="agi-workspace-container">
+        <render-mode>
+            <text type="html"><![CDATA[
+                <agi-workspace screen-path="component://agi-ide/screen/SampleForm.xml"></agi-workspace>
+            ]]></text>
+        </render-mode>
+    </container>
+</widgets>
 </screen>

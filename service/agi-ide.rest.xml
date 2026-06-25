@@ -43,7 +43,7 @@
         </method>
     </resource>
     <resource name="geminiProxy">
-        <method type="post" require-authentication="false">
+        <method type="post" require-authentication="false" >
             <service name="org.moqui.ide.AgiMcpServices.executeAdkProxyLoop"/>
         </method>
     </resource>

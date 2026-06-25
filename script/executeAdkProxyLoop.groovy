@@ -10,11 +10,37 @@ if (context.scriptFlags == null) {
 }
 
 String userPrompt = context.userPrompt
-Map activeTree = context.activeTree ?: [:]
 // Map the canvas target coordinate smoothly to our tool input signature
 String targetNodeId = context.targetMariaId ?: context.focusCoordinate ?: "root"
+String artifactUri = context.focusCoordinate ?: context.activeArtifactLocation ?: ""
+
+// 🎯 SAFE GUARD: If the frontend didn't pass a valid path (e.g. initial boot or empty palette state),
+// provide a default sandbox file string so the system never breaks validation constraints.
+if (!artifactUri || artifactUri.trim() == "") {
+    ec.logger.warn("⚠️ executeAdkProxyLoop triggered without an explicit artifact path parameter. Defaulting to sandbox target.")
+    artifactUri = "component://nursing-home/screen/nursing-home/SandboxForm.xml"
+}
 
 def ec = context.ec
+def userId = ec.user.getUserId()
+ec.logger.info("In executeAdkProxyLoop, userId: " + userId)
+
+// 🎯 CENTRALIZED STATE HYDRATION: Pull from the server-side database cache
+Map getBufferResult = ec.service.sync()
+    .name("org.moqui.ai.AgiWorkspaceServices.get#WorkspaceBuffer")
+    .parameter("artifactUri", artifactUri)
+    .parameter("userId", userId)
+    .call()
+
+String activeLayoutBufferId = getBufferResult.workspaceBufferId
+String currentMetaJsonStr = getBufferResult.metaJsonBuffer
+
+// Push these identifiers into the thread context so tools (like add#FormField) can mutate the real row buffer
+ec.context.put("activeLayoutBufferId", activeLayoutBufferId)
+ec.context.put("activeLayoutBuffer", currentMetaJsonStr)
+
+// Parse the text string into a native map to construct the system prompt downstream
+Map activeTree = new groovy.json.JsonSlurper().parseText(currentMetaJsonStr)
 
 // =========================================================================
 // REAL NATIVE IDEMPOTENCY BOOTSTRAPPER GUARD

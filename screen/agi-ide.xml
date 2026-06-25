@@ -29,7 +29,8 @@
                     def resourceReference = ec.resource.getLocationReference(fileLocation)
                     
                     // FALLBACK ATTEMPT: Scan the generic root screen folder if the nested component folder structural match fails
-                    if (!resourceReference || !resourceReference.exists) {
+  
+                  if (!resourceReference || !resourceReference.exists) {
                         fileLocation = "component://${componentName}/screen/${fileName}.xml"
                         resourceReference = ec.resource.getLocationReference(fileLocation)
                     }
@@ -40,7 +41,7 @@
                         ec.web.sendTextResponse(rawTextPayload, "text/xml", null)
                         ec.logger.info("⚡ Dynamic source-streamer localized asset at: [${fileLocation}]")
                     } else {
-                        ec.web.sendTextResponse("", "text/xml", null)
+                      ec.web.sendTextResponse("", "text/xml", null)
                     }
                 } catch (Exception ex) {
                     ec.logger.error("Failed to execute flexible dynamic XML resource extraction", ex)
@@ -51,62 +52,16 @@
         <default-response type="none"/>
     </transition>
 
-<transition name="getFormMetadata" read-only="true">
+    <transition name="getFormMetadata" read-only="true" >
         <actions>
-            <script><![CDATA[
-                def targetForm = screenPath ?: "SampleForm"
-                def componentName = "agi-ide"
-
-                if (targetForm.contains("/")) {
-                    def pathParts = targetForm.split("/")
-                    componentName = pathParts[0]
-                    targetForm = pathParts[1]
-                }
-
-                String fileLocation = "component://${componentName}/screen/${componentName}/${targetForm}.xml".toString()
-                
-                try {
-                    def resourceRef = ec.resource.getLocationReference(fileLocation)
-                    if (!resourceRef || !resourceRef.exists) {
-                        fileLocation = "component://${componentName}/screen/${targetForm}.xml".toString()
-                        resourceRef = ec.resource.getLocationReference(fileLocation)
-                    }
-
-                    if (resourceRef && resourceRef.exists) {
-                        // 1. Initialize the base screen renderer context
-                        org.moqui.impl.screen.ScreenRenderImpl sri = new org.moqui.impl.screen.ScreenRenderImpl(ec.screen)
-                        
-                        // 2. Set standard configuration states
-                        sri.rootScreen(fileLocation)
-                        sri.renderMode("qmeta".toString())
-                        
-                        // FIXED: Pull the webapp name from the servlet context instead of the web facade property block
-                        String resolvedWebappName = ec.web.request.servletContext.getInitParameter("moqui-name")
-                        sri.webappName(resolvedWebappName ? resolvedWebappName.toString() : "agi-ide")
-                        
-                        // 3. Bind a dedicated text stream writer to catch the compiled metadata output
-                        java.io.StringWriter sw = new java.io.StringWriter()
-                        sri.internalWriter = sw
-                        
-                        // 4. Force isolated internal parsing structures without running an endless browser loop
-                        sri.rootScreenDef = ec.screen.getScreenDefinition(fileLocation)
-                        sri.screenUrlInfo = org.moqui.impl.screen.ScreenUrlInfo.getScreenUrlInfo(sri, sri.rootScreenDef, new ArrayList<String>(), null, 0)
-                        sri.screenUrlInstance = sri.screenUrlInfo.getInstance(sri, false)
-                        
-                        // Process the widget nodes straight into our local StringWriter string buffer
-                        sri.doActualRender()
-                        
-                        // 5. Send the compiled text map down the wire
-                        def jsonMetadataTree = sw.toString()
-                        ec.web.sendTextResponse(jsonMetadataTree, "application/json", null)
-                    } else {
-                        ec.web.sendTextResponse('{"error": "Target layout asset file not found on disk context."}', "application/json", null)
-                    }
-                } catch (Exception ex) {
-                    ec.logger.error("Failed to build dynamic component widget metadata tree via isolated rendering pass", ex)
-                    ec.web.sendTextResponse('{"error": "Exception occurred during direct screen compilation pass. See server console logs."}', "application/json", null)
-                }
-            ]]></script>
+            <set field="activeUserId" from="ec.user.getUserId()" />
+            <log message="In getFormMetadata, userId: ${activeUserId}" />
+            <service-call name="org.moqui.ide.AgiMcpServices.get#FormMetadata" 
+                      in-map="[screenPath: screenPath, userId:activeUserId]" 
+                      out-map="context"/>
+            <script>
+                          ec.web.sendJsonResponse([metadataJson: metadataJson])
+            </script>
         </actions>
         <default-response type="none"/>
     </transition>
@@ -127,6 +82,7 @@
                 <script type="text/javascript">
                     // The server explicitly binds the true session token to a safe global marker
                     window.AGI_SERVER_CSRF_TOKEN = "${ec.web.getSessionToken()}";
+                    window.AGI_SERVER_USER_ID = "${ec.user.getUserId()}";
                     console.info("🔒 Server-injected security token initialized into global window scope.");
             </script>
             ]]></text>
@@ -157,7 +113,9 @@
                     <script src="https://cdn.jsdelivr.net/npm/quasar@2.17.1/dist/quasar.umd.js"></script>
                     <script src="https://unpkg.com/vue-demi"></script>
                     <script src="https://unpkg.com/pinia@2.3.1"></script>
+                    <script src="https://cdn.jsdelivr.net/npm/axios@1.18.1/dist/axios.min.js"></script>
 
+                    <script src="/agi-ide-assets/agi-ide-store.qvt.js"></script>
                     <script src="/agi-ide-assets/AgiMcpOrchestrator.js"></script>
                     <script src="/agi-ide-assets/AgiCommandPalette.qvt.js"></script>
                     <script src="/agi-ide-assets/AgiSubWorkspace.qvt.js"></script>

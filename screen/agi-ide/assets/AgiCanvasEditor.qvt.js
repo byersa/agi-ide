@@ -15,7 +15,7 @@
         emits: ['node-click'],
         template: `
         <component 
-            :is="resolveQuasarTag(node.type)"
+            :is="resolveQuasarTag(node.type || node.tagName)"
             :class="[getNodeClasses(node), node.mariaId === selectedMariaId ? 'selected-highlight' : '']"
             v-bind="mapNodeAttributes(node)"
             @click.stop="$emit('node-click', node)"
@@ -23,8 +23,8 @@
             {{ node.text }}
 
             <agi-canvas-node 
-                v-for="child in node.children" 
-                :key="child.mariaId" 
+                v-for="child in (node.children || node.widgets)" 
+                :key="child.mariaId || child.id" 
                 :node="child"
                 :selected-maria-id="selectedMariaId"
                 @node-click="$emit('node-click', $event)"
@@ -34,10 +34,10 @@
         methods: {
             resolveQuasarTag(type) {
                 if (!type) return 'div';
-                // FIXED: Normalize evaluation string and catch your actual backend widget types
                 switch (type.toLowerCase()) {
                     case 'container':
                     case 'webroot': return 'div';
+                    case 'widgets': return 'div';
                     case 'form':
                     case 'formsingle': return 'q-form';
                     case 'field-row': return 'div';
@@ -49,37 +49,35 @@
                     default: return 'div';
                 }
             },
-            hasInputs(type) {
-                if (!type) return false;
-                const t = type.toLowerCase();
-                return t === 'formfield' || t === 'text-field';
-            },
             getNodeClasses(node) {
                 let baseClass = 'agi-canvas-element-wrapper ';
-                if (!node.type) return baseClass;
+                const type = node.type || node.tagName;
+                if (!type) return baseClass;
 
-                // Provide clear baseline styles matching the widget block characteristics
-                switch (node.type.toLowerCase()) {
+                switch (type.toLowerCase()) {
                     case 'formsingle':
+                    case 'form':
                     case 'container': baseClass += 'q-pa-md q-my-sm bg-white rounded-borders shadow-1 full-width column q-gutter-y-sm'; break;
-                    case 'formfield': baseClass += 'q-my-xs block full-width'; break;
-                    case 'link': baseClass += 'q-mt-md block text-left'; break;
+                    case 'formfield':
+                    case 'text-field': baseClass += 'q-my-xs block full-width'; break;
+                    case 'link':
+                    case 'submit': baseClass += 'q-mt-md block text-left'; break;
                     case 'label': baseClass += 'text-body2 text-grey-7 q-py-xs block'; break;
                     default: baseClass += 'q-pa-sm block';
                 }
                 return baseClass;
             },
             mapNodeAttributes(node) {
-                if (!node.type) return {};
-                const t = node.type.toLowerCase();
+                const type = node.type || node.tagName;
+                if (!type) return {};
+                const t = type.toLowerCase();
 
-                // FIXED: Translate properties cleanly into attributes Quasar targets can parse
                 if (t === 'formfield' || t === 'text-field') {
                     return {
                         label: node.text || node.name || 'Form Control',
                         outlined: true,
                         dense: true,
-                        'model-value': '', // Default stub initialization to make input responsive
+                        'model-value': '',
                         class: 'bg-white'
                     };
                 }
@@ -92,10 +90,6 @@
                     };
                 }
                 return {};
-            },
-            onElementClick() {
-                // Emit coordinates back up the rendering tree chain
-                this.$emit('node-click', this.node);
             }
         }
     };
@@ -113,7 +107,10 @@
             <q-scroll-area class="fit q-pa-md bg-blue-grey-1" style="height: 100%;">
                 
                 <div class="q-mb-md q-pa-sm bg-white rounded-borders shadow-1">
-                    <div class="text-subtitle1 text-weight-bold text-grey-9">Visual Canvas Workspace</div>
+                    <div class="row items-center justify-between">
+                        <div class="text-subtitle1 text-weight-bold text-grey-9">Visual Canvas Workspace</div>
+                        <q-btn icon="save" label="Save Changes" dense flat @click="executeBufferSave" />
+                    </div>
                     <div class="text-caption text-grey-6 row items-center">
                         <q-icon name="folder" size="xs" class="q-mr-xs"/>
                         Active Path: <span class="text-weight-medium q-ml-xs text-primary">{{ screenPath }}</span>
@@ -122,8 +119,8 @@
 
                 <div class="column no-wrap items-stretch full-width">
                     <agi-canvas-node 
-                        v-for="rootNode in blueprintTree" 
-                        :key="rootNode.mariaId" 
+                        v-for="rootNode in (Array.isArray(localBlueprintTree) ? localBlueprintTree : [localBlueprintTree])" 
+                        :key="rootNode.mariaId || rootNode.id" 
                         :node="rootNode" 
                         :selected-maria-id="selectedMariaId"
                         @node-click="handleVisualNodeClick"
@@ -135,121 +132,89 @@
             screenPath: {
                 type: String,
                 required: true
+            },
+            layoutTree: {
+                type: Object,
+                default: () => ({ id: "root", tagName: "form", children: [] })
             }
         },
         data() {
             return {
-                blueprintTree: [],
                 selectedMariaId: '',
-                contextBus: null
+                contextBus: null,
+                localBlueprintTree: { id: "root", tagName: "form", children: [] }
             };
+        },
+        watch: {
+            layoutTree: {
+                handler(newTree) {
+                    if (newTree) {
+                        console.info(`🔄 Editor [${this.$options.name}] deeply sync'd localBlueprintTree to new workspace layout state.`);
+
+                        let normalizedTree = JSON.parse(JSON.stringify(newTree));
+
+                        // Handle Moqui's root "widgets" array variant normalization cleanly inside data flow
+                        if (normalizedTree && normalizedTree.widgets && !normalizedTree.children) {
+                            normalizedTree.children = normalizedTree.widgets;
+                        }
+
+                        this.localBlueprintTree = normalizedTree;
+                    }
+                },
+                immediate: true,
+                deep: true
+            }
         },
         mounted() {
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
             this.contextBus.onmessage = (msg) => {
                 if (!msg.data) return;
 
-                // Track A: Node visual highlight tracking
                 if (msg.data.event === 'element-selected-by-id') {
                     this.selectedMariaId = msg.data.mariaId;
                     this.scrollToNode(msg.data.mariaId);
                 }
-
-                // 🎯 Track B: Catch layout tool mutations from the browser workspace bus
                 else if (msg.data.event === 'artifact-state-mutated') {
-                    console.info("🎨 [RENDER] AgiCanvasEditor intercepted layout mutation. Swapping tree...");
-
-                    // Replace the root node array. Vue 3 automatically handles the reactive redraw!
-                    this.blueprintTree = [msg.data.mutatedTree];
+                    console.info("📥 [RENDER] AgiCanvasEditor intercepted layout mutation via context bus.");
+                    this.localBlueprintTree = msg.data.mutatedTree;
                 }
-
-                // Fetch compiled metadata JSON payload
-                fetch('/agi-ide/getFormMetadata?screenPath=' + encodeURIComponent(this.screenPath), {
-                    method: 'GET',
-                    headers: {
-                        'Accept': 'application/json'
-                    }
-                })
-                    .then(res => res.text()) // Grab raw response text buffer
-                    .then(rawText => {
-                        let sanitizedText = rawText.trim();
-
-                        // 1. SELF-HEALING: Stitch missing sibling object commas
-                        sanitizedText = sanitizedText.replace(/\}\s*\{/g, '},{');
-
-                        // 2. SELF-HEALING: Map json-ld "@type" tokens to flat standard "type" keys
-                        sanitizedText = sanitizedText.replace(/"@type"/g, '"type"');
-
-                        // Compile safe JSON structure map
-                        const data = JSON.parse(sanitizedText);
-
-                        // 3. STRUCTURAL NORMALIZATION: Map Moqui's root "widgets" array to "children"
-                        if (data && data.widgets && !data.children) {
-                            console.info("Mapping backend root 'widgets' payload array to 'children' schema.");
-                            data.children = data.widgets;
-                        }
-
-                        // Normalize single object layout envelopes safely into the template array
-                        if (data && !Array.isArray(data)) {
-                            this.blueprintTree = [data];
-                        } else {
-                            this.blueprintTree = data || [];
-                        }
-                    })
-                    .catch(err => {
-                        console.warn("Telemetry processing circuit interrupted, utilizing fallbacks:", err);
-                        this.blueprintTree = [
-                            {
-                                mariaId: "node_1",
-                                type: "Container",
-                                id: "main-layout",
-                                screen: this.screenPath,
-                                children: [
-                                    {
-                                        mariaId: "node_2",
-                                        type: "FormSingle",
-                                        id: "SampleForm",
-                                        screen: this.screenPath,
-                                        children: [
-                                            { mariaId: "node_3", type: "FormField", name: "username", text: "Username Input Field", screen: this.screenPath }
-                                        ]
-                                    }
-                                ]
-                            }
-                        ];
-                    });
-            },
-                beforeUnmount() {
-                if (this.contextBus) {
-                    this.contextBus.close();
-                }
-            },
-            methods: {
-                handleVisualNodeClick(clickedNode) {
-                    this.selectedMariaId = clickedNode.mariaId;
-
-                    this.contextBus.postMessage({
-                        event: 'element-selected-by-id',
-                        mariaId: clickedNode.mariaId,
-                        screen: clickedNode.screen
-                    });
-
-                    this.scrollToNode(clickedNode.mariaId);
-                },
-                scrollToNode(mariaId) {
-                    this.$nextTick(() => {
-                        const el = this.$el.querySelector(`[mariaid="${mariaId}"]`) || document.querySelector(`[mariaid="${mariaId}"]`);
-                        if (el) {
-                            el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                            el.classList.add('pulse-highlight');
-                            setTimeout(() => el.classList.remove('pulse-highlight'), 1000);
-                        }
-                    });
-                }
+            };
+        },
+        beforeUnmount() {
+            if (this.contextBus) {
+                this.contextBus.close();
             }
-        };
+        },
+        methods: {
+            executeBufferSave() {
+                console.info(`💾 Editor [${this.$options.name}] triggering upstream workspace buffer save request.`);
+                this.$emit('trigger-save', this.localBlueprintTree || this.layoutTree);
+            },
+            handleVisualNodeClick(clickedNode) {
+                this.selectedMariaId = clickedNode.mariaId;
 
-        window.AgiCanvasEditor = AgiCanvasEditor;
-        if(!window.AgiComponents) window.AgiComponents = {};
-        window.AgiComponents['agi-canvas-editor'] = AgiCanvasEditor;
-    })();
+                this.contextBus.postMessage({
+                    event: 'element-selected-by-id',
+                    mariaId: clickedNode.mariaId,
+                    screen: clickedNode.screen
+                });
+
+                this.scrollToNode(clickedNode.mariaId);
+            },
+            scrollToNode(mariaId) {
+                this.$nextTick(() => {
+                    const el = this.$el.querySelector(`[mariaid="${mariaId}"]`) || document.querySelector(`[mariaid="${mariaId}"]`);
+                    if (el) {
+                        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        el.classList.add('pulse-highlight');
+                        setTimeout(() => el.classList.remove('pulse-highlight'), 1000);
+                    }
+                });
+            }
+        }
+    };
+
+    window.AgiCanvasEditor = AgiCanvasEditor;
+    if (!window.AgiComponents) window.AgiComponents = {};
+    window.AgiComponents['agi-canvas-editor'] = AgiCanvasEditor;
+})();

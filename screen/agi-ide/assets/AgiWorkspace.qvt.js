@@ -22,6 +22,10 @@
                     AgiCanvasEditor: { state: 'docked', windowRef: null },
                     AgiScreenEditor: { state: 'docked', windowRef: null },
                     AgiComponentEditor: { state: 'docked', windowRef: null }
+                },
+                activeWorkspaceBuffer: {
+                    workspaceBufferId: '',
+                    metaJsonBuffer: null
                 }
             };
         },
@@ -68,19 +72,19 @@
                 <div class="row no-wrap q-col-gutter-md col col-stretch items-stretch">
                     <div v-if="isPanelVisible('AgiCanvasEditor')" :class="[getPanelClass('AgiCanvasEditor'), 'column']">
                         <agi-sub-workspace title="Canvas Renderer" panel-name="AgiCanvasEditor" :layout-state="activeLayoutGrid" @toggle-maximize="toggleMaximize" @detach-panel="detachPanelToExternalWindow">
-                            <agi-canvas-editor :screen-path="screenPath"></agi-canvas-editor>
+                            <agi-canvas-editor :screen-path="screenPath" :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" @trigger-save="handleChildEditorSave"></agi-canvas-editor>
                         </agi-sub-workspace>
                     </div>
 
                     <div v-if="isPanelVisible('AgiScreenEditor')" :class="[getPanelClass('AgiScreenEditor'), 'column']">
                         <agi-sub-workspace title="Screen Source Editor" panel-name="AgiScreenEditor" :layout-state="activeLayoutGrid" @toggle-maximize="toggleMaximize" @detach-panel="detachPanelToExternalWindow">
-                            <agi-screen-editor :screen-path="screenPath"></agi-screen-editor>
+                            <agi-screen-editor :screen-path="screenPath" :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" @trigger-save="handleChildEditorSave"></agi-screen-editor>
                         </agi-sub-workspace>
                     </div>
 
                     <div v-if="isPanelVisible('AgiComponentEditor')" :class="[getPanelClass('AgiComponentEditor'), 'column']">
                         <agi-sub-workspace title="Component Source Editor" panel-name="AgiComponentEditor" :layout-state="activeLayoutGrid" @toggle-maximize="toggleMaximize" @detach-panel="detachPanelToExternalWindow">
-                            <agi-component-editor :screen-path="screenPath"></agi-component-editor>
+                            <agi-component-editor :screen-path="screenPath" :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" @trigger-save="handleChildEditorSave"></agi-component-editor>
                         </agi-sub-workspace>
                     </div>
                 </div>
@@ -101,6 +105,7 @@
             }, 1000);
 
             this.hydrateMcpOrchestratorFromDatabase();
+            this.hydrateWorkspaceBuffer();
         },
         beforeUnmount() {
             window.removeEventListener('beforeunload', this.closeExternalWindows);
@@ -206,12 +211,11 @@
 
                 console.info("📡 AgiWorkspace initiating database tool hydration stream...");
 
-                fetch('/rest/s1/agi-ide/getAllTools', {
-                    method: 'GET',
-                    headers: { 'Accept': 'application/json' }
-                })
-                    .then(res => res.json())
-                    .then(data => {
+                const vm = this;
+                const axiosConfig = this.studdleStore?.getAxiosConfig || {};
+                axios.get('/rest/s1/agi-ide/getAllTools', axiosConfig)
+                    .then(function (response) {
+                        const data = response.data;
                         // Condition A: We have active tools stored in the database
                         if (data && data.toolsList && data.toolsList.length > 0) {
                             data.toolsList.forEach(tool => {
@@ -234,12 +238,12 @@
                         // Condition B: The server connection worked, but the tool library is empty
                         else {
                             console.info("ℹ️ Database tool table is empty. Injecting local testing fallbacks...");
-                            this.injectLocalFallbackTools();
+                            vm.injectLocalFallbackTools();
                         }
                     })
-                    .catch(err => {
+                    .catch(function (err) {
                         console.warn("⚠️ Database connection failed or timed out. Injecting local testing fallbacks:", err);
-                        this.injectLocalFallbackTools();
+                        vm.injectLocalFallbackTools();
                     });
             },
 
@@ -282,6 +286,51 @@
                     if (paletteComponent && typeof paletteComponent.openPalette === 'function') {
                         paletteComponent.openPalette();
                     }
+                }
+            },
+            async hydrateWorkspaceBuffer() {
+                // FIXED: Retrieve the true active user identity from Moqui's global server configuration object 
+                // injected during the widget rendering pass, falling back to a safe localized string check.
+                const activeUser = window.AGI_SERVER_USER_ID;
+                const axiosConfig = this.studdleStore?.getAxiosConfig || {};
+
+                try {
+                    const response = await axios.get(`/rest/s1/agi-ai/getWorkspaceBuffer?artifactUri=${encodeURIComponent(this.screenPath)}&userId=${encodeURIComponent(activeUser)}`, axiosConfig);
+                    const data = response.data;
+                    // Pristine, fully-healed tree structure drops straight into your reactive layout state
+                    this.activeWorkspaceBuffer.metaJsonBuffer = JSON.parse(data.metaJsonBuffer);
+                    this.activeWorkspaceBuffer.workspaceBufferId = data.workspaceBufferId;
+                } catch (err) {
+                    console.error("Failed to hydrate workspace buffer:", err);
+                }
+            },
+            async handleChildEditorSave(updatedLayoutTree) {
+                console.info("📡 AgiWorkspace caught save signal from child editor window.");
+
+                // 1. Update the local master source of truth copy
+                if (updatedLayoutTree) {
+                    this.activeWorkspaceBuffer.metaJsonBuffer = updatedLayoutTree;
+                }
+
+                // 2. Safeguard check
+                if (!this.activeWorkspaceBuffer.workspaceBufferId) {
+                    console.warn("⚠️ Cannot commit save loop: workspaceBufferId is missing or uninitialized.");
+                    return;
+                }
+
+                // 3. Flush the serialized text layout to your explicit store endpoint
+                try {
+                    const axiosConfig = this.studdleStore?.getAxiosConfig || {};
+                    const response = await axios.post('/rest/s1/mcp/storeWorkspaceBuffer', {
+                        workspaceBufferId: this.activeWorkspaceBuffer.workspaceBufferId,
+                        metaJsonBuffer: JSON.stringify(this.activeWorkspaceBuffer.metaJsonBuffer)
+                    }, axiosConfig);
+
+                    this.$q?.notify({ type: 'positive', message: 'Workspace changes successfully committed to server!' });
+                    console.info("🎯 Database buffer layout state cleanly written.");
+                } catch (err) {
+                    console.error("❌ Failed to commit workspace buffer changes to Moqui backend:", err);
+                    this.$q?.notify({ type: 'negative', message: 'Failed to write workspace modifications to server.' });
                 }
             },
         }

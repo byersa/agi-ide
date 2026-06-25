@@ -73,7 +73,6 @@
 
                     <q-card-section class="q-py-xs q-px-sm row justify-between items-center bg-slate-950 text-grey-5 text-caption">
                         <div>Tip: Use <kbd class="bg-grey-8 text-white q-px-xs rounded">Esc</kbd> to exit layout overlay</div>
-                        <div class="text-weight-medium">Automation Groups International © 2026</div>
                     </q-card-section>
                 </q-card>
             </q-dialog>
@@ -313,19 +312,16 @@
                 console.info("🔒 [AgiCommandPalette] CSRF Token resolved via:",
                     window.AGI_SERVER_CSRF_TOKEN ? "Server Injection" : "Fallback Scraper");
 
+                const currentArtifact = this.activeArtifactLocation || window.AgiWorkspace?.currentArtifactPath || '';
+
+                console.info(`currentArtifact: [${currentArtifact}]`);
                 fetch('/rest/s1/agi-ide/geminiProxy', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                        'X-CSRF-Token': tkn
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        // 🎯 NEW: Ship the session token as the multi-turn memory anchor
                         moquiSessionToken: window.moqui?.moquiSessionToken || tkn,
                         userPrompt: userPromptText,
-                        activeTree: window.AgiComponents['agi-canvas-editor']?.blueprintTree?.[0] || {},
-                        focusCoordinate: this.activeArtifactLocation || ''
+                        focusCoordinate: currentArtifact // 🎯 Only send the location identity!
                     })
                 })
                     .then(res => {

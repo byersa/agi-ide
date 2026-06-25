@@ -5,7 +5,10 @@
         template: `
             <div :class="['screen-editor-container fit column no-wrap q-pa-sm', activeHighlightedMariaId ? 'glow-active' : '']" style="height: 100%;">
                 <div class="q-mb-sm row items-center justify-between">
-                    <div class="text-subtitle2 text-grey-8">XML Screen Editor</div>
+                    <div class="row items-center q-gutter-x-sm">
+                        <div class="text-subtitle2 text-grey-8">XML Screen Editor</div>
+                        <q-btn icon="save" label="Save Changes" dense flat @click="executeBufferSave" />
+                    </div>
                     <q-chip v-if="activeHighlightedMariaId" color="primary" text-color="white" icon="gps_fixed" dense size="sm" @click="clearHighlight" clickable>
                         Synced: {{ activeHighlightedMariaId.split('#')[1] || activeHighlightedMariaId }}
                     </q-chip>
@@ -24,6 +27,10 @@
             screenPath: {
                 type: String,
                 required: true
+            },
+            layoutTree: {
+                type: Object,
+                default: () => ({ id: "root", tagName: "form", children: [] })
             }
         },
         computed: {
@@ -35,44 +42,34 @@
             return {
                 rawXmlSource: '',
                 contextBus: null,
-                activeHighlightedMariaId: ''
+                activeHighlightedMariaId: '',
+                localBlueprintTree: { id: "root", tagName: "form", children: [] }
             };
         },
+        watch: {
+            layoutTree: {
+                handler(newTree) {
+                    if (newTree) {
+                        console.info(`🔄 Editor [${this.$options.name}] deeply sync'd localBlueprintTree to new workspace layout state.`);
+                        this.localBlueprintTree = JSON.parse(JSON.stringify(newTree));
+                        // Automatically compile the fresh blueprint tree down to structural text representation
+                        this.compileTreeToXmlText();
+                    }
+                },
+                immediate: true,
+                deep: true
+            }
+        },
         mounted() {
-            // 2. Listen for selection events broadcasting from the Visual Canvas
+            this.contextBus = new BroadcastChannel('agi-ide-context-bus');
+
+            // Listen for selection events broadcasting from the Visual Canvas
             this.contextBus.onmessage = (msg) => {
                 if (msg.data && msg.data.event === 'element-selected-by-id') {
                     const selectedId = msg.data.mariaId; // e.g., "SampleForm#username"
                     this.highlightAndScrollToSourceElement(selectedId);
                 }
             };
-
-            // Fetch raw XML screen text definition
-            fetch('/agi-ide/getRawXml?screenPath=' + encodeURIComponent(this.screenPath))
-                .then(res => res.text())
-                .then(text => {
-                    this.rawXmlSource = text;
-                })
-                .catch(err => {
-                    console.warn("Failed fetching screen XML, loading fallback blueprint code structure", err);
-                    this.rawXmlSource = `<?xml version="1.0" encoding="UTF-8"?>
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" require-authentication="true">
-    <widgets>
-        <container id="main-layout">
-            <form-single name="SampleForm">
-                <field name="username">
-                    <default-field><text-line/></default-field>
-                </field>
-                <field name="email">
-                    <default-field><text-line/></default-field>
-                </field>
-            </form-single>
-            <link url="submit" text="Submit Action Link" id="submit-btn"/>
-            <label text="System Footer Notice"/>
-        </container>
-    </widgets>
-</screen>`;
-                });
         },
         beforeUnmount() {
             if (this.contextBus) {
@@ -80,6 +77,34 @@
             }
         },
         methods: {
+            async compileTreeToXmlText() {
+                if (!this.localBlueprintTree) return;
+                const vm = this;
+
+                // 🎯 Dynamically resolve the native Pinia store layer instance safely
+                let ideStore = null;
+                if (window.useAgiIdeStore) {
+                    ideStore = window.useAgiIdeStore();
+                }
+
+                // Pull out the centralized headers cleanly from the getter computation rule
+                const axiosConfig = ideStore ? ideStore.getAxiosConfig : {};
+
+                axios.post('/rest/s1/agi-ai/compileTreeToXml', {
+                    layoutTree: this.localBlueprintTree
+                }, axiosConfig)
+                    .then(function (response) {
+                        vm.rawXmlSource = response.data?.xmlText || '';
+                    })
+                    .catch(function (err) {
+                        console.error("Error encountered in compileTreeToXmlText:", err);
+                    });
+            },
+            executeBufferSave() {
+                console.info(`💾 Editor [${this.$options.name}] triggering upstream workspace buffer save request.`);
+                // Emit the custom event. Pass the current layout tree state as the payload.
+                this.$emit('trigger-save', this.localBlueprintTree || this.layoutTree);
+            },
             onTextareaInput(event) {
                 this.rawXmlSource = event.target.value;
                 // Broadcast changes to update layout preview
@@ -87,47 +112,6 @@
                     event: 'xml-source-mutated',
                     rawXmlText: this.rawXmlSource
                 });
-            },
-            highlightCodeLineByMariaId(mariaId) {
-                const elementToken = mariaId.includes('#') ? mariaId.split('#')[1] : mariaId;
-                if (!elementToken) return;
-
-                let index = this.rawXmlSource.indexOf('id="' + elementToken + '"');
-                if (index === -1) {
-                    index = this.rawXmlSource.indexOf('name="' + elementToken + '"');
-                }
-
-                let matchIndex = -1;
-                if (index === -1 && (elementToken.startsWith('link-') || elementToken.startsWith('label-'))) {
-                    const parts = elementToken.split('-');
-                    const tagType = parts[0];
-                    const targetOccur = parseInt(parts[1], 10);
-
-                    const regex = new RegExp('<' + tagType + '\\b', 'g');
-                    let match;
-                    let count = 0;
-                    while ((match = regex.exec(this.rawXmlSource)) !== null) {
-                        if (count === targetOccur) {
-                            matchIndex = match.index;
-                            break;
-                        }
-                        count++;
-                    }
-                }
-
-                const targetIdx = index !== -1 ? index : matchIndex;
-                if (targetIdx !== -1) {
-                    this.activeHighlightedMariaId = mariaId;
-                    const textarea = this.$refs.xmlTextArea;
-                    if (textarea) {
-                        textarea.focus();
-                        textarea.setSelectionRange(targetIdx, targetIdx + elementToken.length + 8);
-
-                        const textBefore = this.rawXmlSource.substring(0, targetIdx);
-                        const lineCount = (textBefore.match(/\n/g) || []).length;
-                        textarea.scrollTop = lineCount * 18;
-                    }
-                }
             },
             clearHighlight() {
                 this.activeHighlightedMariaId = '';
@@ -146,6 +130,7 @@
                 const index = textContent.indexOf(targetSearchString);
 
                 if (index !== -1) {
+                    this.activeHighlightedMariaId = mariaId;
                     // Programmatically focus and highlight the text characters inside the source window
                     textarea.focus();
                     textarea.setSelectionRange(index, index + targetSearchString.length);
