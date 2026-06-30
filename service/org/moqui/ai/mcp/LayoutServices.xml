@@ -49,34 +49,20 @@
                 // For now, we simulate pulling the current canvas buffer state.
                 // In production, this pulls from your active file/database entity.
                 String currentMetaJsonStr = context.activeLayoutBuffer ?: "{ \"id\": \"root\", \"tagName\": \"form\", \"children\": [] }"
+                ec.logger.info("[ADD#FORMFIELD] context.activeLayoutBuffer : ${context.activeLayoutBuffer}")
                 Map layoutTree = new JsonSlurper().parseText(currentMetaJsonStr)
 
-                // 3. Define a closure to deep-search and mutate the tree surgically
-                def injectFieldNode
-                injectFieldNode = { Map node ->
-                    if (node.id == targetNodeId) {
-                        if (node.children == null) node.children = []
-                        node.children.add([
-                            id: java.util.UUID.randomUUID().toString(),
-                            tagName: "field",
-                            attributes: [
-                                name: cleanName,
-                                label: label,
-                                encrypt: secureField ? "true" : "false"
-                            ]
-                        ])
-                        return true
-                    }
-                    if (node.children) {
-                        for (child in node.children) {
-                            if (injectFieldNode(child)) return true
-                        }
-                    }
-                    return false
-                }
+                // Build out the target child layout descriptor
+                Map dynamicFieldNode = [
+                    id: java.util.UUID.randomUUID().toString(),
+                    tagName: "field",
+                    attributes: [ name: cleanName, label: label, encrypt: secureField ? "true" : "false" ]
+                ]
 
-                // 4. Run the surgical mutation against the in-memory tree object
-                boolean mutated = injectFieldNode(layoutTree)
+                // 🎯 Call the decoupled tree mutation engine
+                Map mutationResult = ec.service.sync().name("org.moqui.ai.mcp.LayoutServices.mutate#JsonTree")
+                    .parameters([layoutTree: layoutTree, targetNodeId: targetNodeId, action: "APPEND", payloadNode: dynamicFieldNode])
+                    .call()
 
                 if (mutated) {
                     // 🎯 DEBUG 2: Confirm successful tree modification
@@ -95,7 +81,7 @@
                     // 🎯 DEBUG 3: Inspect the final string output payload right before shipping
                     ec.logger.info("📡 [NOTIFICATION BROADCAST] Shipping JSON packet to topic 'agi-ide-canvas': ${jsonPacket}")
                     ec.makeNotificationMessage()
-                        .topic("agi-ide-canvas")
+                        .topic("agi-ide-workspace")
                         .message(jsonPacket)
                         .send()
                     context.status = "SUCCESS"
@@ -105,6 +91,72 @@
                     ec.logger.warn("Target node container [${targetNodeId}] not found in Meta-JSON layout tree.")
                     context.status = "NODE_NOT_FOUND"
                 }
+            ]]></script>
+        </actions>
+    </service>
+
+    <service verb="mutate" noun="JsonTree" type="inline">
+        <in-parameters>
+            <parameter name="layoutTree" type="Map" required="true"/>
+            <parameter name="targetNodeId" type="String" required="true"/>
+            <parameter name="action" type="String" required="true"/>
+            <parameter name="payloadNode" type="Map" required="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="mutated" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                ec.logger.info("[TOOL MUTATION] layoutTree: ${layoutTree}")
+                ec.logger.info("[TOOL MUTATION] targetNodeId: ${targetNodeId}")
+                ec.logger.info("[TOOL MUTATION] action: ${action}")
+                ec.logger.info("[TOOL MUTATION] payloadNode: ${payloadNode}")
+                def processNode
+                processNode = { Map node ->
+                    ec.logger.info("[TOOL MUTATION] node(1): ${node}")
+                    // 🎯 ROBUST ROOT/NODE ID MATCHING
+                    // Checks if node.id matches, node.mariaId matches exactly, or ends with the target ID suffix (#root)
+                    boolean isTarget = (node.id == targetNodeId) || 
+                                       (node.mariaId == targetNodeId) || 
+                                       (node.mariaId?.toString()?.endsWith("#" + targetNodeId))
+
+                    ec.logger.info("[TOOL MUTATION] isTarget: ${isTarget}")
+                    if (isTarget) {
+                        switch (action) {
+                            case "APPEND":
+                                // Adapt gracefully to either a "widgets" structure or a standard "children" layout array
+                                if (node.widgets != null) {
+                                    node.widgets.add(payloadNode)
+                                } else {
+                                    if (node.children == null) node.children = []
+                                    node.children.add(payloadNode)
+                                }
+                                return true
+                            case "REPLACE":
+                                node.clear()
+                                node.putAll(payloadNode)
+                                return true
+                        }
+                    }
+                    ec.logger.info("[TOOL MUTATION] node(2): ${node}")
+                    
+                    // Recursive array scanning block supporting both design idioms
+                    def childList = node.widgets ?: node.children
+                    ec.logger.info("[TOOL MUTATION] childList: ${childList}")
+                    if (childList && childList instanceof List) {
+                        if (action == "DELETE") {
+                            boolean removed = childList.removeIf { 
+                                it.id == targetNodeId || it.mariaId == targetNodeId || it.mariaId?.toString()?.endsWith("#" + targetNodeId)
+                            }
+                            if (removed) return true
+                        }
+                        for (child in childList) {
+                            if (child instanceof Map && processNode(child as Map)) return true
+                        }
+                    }
+                    return false
+                }
+                context.mutated = processNode(layoutTree)
             ]]></script>
         </actions>
     </service>

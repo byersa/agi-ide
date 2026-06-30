@@ -92,7 +92,9 @@
             </div>
         `,
         mounted() {
-            window.addEventListener('beforeunload', this.closeExternalWindows);
+            this._unloadHandler = () => this.closeExternalWindows();
+            window.addEventListener('beforeunload', this._unloadHandler);
+
             this.poller = setInterval(() => {
                 Object.keys(this.activeLayoutGrid).forEach(name => {
                     const panel = this.activeLayoutGrid[name];
@@ -104,11 +106,35 @@
                 });
             }, 1000);
 
+            // Inside mounted():
+            if (window.moqui && typeof window.moqui.addNotificationListener === 'function') {
+                window.moqui.addNotificationListener('agi-ide-workspace', (notification) => {
+                    try {
+                        // Parse the incoming backend update payload packet
+                        const packet = typeof notification.message === 'string'
+                            ? JSON.parse(notification.message)
+                            : notification.message;
+
+                        if (packet && packet.event === 'artifact-state-mutated' && packet.mutatedTree) {
+                            console.info("📡 [AgiWorkspace] Intercepted backend structural mutation. Syncing layout tree...");
+
+                            // Update the master reactive layout buffer. 
+                            // This instantly trickles down via props to Canvas, Screen, and Component editors.
+                            this.activeWorkspaceBuffer.metaJsonBuffer = packet.mutatedTree;
+                        }
+                    } catch (err) {
+                        console.error("❌ Error parsing agi-ide-workspace notification payload:", err);
+                    }
+                });
+            }
+
             this.hydrateMcpOrchestratorFromDatabase();
             this.hydrateWorkspaceBuffer();
         },
         beforeUnmount() {
-            window.removeEventListener('beforeunload', this.closeExternalWindows);
+            if (this._unloadHandler) {
+                window.removeEventListener('beforeunload', this._unloadHandler);
+            }
             if (this.poller) clearInterval(this.poller);
             this.closeExternalWindows();
         },
