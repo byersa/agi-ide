@@ -7,41 +7,33 @@
     <transition name="getRawXml" read-only="true">
         <actions>
             <script><![CDATA[
-                // 1. Fallback safe defaults
                 def rawPath = screenPath ?: "AgiWorkspace"
-                def componentName = "agi-ide" // Default fallback
+                def componentName = "agi-ide"
                 def fileName = rawPath
 
-                // 2. Dynamically extract component name if passed as a composite path (e.g., "nursing-home/FacilityDetails")
                 if (rawPath.contains("/")) {
                     def pathParts = rawPath.split("/")
                     componentName = pathParts[0]
                     fileName = pathParts[1]
                 } else if (context.componentName) {
-                    // Allow an explicit separate variable override parameter if passed by the fetch headers
                     componentName = context.componentName
                 }
 
-                // 3. Build standard Moqui convention path matrix definitions programmatically
                 def fileLocation = "component://${componentName}/screen/${componentName}/${fileName}.xml"
                 
                 try {
                     def resourceReference = ec.resource.getLocationReference(fileLocation)
-                    
-                    // FALLBACK ATTEMPT: Scan the generic root screen folder if the nested component folder structural match fails
-  
-                  if (!resourceReference || !resourceReference.exists) {
+                    if (!resourceReference || !resourceReference.exists) {
                         fileLocation = "component://${componentName}/screen/${fileName}.xml"
                         resourceReference = ec.resource.getLocationReference(fileLocation)
                     }
                     
-                    // 4. Stream the pristine text payload down the REST channel
                     if (resourceReference && resourceReference.exists) {
                         def rawTextPayload = resourceReference.getText()
                         ec.web.sendTextResponse(rawTextPayload, "text/xml", null)
                         ec.logger.info("⚡ Dynamic source-streamer localized asset at: [${fileLocation}]")
                     } else {
-                      ec.web.sendTextResponse("", "text/xml", null)
+                        ec.web.sendTextResponse("", "text/xml", null)
                     }
                 } catch (Exception ex) {
                     ec.logger.error("Failed to execute flexible dynamic XML resource extraction", ex)
@@ -57,20 +49,25 @@
             <set field="activeUserId" from="ec.user.getUserId()" />
             <log message="In getFormMetadata, userId: ${activeUserId}" />
             <service-call name="org.moqui.ide.AgiMcpServices.get#FormMetadata" 
-                      in-map="[screenPath: screenPath, userId:activeUserId]" 
-                      out-map="context"/>
+                          in-map="[screenPath: screenPath, userId:activeUserId]" 
+                          out-map="context"/>
             <script>
-                          ec.web.sendJsonResponse([metadataJson: metadataJson])
+                ec.web.sendJsonResponse([metadataJson: metadataJson])
             </script>
         </actions>
         <default-response type="none"/>
     </transition>
 
     <pre-actions>
-         html_stylesheets.add('/agi-ide-assets/agi-ide.css')
+        <script><![CDATA[
+            // Add your global screen styles natively
+            html_stylesheets.add('/agi-ide-assets/agi-ide.css')
+        ]]></script>
+    
+        <script location="component://agi-ide/script/AgiBootstrapper.groovy"/>
     </pre-actions>
 
-    <subscreens>
+    <subscreens default-item="AgiWorkspace">
         <subscreens-item name="AgiDashboard" location="component://agi-ide/screen/agi-ide/AgiDashboard.xml"/>
         <subscreens-item name="AgiWorkspace" location="component://agi-ide/screen/agi-ide/AgiWorkspace.xml"/>
         <subscreens-item name="AgiInstructions" location="component://agi-ide/screen/agi-ide/AgiInstructions.xml"/>
@@ -80,101 +77,13 @@
         <render-mode>
             <text type="html"><![CDATA[
                 <script type="text/javascript">
-                    // The server explicitly binds the true session token to a safe global marker
                     window.AGI_SERVER_CSRF_TOKEN = "${ec.web.getSessionToken()}";
                     window.AGI_SERVER_USER_ID = "${ec.user.getUserId()}";
                     console.info("🔒 Server-injected security token initialized into global window scope.");
-            </script>
+                </script>
             ]]></text>
         </render-mode>
-        <render-mode>
-            <text type="html"><![CDATA[
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <meta charset="UTF-8">
-                    <title>AGI Agentic Workspace IDE</title>
-                    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900|Material+Icons">
-                    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/quasar@2.17.1/dist/quasar.css">
-                </head>
-                <body class="bg-grey-1">
-                    
-                    <div id="agi-ide-root" class="window-height">
-                        <q-layout view="hHh Lpr fFf" class="full-height">
-                            <q-page-container class="full-height">
-                                <q-page class="q-pa-none full-height">
-                                    ${sri.renderSubscreen()}
-                                </q-page>
-                            </q-page-container>
-                        </q-layout>
-                    </div>
 
-                    <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.js"></script>
-                    <script src="https://cdn.jsdelivr.net/npm/quasar@2.17.1/dist/quasar.umd.js"></script>
-                    <script src="https://unpkg.com/vue-demi"></script>
-                    <script src="https://unpkg.com/pinia@2.3.1"></script>
-                    <script src="https://cdn.jsdelivr.net/npm/axios@1.18.1/dist/axios.min.js"></script>
-
-                    <script src="/agi-ide-assets/agi-ide-store.qvt.js"></script>
-                    <script src="/agi-ide-assets/AgiMcpOrchestrator.js"></script>
-                    <script src="/agi-ide-assets/AgiCommandPalette.qvt.js"></script>
-                    <script src="/agi-ide-assets/AgiSubWorkspace.qvt.js"></script>
-                    <script src="/agi-ide-assets/AgiEditorShare.qvt.js"></script>
-                    <script src="/agi-ide-assets/AgiCanvasEditor.qvt.js"></script>
-                    <script src="/agi-ide-assets/AgiScreenEditor.qvt.js"></script>
-                    <script src="/agi-ide-assets/AgiComponentEditor.qvt.js"></script>
-                    <script src="/agi-ide-assets/AgiWorkspace.qvt.js"></script>
-
-                    <script>
-                    (function() {
-                        function bootstrapAgiIde() {
-                            if (typeof Vue === 'undefined' || typeof Quasar === 'undefined') {
-                                console.error("CRITICAL: Framework runtimes are missing in memory.");
-                                return;
-                            }
-                    
-                            if (window.agiIdeAppInstance) {
-                                console.info("⚡ AGI IDE App instance already mounted, bypassing duplicate mount loop.");
-                                return;
-                            }
-                    
-                            const mainVue = {
-                                components: {
-                                    'agi-workspace': window.AgiWorkspace
-                                }
-                            };
-                    
-                            try {
-                                const app = Vue.createApp(mainVue);
-                                app.use(Quasar);
-                                app.use(Pinia.createPinia());
-                    
-                                // Dynamically map every child component tool currently resting in our registry cache
-                                if (window.AgiComponents) {
-                                    Object.keys(window.AgiComponents).forEach(function(tagName) {
-                                        app.component(tagName, window.AgiComponents[tagName]);
-                                        console.info("Successfully mapped active component target:", tagName);
-                                    });
-                                }
-                    
-                                window.agiIdeAppInstance = app.mount('#agi-ide-root');
-                                console.info("🚀 AGI IDE App mounted cleanly.");
-                            } catch (err) {
-                                console.error("Mounting execution anomaly caught:", err);
-                            }
-                        }
-
-                        // Determine if the DOM is ready right now, or safely queue for execution
-                        if (document.readyState === 'loading') {
-                            document.addEventListener('DOMContentLoaded', bootstrapAgiIde);
-                        } else {
-                            bootstrapAgiIde();
-                        }
-                    })();
-                    </script>
-                </body>
-                </html>
-            ]]></text>
-        </render-mode>
+        <subscreens-active/>
     </widgets>
 </screen>

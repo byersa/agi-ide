@@ -144,3 +144,80 @@
   "mariaId": "${getCleanPath()}#label-${qmetaElementCounter}"
 }
 </#macro>
+
+<#macro "screen-text-output">
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>AGI Agentic Workspace IDE</title>
+</head>
+<body class="bg-grey-1">
+
+    <div id="q-app" class="window-height full-width">
+        <m-screen-layout>
+            <m-screen-content>
+                ${sri.renderSubscreen()}
+            </m-screen-content>
+        </m-screen-layout>
+    </div>
+
+    <script type="text/javascript">
+    window.AGI_SERVER_CSRF_TOKEN = "${ec.web.sessionToken}";
+
+    (function() {
+        function instantiateMasterQmetaApp() {
+            if (typeof Vue === 'undefined' || typeof Quasar === 'undefined' || !window.AgiComponents || !window.AgiVueAppFunctionList) {
+                return false; 
+            }
+
+            try {
+                console.info("📡 All style, vendor, and library dependencies verified. Rendering application layout...");
+
+                const appOptions = {
+                    data() {
+                        return {
+                            notifyHistoryList: [],
+                            moquiSessionToken: "${ec.web.sessionToken}",
+                            reLoginShow: false
+                        }
+                    },
+                    created() {
+                        if (window.moqui) {
+                            window.moqui.webrootVue = this;
+                        }
+                    },
+                    mounted() {},
+                    methods: {}
+                };
+            
+                Object.keys(window.AgiVueAppFunctionList).forEach(functionName => {
+                    appOptions.methods[functionName] = window.AgiVueAppFunctionList[functionName];
+                });
+            
+                const app = Vue.createApp(appOptions);
+            
+                Object.keys(window.AgiComponents).forEach(tagName => {
+                    app.component(tagName, window.AgiComponents[tagName]);
+                });
+            
+                app.mount('#q-app');
+                console.info("🚀 [AGI QMETA] Core application successfully mounted onto #q-app.");
+                return true;
+            } catch (err) {
+                console.error("❌ Critical exception during master qmeta compilation loop:", err);
+                return true;
+            }
+        }
+    
+        const networkPoll = setInterval(() => {
+            if (instantiateMasterQmetaApp()) {
+                clearInterval(networkPoll);
+            }
+        }, 20);
+        setTimeout(() => clearInterval(networkPoll), 5000);
+    })();
+    </script>
+</body>
+</html>
+</#macro>

@@ -35,63 +35,82 @@
             <parameter name="status" type="String"/>
         </out-parameters>
         <actions>
-            <script><![CDATA[
-                import groovy.json.JsonSlurper
-                import groovy.json.JsonOutput
-
-                // 🎯 DEBUG 1: Trace what the AI Agent passed into the service
-                ec.logger.info("🚀 [TOOL EXECUTION] add#FormField called with: targetNodeId=${targetNodeId}, label=${label}, encrypt=${encrypt}")
-                // 1. Enforce Domain Rule: HIPAA Sensitive Data Auto-Encryption
-                boolean secureField = "true".equalsIgnoreCase(encrypt)
-                String cleanName = label.replaceAll("\\s+", "")
-
-                // 2. Load the persistent Meta-JSON Source of Truth
-                // For now, we simulate pulling the current canvas buffer state.
-                // In production, this pulls from your active file/database entity.
-                String currentMetaJsonStr = context.activeLayoutBuffer ?: "{ \"id\": \"root\", \"tagName\": \"form\", \"children\": [] }"
-                ec.logger.info("[ADD#FORMFIELD] context.activeLayoutBuffer : ${context.activeLayoutBuffer}")
-                Map layoutTree = new JsonSlurper().parseText(currentMetaJsonStr)
-
-                // Build out the target child layout descriptor
-                Map dynamicFieldNode = [
-                    id: java.util.UUID.randomUUID().toString(),
-                    tagName: "field",
-                    attributes: [ name: cleanName, label: label, encrypt: secureField ? "true" : "false" ]
-                ]
-
-                // 🎯 Call the decoupled tree mutation engine
-                Map mutationResult = ec.service.sync().name("org.moqui.ai.mcp.LayoutServices.mutate#JsonTree")
-                    .parameters([layoutTree: layoutTree, targetNodeId: targetNodeId, action: "APPEND", payloadNode: dynamicFieldNode])
-                    .call()
-
-                if (mutated) {
-                    // 🎯 DEBUG 2: Confirm successful tree modification
-                    ec.logger.info("🌲 [TOOL MUTATION SUCCESS] Node surgically injected under parent: ${targetNodeId}")
-                    String updatedMetaJson = JsonOutput.toJson(layoutTree)
-                    
-                    // 5. Persist the updated string back to the server storage layer here
-                    // e.g., ec.service.sync().name("update#LayoutAsset").parameter("metaJson", updatedMetaJson).call()
-
-                    // 🎯 FIX: Serialize the packet to text and call sendWebSocketText
-                    String jsonPacket = groovy.json.JsonOutput.toJson([
-                        event: "artifact-state-mutated",
-                        mutatedTree: layoutTree
-                    ])
-                    
-                    // 🎯 DEBUG 3: Inspect the final string output payload right before shipping
-                    ec.logger.info("📡 [NOTIFICATION BROADCAST] Shipping JSON packet to topic 'agi-ide-canvas': ${jsonPacket}")
-                    ec.makeNotificationMessage()
-                        .topic("agi-ide-workspace")
-                        .message(jsonPacket)
-                        .send()
-                    context.status = "SUCCESS"
-                } else {
-                    // 🎯 DEBUG 4: Trace mapping failures clearly
-                    ec.logger.warn("❌ [TOOL MUTATION FAILED] Target node container [${targetNodeId}] was NOT found in the active tree buffer.")
-                    ec.logger.warn("Target node container [${targetNodeId}] not found in Meta-JSON layout tree.")
-                    context.status = "NODE_NOT_FOUND"
+        <!-- Inside LayoutServices.xml -> add#FormField -> actions -->
+        <script><![CDATA[
+            import groovy.json.JsonSlurper
+            import groovy.json.JsonOutput
+        
+            ec.logger.info("🚀 [TOOL EXECUTION] add#FormField called with: targetNodeId=${targetNodeId}, label=${label}, encrypt=${encrypt}")
+            boolean secureField = "true".equalsIgnoreCase(encrypt)
+            String cleanName = label.replaceAll("\\s+", "")
+        
+            // 🎯 LAYER RECOVERY STEP
+            // Look in the direct service parameters first, fall back to execution context memory
+            String currentMetaJsonStr = context.activeLayoutBuffer ?: ec.context.activeLayoutBuffer
+        
+            // 🛡️ REMEDIATION CRITICAL FALLBACK:
+            // If thread contexts are isolated, load the record fresh from the DB using the transaction context ID pointers
+            if (!currentMetaJsonStr || currentMetaJsonStr.trim() == "") {
+                String bufferId = context.activeLayoutBufferId ?: ec.context.activeLayoutBufferId
+                ec.logger.info("ℹ️ [add#FormField] activeLayoutBuffer context empty. Attempting DB recovery via ID: ${bufferId}")
+                
+                if (bufferId) {
+                    def bufferRow = ec.entity.find("org.moqui.ai.WorkspaceBuffer").condition("workspaceBufferId", bufferId).one()
+                    currentMetaJsonStr = bufferRow?.metaJsonBuffer
+                    ec.logger.info("🎯 [add#FormField] Successfully restored tree layout from database cache row.")
                 }
-            ]]></script>
+            }
+        
+            // Ultimate pristine fallback if both layers miss
+            if (!currentMetaJsonStr) {
+                currentMetaJsonStr = "{ \"screen\": \"SampleForm\", \"mariaId\": \"SampleForm#root\", \"widgets\": [] }"
+            }
+        
+            ec.logger.info("[add#FormField] Working Meta-JSON Content: ${currentMetaJsonStr}")
+            Map layoutTree = new JsonSlurper().parseText(currentMetaJsonStr)
+        
+            // Build out the target child layout descriptor
+            Map dynamicFieldNode = [
+                id: java.util.UUID.randomUUID().toString(),
+                type: "FormField",
+                name: cleanName,
+                title: label,
+                mariaId: "component://agi-ide/screen/SampleForm.xml#" + cleanName,
+                children: []
+            ]
+        
+            // Call the decoupled tree mutation engine
+            Map mutationResult = ec.service.sync().name("org.moqui.ai.mcp.LayoutServices.mutate#JsonTree")
+                .parameters([layoutTree: layoutTree, targetNodeId: targetNodeId, action: "APPEND", payloadNode: dynamicFieldNode])
+                .call()
+        
+            if (mutationResult.mutated) {
+                ec.logger.info("🌲 [TOOL MUTATION SUCCESS] Node surgically injected under parent: ${targetNodeId}")
+                String updatedMetaJson = JsonOutput.toJson(layoutTree)
+                
+                // 🎯 WRITE-BACK RESYNC: Update the database record instantly so the child editors fetch fresh state
+                String bufferId = context.activeLayoutBufferId ?: ec.context.activeLayoutBufferId
+                if (bufferId) {
+                    ec.service.sync().name("org.moqui.ai.AgiWorkspaceServices.store#WorkspaceBuffer")
+                        .parameters([workspaceBufferId: bufferId, metaJsonBuffer: updatedMetaJson])
+                        .call()
+                }
+        
+                String jsonPacket = groovy.json.JsonOutput.toJson([
+                    event: "artifact-state-mutated",
+                    mutatedTree: layoutTree
+                ])
+                
+                ec.makeNotificationMessage()
+                    .topic("agi-ide-workspace")
+                    .message(jsonPacket)
+                    .send()
+                context.status = "SUCCESS"
+            } else {
+                ec.logger.warn("❌ [TOOL MUTATION FAILED] Target node container [${targetNodeId}] was NOT found in the active tree buffer.")
+                context.status = "NODE_NOT_FOUND"
+            }
+        ]]></script>
         </actions>
     </service>
 

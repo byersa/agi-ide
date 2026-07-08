@@ -308,22 +308,25 @@
                     || (window.opener && window.opener.moqui && window.opener.moqui.moquiSessionToken)
                     || (document.querySelector('meta[name="moqui-session-token"]')?.getAttribute('content'))
                     || "";
+                console.info(`tkn : [${tkn}]`);
 
                 console.info("🔒 [AgiCommandPalette] CSRF Token resolved via:",
                     window.AGI_SERVER_CSRF_TOKEN ? "Server Injection" : "Fallback Scraper");
 
-                const currentArtifact = this.activeArtifactLocation || window.AgiWorkspace?.currentArtifactPath || '';
+                //const currentArtifact = this.activeArtifactLocation || window.AgiWorkspace?.currentArtifactPath || '';
+                // Inside AgiCommandPalette.qvt.js outbound request logic
+                const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
+                const axiosConfig = ideStore ? ideStore.getAxiosConfig : {};
 
-                console.info(`currentArtifact: [${currentArtifact}]`);
-                fetch('/rest/s1/agi-ide/geminiProxy', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        moquiSessionToken: window.moqui?.moquiSessionToken || tkn,
-                        userPrompt: userPromptText,
-                        focusCoordinate: currentArtifact // 🎯 Only send the location identity!
-                    })
-                })
+                // Get the active screen context from the master workspace element or your Pinia state engine
+                const currentFileUri = this.artifactLocation || (ideStore && ideStore.activeScreenPath);
+                console.info(`currentFileUri : [${currentFileUri}]`);
+
+                axios.post('/rest/s1/agi-ide/geminiProxy', {
+                    userPrompt: userPromptText,
+                    moquiSessionToken: ideStore ? ideStore.moquiSessionToken : "",
+                    focusCoordinate: currentFileUri // 👈 Crucial parameter fix to prevent SandboxForm overrides
+                }, axiosConfig)
                     .then(res => {
                         if (!res.ok) {
                             throw new Error(`HTTP network error status: ${res.status}`);

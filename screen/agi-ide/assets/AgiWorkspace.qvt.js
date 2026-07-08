@@ -4,7 +4,7 @@
         props: {
             screenPath: {
                 type: String,
-                default: 'SampleForm'
+                default: null,
             }
         },
         data() {
@@ -69,24 +69,38 @@
                     </div>
                 </div>
 
-                <div class="row no-wrap q-col-gutter-md col col-stretch items-stretch">
-                    <div v-if="isPanelVisible('AgiCanvasEditor')" :class="[getPanelClass('AgiCanvasEditor'), 'column']">
-                        <agi-sub-workspace title="Canvas Renderer" panel-name="AgiCanvasEditor" :layout-state="activeLayoutGrid" @toggle-maximize="toggleMaximize" @detach-panel="detachPanelToExternalWindow">
-                            <agi-canvas-editor :screen-path="screenPath" :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" @trigger-save="handleChildEditorSave"></agi-canvas-editor>
-                        </agi-sub-workspace>
+                <div class="column fit no-wrap q-pa-md q-gutter-y-md" style="min-height: 85vh;">
+        
+                    <div v-if="!screenPath || screenPath === ''" class="column justify-center items-center col q-gutter-md bg-grey-1 text-center">
+                        <q-icon name="folder_open" size="64px" color="grey-5" />
+                        <div class="text-h5 text-grey-7">No Workspace Artifact Selected</div>
+                        <p class="text-caption text-grey-6 max-w-sm">
+                            Please provide a qualified Moqui resource destination path in your URL query string parameter.<br/>
+                            Example: ?screenPath=component://nursing-home/screen/Form.xml
+                        </p>
                     </div>
-
-                    <div v-if="isPanelVisible('AgiScreenEditor')" :class="[getPanelClass('AgiScreenEditor'), 'column']">
-                        <agi-sub-workspace title="Screen Source Editor" panel-name="AgiScreenEditor" :layout-state="activeLayoutGrid" @toggle-maximize="toggleMaximize" @detach-panel="detachPanelToExternalWindow">
-                            <agi-screen-editor :screen-path="screenPath" :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" @trigger-save="handleChildEditorSave"></agi-screen-editor>
-                        </agi-sub-workspace>
-                    </div>
-
-                    <div v-if="isPanelVisible('AgiComponentEditor')" :class="[getPanelClass('AgiComponentEditor'), 'column']">
-                        <agi-sub-workspace title="Component Source Editor" panel-name="AgiComponentEditor" :layout-state="activeLayoutGrid" @toggle-maximize="toggleMaximize" @detach-panel="detachPanelToExternalWindow">
-                            <agi-component-editor :screen-path="screenPath" :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" @trigger-save="handleChildEditorSave"></agi-component-editor>
-                        </agi-sub-workspace>
-                    </div>
+            
+                    <template v-else>
+                                <div v-if="isPanelVisible('AgiCanvasEditor')" :class="[getPanelClass('AgiCanvasEditor'), 'column']">
+                                    <agi-sub-workspace title="Canvas Renderer" panel-name="AgiCanvasEditor" :layout-state="activeLayoutGrid" @toggle-maximize="toggleMaximize" @detach-panel="detachPanelToExternalWindow">
+                                        <agi-canvas-editor :screen-path="screenPath" :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" @trigger-save="handleChildEditorSave"></agi-canvas-editor>
+                                    </agi-sub-workspace>
+                                </div>
+            
+                                <div v-if="isPanelVisible('AgiScreenEditor')" :class="[getPanelClass('AgiScreenEditor'), 'column']">
+                                    <agi-sub-workspace title="Screen Source Editor" panel-name="AgiScreenEditor" :layout-state="activeLayoutGrid" @toggle-maximize="toggleMaximize" @detach-panel="detachPanelToExternalWindow">
+                                        <agi-screen-editor :screen-path="screenPath" :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" @trigger-save="handleChildEditorSave"></agi-screen-editor>
+                                    </agi-sub-workspace>
+                                </div>
+            
+                                <div v-if="isPanelVisible('AgiComponentEditor')" :class="[getPanelClass('AgiComponentEditor'), 'column']">
+                                    <agi-sub-workspace title="Component Source Editor" panel-name="AgiComponentEditor" :layout-state="activeLayoutGrid" @toggle-maximize="toggleMaximize" @detach-panel="detachPanelToExternalWindow">
+                                        <agi-component-editor :screen-path="screenPath" :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" @trigger-save="handleChildEditorSave"></agi-component-editor>
+                                    </agi-sub-workspace>
+                                </div>
+                            <div class="row no-wrap q-col-gutter-md col col-stretch items-stretch">
+                            </div>
+                    </template>
                 </div>
                 <agi-command-palette></agi-command-palette>
             </div>
@@ -155,7 +169,7 @@
                 return true;
             },
             getPanelClass(panelName) {
-                const panel = this.activeLayoutGrid[panelName];
+                const panel = tAGI_SERVER_CSRF_TOKENhis.activeLayoutGrid[panelName];
                 if (panel.state === 'maximized') return 'col-12';
 
                 const visibleDockedCount = Object.keys(this.activeLayoutGrid).filter(

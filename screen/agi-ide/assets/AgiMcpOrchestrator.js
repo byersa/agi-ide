@@ -1,3 +1,4 @@
+window.AgiComponents = window.AgiComponents || {};
 (function () {
     class AgiMcpOrchestrator {
         constructor() {

@@ -14,11 +14,19 @@ String userPrompt = context.userPrompt
 String targetNodeId = context.targetMariaId ?: context.focusCoordinate ?: "root"
 String artifactUri = context.focusCoordinate ?: context.activeArtifactLocation ?: ""
 
-// 🎯 SAFE GUARD: If the frontend didn't pass a valid path (e.g. initial boot or empty palette state),
-// provide a default sandbox file string so the system never breaks validation constraints.
 if (!artifactUri || artifactUri.trim() == "") {
-    ec.logger.warn("⚠️ executeAdkProxyLoop triggered without an explicit artifact path parameter. Defaulting to sandbox target.")
-    artifactUri = "component://nursing-home/screen/nursing-home/SandboxForm.xml"
+    // Collect incoming key signatures to see what the frontend palette actually transmitted
+    def incomingKeys = context.keySet()
+    ec.logger.error("❌ [CONTEXT FAULT] executeAdkProxyLoop failed to extract an operational layout file path.")
+    ec.logger.error("👉 Available parameters passed to script thread context: ${incomingKeys}")
+    ec.logger.error("👉 userPrompt: '${userPrompt}', focusCoordinate: '${context.focusCoordinate}'")
+    
+    // Instead of hiding the issue with SandboxForm, return a descriptive error map back to the UI palette
+    context.completionText = groovy.json.JsonOutput.toJson([
+        error: "CONTEXT_ERROR",
+        message: "The AGI palette lost track of the active file pathway context. Please select a element on the canvas workspace and try again."
+    ])
+    return // Halt execution cleanly right here
 }
 
 def ec = context.ec
@@ -74,7 +82,7 @@ if (!AdkManager.isInitialized()) {
 // 🎯 REFINED: System payload converted to support native function calls
 String contextPayload = """
 [SYSTEM DIRECTIVE]: 
-You are the AI Orchestrator for the "Nursing Home Management System".
+You are the AI Orchestrator for the "Moqui AI IDE System".
 You modify visual UI layouts by executing the dynamic tools mounted in your active session context.
 
 CRITICAL DOMAIN RULES:
