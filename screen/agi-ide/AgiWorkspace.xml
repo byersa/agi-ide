@@ -5,6 +5,14 @@
 
     <parameter name="screenPath"/>
 
+    <pre-actions>
+        <script><![CDATA[
+            // Forces Moqui to bypass standard 'html' macro rendering for this screen footprint
+            sri.renderMode("qmeta")
+        ]]></script>
+        <script location="component://agi-ide/script/AgiBootstrapper.groovy"/>
+    </pre-actions>
+
     <widgets>
         <container id="agi-workspace-container">
             <render-mode>

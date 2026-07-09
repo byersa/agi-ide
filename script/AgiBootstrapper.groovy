@@ -25,7 +25,10 @@ if (fs != null) {
     // Group B: Local Workspace Runtime Infrastructure
     fs.add('//agi-ai-assets/MoquiAiVueFunctions.js')
     fs.add('//agi-ai-assets/MoquiAiVue.qvt.js')
+    fs.add('//agi-ai-assets/BlueprintClient.qvt.js')
     
     ec.logger.info("⚙️ [AGI BOOTSTRAP] Fully synchronized and prioritized style/script asset arrays via Groovy backend plane.")
 }
+    ec.logger.info("⚙️ [AGI BOOTSTRAP] context.footer_scripts: " + context.footer_scripts  )
+    ec.logger.info('⚙️ [AGI BOOTSTRAP] ec.context.get("footer_scripts"): ' + ec.context.get("footer_scripts"))
 return context //

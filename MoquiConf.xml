@@ -35,7 +35,7 @@
                              location="component://agi-ide/screen/agi-ide/assets.xml"/>
         </screen>
         <screen-text-output type="qmeta" mime-type="text/html" always-standalone="true"
-            macro-template-location="component://agi-ide/template/screen-macro/DefaultScreenMacros.qmeta.ftl"/>
+            macro-template-location="component://agi-ai/template/screen-macro/DefaultScreenMacros.qmeta.ftl"/>
     </screen-facade>
 
 
