@@ -3,23 +3,60 @@
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-4.0.xsd"
         require-authentication="true">
 
-    <parameter name="screenPath"/>
-
     <pre-actions>
         <script><![CDATA[
-            // Forces Moqui to bypass standard 'html' macro rendering for this screen footprint
-            sri.renderMode("qmeta")
+            // Set default empty state properties for data binding placeholders
+            context.targetComponent = context.targetComponent ?: ""
+            context.selectedArtifact = context.selectedArtifact ?: ""
         ]]></script>
-        <script location="component://agi-ide/script/AgiBootstrapper.groovy"/>
     </pre-actions>
 
     <widgets>
-        <container id="agi-workspace-container">
-            <render-mode>
-                <text type="html"><![CDATA[
-                    <agi-workspace ></agi-workspace>
-                ]]></text>
-            </render-mode>
-        </container>
+        <container-row id="workspace-grid-wrapper" class="fit no-wrap items-stretch bg-grey-2">
+
+            <row-col md="3" class="column q-pa-sm border-right">
+                <container-box id="spec-panel" type="primary" title="Agent Specification Tree">
+                    
+                    <slot name="toolbar">
+                        <menu-dropdown text="Active Project" icon="folder_special" 
+                                       transitionUrl="/apps/agiide/IdeWorkspace/getAvailableProjects" />
+                    </slot>
+
+                    <container id="tree-container" class="col-grow overflow-auto q-mt-sm">
+                        <m-tree-top id="artifact-spec-tree" 
+                                    items="/rest/s1/agi-ide/getProjectArtifacts" 
+                                    openPath="${selectedArtifact}" />
+                    </container>
+
+                </container-box>
+            </row-col>
+
+            <row-col md="5" class="column q-pa-sm">
+                <container-box id="canvas-panel" type="secondary" title="Live Visual Canvas Viewport">
+                    
+                    <container id="canvas-viewport" class="col-grow bg-white rounded-borders shadow-1 overflow-auto flex flex-center">
+                        <m-architect-view-port screenData="${activeBlueprintJson}" 
+                                               specPath="${selectedArtifact}" />
+                    </container>
+
+                </container-box>
+            </row-col>
+
+            <row-col md="4" class="column q-pa-sm border-left">
+                <container-box id="agent-panel" type="dark" title="AGI Orchestration Control Terminal">
+                    
+                    <container id="ide-chat-stream" class="col-grow bg-grey-1 rounded-borders q-pa-sm overflow-auto text-body2" style="min-height: 250px;">
+                        <label text="Initializing agent runtime terminal sync... Connected safely." style="text-caption text-grey-6 block q-mb-md" />
+                    </container>
+
+                    <container id="prompt-input-bar" class="row no-wrap items-center q-mt-sm q-gutter-xs">
+                        <text-line name="chatInput" placeholder="Command agent to construct or refactor layouts..." class="col-grow" />
+                        <submit text="Pipe Action" class="bg-indigo-6 text-white text-weight-bold" />
+                    </container>
+
+                </container-box>
+            </row-col>
+
+        </container-row>
     </widgets>
 </screen>

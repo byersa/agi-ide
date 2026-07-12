@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-4.0.xsd"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         require-authentication="false"
+        standalone="true"
         default-subscreen="AgiWorkspace">
+
+    <!-- 🎯 Keep only the explicit text/qmeta compiler macro active -->
+    <macro-template type="html" location="component://agi-ai/template/screen-macro/DefaultScreenMacros.qmeta.ftl"/>
 
     <transition name="getRawXml" read-only="true">
         <actions>
@@ -60,12 +64,17 @@
 
     <pre-actions>
         <script><![CDATA[
-            // Add your global screen styles natively
-            html_stylesheets.add('/agi-ide-assets/agi-ide.css')
+            // Route asset calls smoothly over your streaming macro endpoint
+            html_stylesheets.add('/agi-ide-include/agi-ide.css')
         ]]></script>
-    
         <script location="component://agi-ide/script/AgiBootstrapper.groovy"/>
     </pre-actions>
+
+    <always-actions>
+        <script>
+            ec.web.response.setContentType("text/html; charset=UTF-8")
+        </script>
+    </always-actions>
 
     <subscreens default-item="AgiWorkspace">
         <subscreens-item name="AgiDashboard" location="component://agi-ide/screen/agi-ide/AgiDashboard.xml"/>
@@ -73,17 +82,13 @@
         <subscreens-item name="AgiInstructions" location="component://agi-ide/screen/agi-ide/AgiInstructions.xml"/>
     </subscreens>
 
+    <!-- 🎯 FIX: Wrapped children cleanly into the macro output block -->
     <widgets>
-        <render-mode>
-            <text type="html"><![CDATA[
-                <script type="text/javascript">
-                    window.AGI_SERVER_CSRF_TOKEN = "${ec.web.getSessionToken()}";
-                    window.AGI_SERVER_USER_ID = "${ec.user.getUserId()}";
-                    console.info("🔒 Server-injected security token initialized into global window scope.");
-                </script>
-            ]]></text>
-        </render-mode>
-
-        <subscreens-active/>
+                <screen-layout view="hHh lpR fFf">
+                    <screen-header elevated="true" />
+                    <screen-content>
+                        <subscreens-active/>
+                    </screen-content>
+                </screen-layout>
     </widgets>
 </screen>

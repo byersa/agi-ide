@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="false" standalone="true">
+
+    <parameter name="filename" from="ec.web.getPathInfoParameterList() ? ec.web.getPathInfoParameterList().join('/') : ''"/>
+
+    <actions>
+        <script><![CDATA[
+            // 🎯 SPECIFY ANY PATH YOU WANT HERE
+            // This example points to runtime/component/agi-ide/screen/agi-ide-include
+            def assetResource = ec.resource.getLocationReference("component://agi-ide/screen/agi-ide-include/${filename}")
+            
+            if (assetResource != null && assetResource.exists()) {
+                // Determine the correct Content-Type based on the extension
+                def contentType = "text/plain"
+                if (filename.endsWith(".css")) contentType = "text/css"
+                else if (filename.endsWith(".js")) contentType = "application/javascript"
+                else if (filename.endsWith(".png")) contentType = "image/png"
+                
+                // Stream the file directly over the HTTP response stream
+                ec.web.sendResourceResponse(assetResource.getLocation(), contentType, "inline")
+            } else {
+                ec.web.sendError(404, "Asset not found: " + filename, null)
+            }
+        ]]></script>
+    </actions>
+    
+    <!-- Empty rendering blocks because the script completely handles the response stream -->
+    <widgets/>
+</screen>

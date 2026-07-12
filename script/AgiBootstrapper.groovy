@@ -23,6 +23,7 @@ if (fs != null) {
     fs.add('https://cdn.jsdelivr.net/npm/axios@1.18.1/dist/axios.min.js')
 
     // Group B: Local Workspace Runtime Infrastructure
+    fs.add('//agi-ai-assets/moqui-utils.js')
     fs.add('//agi-ai-assets/MoquiAiVueFunctions.js')
     fs.add('//agi-ai-assets/MoquiAiVue.qvt.js')
     fs.add('//agi-ai-assets/BlueprintClient.qvt.js')

@@ -1,23 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-            xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-4.0.xsd">
+            xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-2.1.xsd">
 
-        <!-- Purely isolates agi-ide's routing rule to its own component space -->
+        <!--
     <webapp-list>
-        <webapp name="agi-ide" path="/agi-ide" https-enabled="false"
-                root-screen-location="component://agi-ide/screen/agi-ide.xml">
+        <webapp name="webroot">
             <before-request>
                 <actions>
                     <script><![CDATA[
-                        // Force clean content negotiation for your blueprint layout requests
                         def accept = ec.web.request.getHeader("Accept")
+                        ec.logger.info("agi-ide app, accept: " + accept);
                         def renderModeParam = ec.web.requestParameters.renderMode
+                        ec.logger.info("agi-ide app, renderModeParam: " + renderModeParam);
                         
                         if ((accept && accept.contains("application/json")) || renderModeParam == "qmeta") {
-                            // 1. Force the internal rendering engine to use your clean metadata dialect
                             ec.web.requestParameters.renderMode = "qmeta"
-                            
-                            // 2. Force the server response headers to use clean JSON syntax instead of text/html
                             ec.web.response.setContentType("application/json")
                         }
                     ]]></script>
@@ -25,18 +22,21 @@
             </before-request>
         </webapp>
     </webapp-list>
+        -->
 
     <screen-facade>
-        <screen location="component://webroot/screen/webroot.xml">
-            <subscreens-item name="agi-ide" menu-title="AGI IDE" menu-index="96"
+        <screen location="component://webroot/screen/webroot.xml" require-authentication="false">
+            <subscreens-item name="agi-ide" menu-include="false"
                              location="component://agi-ide/screen/agi-ide.xml"/>
-            <subscreens-item name="agi-ide-assets" menu-title="AGI IDE Assets" menu-index="98"
-                             menu-include="false"
-                             location="component://agi-ide/screen/agi-ide/assets.xml"/>
+            <subscreens-item name="agi-ide-assets" menu-title="AGI IDE Assets" 
+                               menu-include="false" location="component://agi-ide/screen/agi-ide/assets.xml"/>
+
+            <subscreens-item name="agi-ide-include" menu-title="AGI IDE Include" 
+                               menu-include="false" location="component://agi-ide/screen/agi-ide-include.xml"/>
+
         </screen>
         <screen-text-output type="qmeta" mime-type="text/html" always-standalone="true"
             macro-template-location="component://agi-ai/template/screen-macro/DefaultScreenMacros.qmeta.ftl"/>
     </screen-facade>
-
 
 </moqui-conf>
