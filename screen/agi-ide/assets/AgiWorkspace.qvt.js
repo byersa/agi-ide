@@ -9,7 +9,7 @@
         },
         data() {
             return {
-                // Consolidated variables safely bound to this component's reactive scope
+                localScreenPath: this.screenPath || '',
                 windowDisplayMode: 'Collage Grid',
                 displayModeOptions: ['Collage Grid', 'Focus Canvas', 'Focus Source'],
                 activeScreens: ['AgiCanvasEditor', 'AgiScreenEditor', 'AgiComponentEditor'],
@@ -26,11 +26,34 @@
                 activeWorkspaceBuffer: {
                     workspaceBufferId: '',
                     metaJsonBuffer: null
+                },
+                loadedComponents: {
+                    AgiCanvasEditor: false,
+                    AgiScreenEditor: false,
+                    AgiComponentEditor: false,
+                    AgiCommandPalette: false
+                },
+                // 🎯 Explicit local registry map for constructors
+                editorConstructors: {
+                    AgiCanvasEditor: null,
+                    AgiScreenEditor: null,
+                    AgiComponentEditor: null,
+                    AgiCommandPalette: null
                 }
             };
         },
+        computed: {
+            // 🎯 Master loading gate: Must wait for the panel frame AND all editors
+            isWorkspaceReady() {
+                return this.loadedComponents.AgiCanvasEditor &&
+                    this.loadedComponents.AgiScreenEditor &&
+                    this.loadedComponents.AgiComponentEditor &&
+                    this.loadedComponents.AgiCommandPalette;
+            }
+        },
         template: `
             <div class="column fit no-wrap q-pa-md q-gutter-y-md" style="min-height: 85vh;">
+                <!-- 1. Header Toolbar Controls -->
                 <div id="agi-workspace-header" class="row items-center justify-between q-pa-sm bg-grey-2 style='border-bottom: 1px solid #ccc;'">
                     <div class="row q-gutter-md">
                         <q-select
@@ -69,9 +92,16 @@
                     </div>
                 </div>
 
-                <div class="column fit no-wrap q-pa-md q-gutter-y-md" style="min-height: 85vh;">
+                <!-- 2. Loading Spinner Placeholder: Shown while scripts are dynamically injected -->
+                <div v-if="!isWorkspaceReady" class="col column justify-center items-center q-gutter-md bg-grey-1 text-center">
+                    <q-spinner-gears color="deep-purple-7" size="4em" />
+                    <div class="text-subtitle1 text-grey-7 text-weight-medium">Synchronizing Workspace Components...</div>
+                </div>
+
+                <!-- 3. Active Workspace Workspace (Rendered ONLY when isWorkspaceReady is TRUE) -->
+                <div v-else class="column fit no-wrap q-pa-md q-gutter-y-md" style="min-height: 85vh;">
         
-                    <div v-if="!screenPath || screenPath === ''" class="column justify-center items-center col q-gutter-md bg-grey-1 text-center">
+                    <div v-if="!localScreenPath || localScreenPath === ''" class="column justify-center items-center col q-gutter-md bg-grey-1 text-center">
                         <q-icon name="folder_open" size="64px" color="grey-5" />
                         <div class="text-h5 text-grey-7">No Workspace Artifact Selected</div>
                         <p class="text-caption text-grey-6 max-w-sm">
@@ -79,33 +109,83 @@
                             Example: ?screenPath=component://nursing-home/screen/Form.xml
                         </p>
                     </div>
-            
                     <template v-else>
-                                <div v-if="isPanelVisible('AgiCanvasEditor')" :class="[getPanelClass('AgiCanvasEditor'), 'column']">
-                                    <agi-sub-workspace title="Canvas Renderer" panel-name="AgiCanvasEditor" :layout-state="activeLayoutGrid" @toggle-maximize="toggleMaximize" @detach-panel="detachPanelToExternalWindow">
-                                        <agi-canvas-editor :screen-path="screenPath" :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" @trigger-save="handleChildEditorSave"></agi-canvas-editor>
-                                    </agi-sub-workspace>
-                                </div>
-            
-                                <div v-if="isPanelVisible('AgiScreenEditor')" :class="[getPanelClass('AgiScreenEditor'), 'column']">
-                                    <agi-sub-workspace title="Screen Source Editor" panel-name="AgiScreenEditor" :layout-state="activeLayoutGrid" @toggle-maximize="toggleMaximize" @detach-panel="detachPanelToExternalWindow">
-                                        <agi-screen-editor :screen-path="screenPath" :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" @trigger-save="handleChildEditorSave"></agi-screen-editor>
-                                    </agi-sub-workspace>
-                                </div>
-            
-                                <div v-if="isPanelVisible('AgiComponentEditor')" :class="[getPanelClass('AgiComponentEditor'), 'column']">
-                                    <agi-sub-workspace title="Component Source Editor" panel-name="AgiComponentEditor" :layout-state="activeLayoutGrid" @toggle-maximize="toggleMaximize" @detach-panel="detachPanelToExternalWindow">
-                                        <agi-component-editor :screen-path="screenPath" :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" @trigger-save="handleChildEditorSave"></agi-component-editor>
-                                    </agi-sub-workspace>
-                                </div>
-                            <div class="row no-wrap q-col-gutter-md col col-stretch items-stretch">
-                            </div>
+                        <!-- Canvas Renderer Panel -->
+                        <div v-if="isPanelVisible('AgiCanvasEditor')" :class="[getPanelClass('AgiCanvasEditor'), 'column']">
+                            <!-- 🎯 standard component tag works natively now because it's registered globally on boot -->
+                            <agi-sub-workspace title="Canvas Renderer" panel-name="AgiCanvasEditor" :layout-state="activeLayoutGrid" @toggle-maximize="toggleMaximize" @detach-panel="detachPanelToExternalWindow">
+                                <component 
+                                    :is="editorConstructors.AgiCanvasEditor" 
+                                    :screen-path="localScreenPath" 
+                                    :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" 
+                                    @trigger-save="handleChildEditorSave"
+                                ></component>
+                            </agi-sub-workspace>
+                        </div>
+    
+                        <!-- Screen Source Editor Panel -->
+                        <div v-if="isPanelVisible('AgiScreenEditor')" :class="[getPanelClass('AgiScreenEditor'), 'column']">
+                            <agi-sub-workspace title="Screen Source Editor" panel-name="AgiScreenEditor" :layout-state="activeLayoutGrid" @toggle-maximize="toggleMaximize" @detach-panel="detachPanelToExternalWindow">
+                                <component 
+                                    :is="editorConstructors.AgiScreenEditor" 
+                                    :screen-path="localScreenPath" 
+                                    :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" 
+                                    @trigger-save="handleChildEditorSave"
+                                ></component>
+                            </agi-sub-workspace>
+                        </div>
+
+                        <!-- Component Source Editor Panel -->
+                        <div v-if="isPanelVisible('AgiComponentEditor')" :class="[getPanelClass('AgiComponentEditor'), 'column']">
+                            <agi-sub-workspace title="Component Source Editor" panel-name="AgiComponentEditor" :layout-state="activeLayoutGrid" @toggle-maximize="toggleMaximize" @detach-panel="detachPanelToExternalWindow">
+                                <component 
+                                    :is="editorConstructors.AgiComponentEditor" 
+                                    :screen-path="localScreenPath" 
+                                    :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" 
+                                    @trigger-save="handleChildEditorSave"
+                                ></component>
+                            </agi-sub-workspace>
+                        </div>
                     </template>
+            
                 </div>
-                <agi-command-palette></agi-command-palette>
+                
+                <component :is="editorConstructors.AgiCommandPalette" v-if="isWorkspaceReady"></component>
             </div>
         `,
+        // Keep rest of your data watches, methods, loadRequiredComponents(), and mounted hooks exactly as they are!
         mounted() {
+            // 🎯 ASYNC LOAD ALL ASSETS DYNAMICALLY ON MOUNT
+            this.loadRequiredComponents();
+
+            if (!this.localScreenPath) {
+                const path = window.location.pathname;
+                const workspaceToken = "/AgiWorkspace";
+                const wsIndex = path.indexOf(workspaceToken);
+
+                if (wsIndex !== -1) {
+                    const baseRoute = path.substring(0, wsIndex + workspaceToken.length);
+
+                    if (path.length > baseRoute.length) {
+                        let subPath = path.substring(baseRoute.length);
+                        if (subPath.startsWith('/')) subPath = subPath.substring(1);
+                        if (subPath.endsWith('/')) subPath = subPath.slice(0, -1);
+
+                        if (subPath) {
+                            const segments = subPath.split('/');
+                            const componentName = segments[0];
+                            this.localScreenPath = `component://${componentName}/${segments.slice(1).join('/')}.xml`;
+                            console.info("🎯 [AgiWorkspace] Parsed sub-path path:", this.localScreenPath);
+                        }
+                    }
+                }
+            }
+
+            if (!this.localScreenPath) {
+                const urlParams = new URLSearchParams(window.location.search);
+                this.localScreenPath = urlParams.get('screenPath') || '';
+            }
+
             this._unloadHandler = () => this.closeExternalWindows();
             window.addEventListener('beforeunload', this._unloadHandler);
 
@@ -120,20 +200,15 @@
                 });
             }, 1000);
 
-            // Inside mounted():
             if (window.moqui && typeof window.moqui.addNotificationListener === 'function') {
                 window.moqui.addNotificationListener('agi-ide-workspace', (notification) => {
                     try {
-                        // Parse the incoming backend update payload packet
                         const packet = typeof notification.message === 'string'
                             ? JSON.parse(notification.message)
                             : notification.message;
 
                         if (packet && packet.event === 'artifact-state-mutated' && packet.mutatedTree) {
                             console.info("📡 [AgiWorkspace] Intercepted backend structural mutation. Syncing layout tree...");
-
-                            // Update the master reactive layout buffer. 
-                            // This instantly trickles down via props to Canvas, Screen, and Component editors.
                             this.activeWorkspaceBuffer.metaJsonBuffer = packet.mutatedTree;
                         }
                     } catch (err) {
@@ -152,8 +227,100 @@
             if (this.poller) clearInterval(this.poller);
             this.closeExternalWindows();
         },
+        watch: {
+            'activeWorkspaceBuffer.metaJsonBuffer': {
+                handler(newTree) {
+                    if (!newTree) return;
+
+                    const uncompiledNodes = [];
+                    const scan = (node) => {
+                        if (node.attributes && node.attributes['ai-intent']) {
+                            const hasCompiled = node.attributes['v-if'] || node.attributes['v-data'] || node.class;
+                            if (!hasCompiled) {
+                                uncompiledNodes.push(node);
+                            }
+                        }
+                        const children = node.children || node.widgets;
+                        if (Array.isArray(children)) {
+                            children.forEach(scan);
+                        }
+                    };
+
+                    if (Array.isArray(newTree)) {
+                        newTree.forEach(scan);
+                    } else {
+                        scan(newTree);
+                    }
+
+                    if (uncompiledNodes.length > 0) {
+                        console.info(`🧠 [INTENT PIPELINE] Found ${uncompiledNodes.length} uncompiled layout intent(s). Compiling...`);
+                        uncompiledNodes.forEach(node => {
+                            window.AgiIntentCompiler.compileIntent(
+                                node.mariaId,
+                                this.screenPath,
+                                node.attributes['ai-intent']
+                            );
+                        });
+                    }
+                },
+                deep: true,
+                immediate: true
+            }
+        },
         methods: {
+            async loadRequiredComponents() {
+                const vm = this;
+                // Guard: Ensure global Vue utility handle is present
+                const markRaw = (window.Vue && window.Vue.markRaw) ? window.Vue.markRaw : (obj) => obj;
+
+                const assets = [
+                    { name: 'AgiCanvasEditor', url: '/agi-ide-assets/AgiCanvasEditor.qvt.js', globalVar: 'AgiCanvasEditor' },
+                    { name: 'AgiScreenEditor', url: '/agi-ide-assets/AgiScreenEditor.qvt.js', globalVar: 'AgiScreenEditor' },
+                    { name: 'AgiComponentEditor', url: '/agi-ide-assets/AgiComponentEditor.qvt.js', globalVar: 'AgiComponentEditor' },
+                    { name: 'AgiCommandPalette', url: '/agi-ide-assets/AgiCommandPalette.qvt.js', globalVar: 'AgiCommandPalette' }
+                ];
+
+                assets.forEach(asset => {
+                    if (window[asset.globalVar]) {
+                        // 🎯 Wrap constructor in markRaw to avoid Vue deep reactivity proxy overhead
+                        vm.editorConstructors[asset.name] = markRaw(window[asset.globalVar]);
+                        vm.loadedComponents[asset.name] = true;
+                        return;
+                    }
+
+                    const script = document.createElement('script');
+                    script.type = 'text/javascript';
+                    script.src = asset.url;
+                    script.async = true;
+
+                    script.onload = () => {
+                        console.info(`📦 Asset loaded successfully: ${asset.url}`);
+
+                        const checkRegistration = () => {
+                            if (window[asset.globalVar]) {
+                                // 🎯 Wrap constructor in markRaw here as well during async arrival
+                                vm.editorConstructors[asset.name] = markRaw(window[asset.globalVar]);
+                                vm.loadedComponents[asset.name] = true;
+                                console.info(`✅ [AgiWorkspace] Acknowledged registration for: ${asset.name}`);
+                            } else {
+                                setTimeout(checkRegistration, 20);
+                            }
+                        };
+                        checkRegistration();
+                    };
+
+                    script.onerror = (err) => {
+                        console.error(`❌ Failed to load asset: ${asset.url}`, err);
+                    };
+
+                    document.head.appendChild(script);
+                });
+            },
+            // 🎯 FIXED CONTEXT DYNAMIC ASSET INJECTION
             isPanelVisible(panelName) {
+                // 🎯 Guard: If the component script hasn't finished loading and registering, hide the panel!
+                if (!this.loadedComponents[panelName]) return false;
+
                 // If the user unselected it via the toolbar dropdown checklist, hide it completely
                 if (!this.activeScreens.includes(panelName)) return false;
 
@@ -169,7 +336,7 @@
                 return true;
             },
             getPanelClass(panelName) {
-                const panel = tAGI_SERVER_CSRF_TOKENhis.activeLayoutGrid[panelName];
+                const panel = this.activeLayoutGrid[panelName];
                 if (panel.state === 'maximized') return 'col-12';
 
                 const visibleDockedCount = Object.keys(this.activeLayoutGrid).filter(
@@ -181,7 +348,6 @@
                 return 'col-12';
             },
             handleDisplayModeChange(val) {
-                // Quick global macro shortcuts for window arrangements
                 if (val === 'Focus Canvas') {
                     this.activeScreens = ['AgiCanvasEditor'];
                 } else if (val === 'Focus Source') {
@@ -240,13 +406,11 @@
                     }
                 });
             },
-
             hydrateMcpOrchestratorFromDatabase() {
-                // SAFETY BLOCK: Check if the orchestrator engine has mounted to the window scope yet
                 if (!window.AgiMcpEngine) {
                     console.warn("⏳ AgiMcpEngine not found yet. Backing off and retrying in 50ms...");
                     setTimeout(() => this.hydrateMcpOrchestratorFromDatabase(), 50);
-                    return; // Halt this execution pass until the engine is bound
+                    return;
                 }
 
                 console.info("📡 AgiWorkspace initiating database tool hydration stream...");
@@ -256,7 +420,6 @@
                 axios.get('/rest/s1/agi-ide/getAllTools', axiosConfig)
                     .then(function (response) {
                         const data = response.data;
-                        // Condition A: We have active tools stored in the database
                         if (data && data.toolsList && data.toolsList.length > 0) {
                             data.toolsList.forEach(tool => {
                                 try {
@@ -274,9 +437,7 @@
                                 }
                             });
                             console.info(`✅ Successfully synchronized ${data.toolsList.length} database tools to AgiMcpOrchestrator.`);
-                        }
-                        // Condition B: The server connection worked, but the tool library is empty
-                        else {
+                        } else {
                             console.info("ℹ️ Database tool table is empty. Injecting local testing fallbacks...");
                             vm.injectLocalFallbackTools();
                         }
@@ -286,7 +447,6 @@
                         vm.injectLocalFallbackTools();
                     });
             },
-
             injectLocalFallbackTools() {
                 window.AgiMcpEngine.registerTool({
                     commandstore: '/add-mock-field',
@@ -309,19 +469,16 @@
                 });
                 console.info("🎯 Local fallback tool registry is ready for testing execution.");
             },
-            // Inside AgiWorkspace.qvt.js -> methods:
             triggerCommandPaletteOverlay() {
                 console.info("📡 AgiWorkspace broadcasting manual click activation pass to layout overlay panel...");
 
-                // We pass an event down the common runtime bus to wake up the hidden palette element cleanly
                 if (this.contextBus) {
                     this.contextBus.postMessage({
                         event: 'force-open-command-palette',
-                        panelName: this.activeScreens[0] || 'AgiCanvasEditor', // Fallback context matching active view
+                        panelName: this.activeScreens[0] || 'AgiCanvasEditor',
                         artifactLocation: this.screenPath
                     });
                 } else {
-                    // Fallback: If contextBus initialization is delayed, fall straight back to direct component search
                     const paletteComponent = window.AgiComponents?.['agi-command-palette'];
                     if (paletteComponent && typeof paletteComponent.openPalette === 'function') {
                         paletteComponent.openPalette();
@@ -329,17 +486,16 @@
                 }
             },
             async hydrateWorkspaceBuffer() {
-                // FIXED: Retrieve the true active user identity from Moqui's global server configuration object 
-                // injected during the widget rendering pass, falling back to a safe localized string check.
                 const activeUser = window.AGI_SERVER_USER_ID;
                 const axiosConfig = this.studdleStore?.getAxiosConfig || {};
 
                 try {
-                    const response = await axios.get(`/rest/s1/agi-ai/getWorkspaceBuffer?artifactUri=${encodeURIComponent(this.screenPath)}&userId=${encodeURIComponent(activeUser)}`, axiosConfig);
-                    const data = response.data;
-                    // Pristine, fully-healed tree structure drops straight into your reactive layout state
-                    this.activeWorkspaceBuffer.metaJsonBuffer = JSON.parse(data.metaJsonBuffer);
-                    this.activeWorkspaceBuffer.workspaceBufferId = data.workspaceBufferId;
+                    if (this.localScreenPath) {
+                        const response = await axios.get(`/rest/s1/agi-ai/getWorkspaceBuffer?artifactUri=${encodeURIComponent(this.localScreenPath)}&userId=${encodeURIComponent(activeUser)}`, axiosConfig);
+                        const data = response.data;
+                        this.activeWorkspaceBuffer.metaJsonBuffer = JSON.parse(data.metaJsonBuffer);
+                        this.activeWorkspaceBuffer.workspaceBufferId = data.workspaceBufferId;
+                    }
                 } catch (err) {
                     console.error("Failed to hydrate workspace buffer:", err);
                 }
@@ -347,18 +503,15 @@
             async handleChildEditorSave(updatedLayoutTree) {
                 console.info("📡 AgiWorkspace caught save signal from child editor window.");
 
-                // 1. Update the local master source of truth copy
                 if (updatedLayoutTree) {
                     this.activeWorkspaceBuffer.metaJsonBuffer = updatedLayoutTree;
                 }
 
-                // 2. Safeguard check
                 if (!this.activeWorkspaceBuffer.workspaceBufferId) {
                     console.warn("⚠️ Cannot commit save loop: workspaceBufferId is missing or uninitialized.");
                     return;
                 }
 
-                // 3. Flush the serialized text layout to your explicit store endpoint
                 try {
                     const axiosConfig = this.studdleStore?.getAxiosConfig || {};
                     const response = await axios.post('/rest/s1/mcp/storeWorkspaceBuffer', {
@@ -378,7 +531,21 @@
 
     window.AgiWorkspace = AgiWorkspace;
 
-    if (window.moqui && window.moqui.webrootVueApp) {
-        window.moqui.webrootVueApp.component('agi-workspace', AgiWorkspace);
-    }
+    if (!window.AgiComponents) window.AgiComponents = {};
+    window.AgiComponents['agi-workspace'] = AgiWorkspace; // Lowercase matching the XML container type element attribute
+    window.AgiComponents['AgiWorkspace'] = AgiWorkspace;  // Pascal case safety handle
+
+    const registerAgiWorkspace = () => {
+        if (window.moqui && window.moqui.webrootVueApp) {
+            if (!window.moqui.webrootVueApp.component('agi-workspace')) {
+                window.moqui.webrootVueApp.component('agi-workspace', AgiWorkspace);
+                console.info("🚀 [AGI] Registered 'agi-workspace' component successfully.");
+            }
+        } else {
+            console.warn("⚠️ [AGI] webrootVueApp not ready yet, retrying registration... Preserved window definitions.");
+            setTimeout(registerAgiWorkspace, 50);
+        }
+    };
+
+    registerAgiWorkspace();
 })();

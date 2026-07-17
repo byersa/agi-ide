@@ -1,67 +1,79 @@
-# SCREEN/COMPONENT: AgiCanvasEditor
-# SUBTITLE: Visual design canvas and layout execution engine
+# `AgiCanvasEditor` Architectural Blueprint
 
-## 🛡️ CORE METADATA & RULE BOUNDARIES
-* **Target Output Files:**
-  * Frontend: `runtime/component/agi-ide/screen/agi-ide/assets/MoquiCanvasEditor.qvt.js`
-* **App Identity:** "Moqui IDE"
-* **Security & HIPAA Enforcement:**
-  * Sensitive Fields: None specified
-  * Audit Logging: False
+## 1. Executive Overview
+`AgiCanvasEditor` is the primary interactive, visual WYSIWYG rendering engine of the AGI IDE Suite[cite: 5]. It translates declarative metadata JSON trees representing Moqui screens directly into dynamic, nested Quasar components[cite: 5]. The component manages interactive visual node selections, communicates state modifications via a shared browser broadcast channel, and maps standard layout types to corresponding visual components[cite: 5].
 
-## 📝 DESCRIPTION
-This Vue component displays the rendered user interface canvas and acts as the interactive visual editor engine. It tracks graphic layouts, captures item selection coordinates, and natively embeds or coordinates with the `AgiEditorPalette` to process physical drag-and-drop operations and agentic layout prompt scripts.
+---
 
-### Subscreens
-None specified.
+## 2. Component Hierarchy & Data Flow
 
-### Subcomponents
-* `AgiEditorPalette` (Embedded or docked side console acting as the primary AI device and widget deck).
++------------------------+
+                     |    AgiCanvasEditor     |
+                     +-----------+------------+
+                                 | (Renders root nodes)
+                                 v
+                     +------------------------+
+              +----->|     AgiCanvasNode      |<-----+
+              |      +-----------+------------+      |
+              |                  |                   |
+              |                  | (Recursive loop)  |
+              +------------------+-------------------+
 
-## 🛰️ INTER-COMPONENT BUS (BROADCASTCHANNEL)
-* **Channel Name:** `agi-ide-context-bus`
+### Component Parameters & Input Interfaces
+The editor expects a structured screen identity path alongside the current layout context[cite: 5]:
 
-### Outbound Broadcast Events:
-* `canvas-element-selected`: Fired instantly when a developer clicks any interactive element box or layout region on the canvas screen.
-  * **Payload Schema:** `{ componentName: String, screenPath: String, elementId: String, elementType: String }`
-  * **Intent:** Signals the code editors to immediately scroll to and highlight the matching backend source line.
+*   **`screenPath`** (`String`, *Required*): The target file destination tracking key of the active Moqui screen[cite: 5].
+*   **`layoutTree`** (`Object`, *Optional*): The master backend JSON syntax representation of the document structure[cite: 5]. Defaults to `{ id: "root", tagName: "form", children: [] }`[cite: 5].
 
-### Inbound Event Listeners:
-* `xml-source-mutated`: Receives incoming raw XML strings from either a manual text editor save or an agentic prompt completion. 
-  * **Behavior:** Automatically triggers a 750ms debounced POST request to compile and refresh the active layout display.
+### Reactive Local Scope
+*   **`selectedMariaId`** (`String`): Stores the unique visual tracking identifier (`mariaId`) of the element currently selected by the developer[cite: 5].
+*   **`contextBus`** (`BroadcastChannel`): The communication pipeline initialized on the channel name `'agi-ide-context-bus'`[cite: 5].
+*   **`localBlueprintTree`** (`Object`): The local operational state replica of the rendering structure[cite: 5].
 
-## 📥 INPUT PARAMETERS & PROPS
-### Vue Component Props:
-* `inputArtifactState` (Object): The reactive source state configuration for the active layout file.
-* `editorMode` (String): Options: `'screen'` (default, parses standard Moqui XML views) or `'component'` (handles raw Vue/Quasar templates).
+---
 
-## 💾 INSTANCE STATE & DATA VARIABLES
-### Reactive UI Keys:
-* `canvasWidgetsTree` (Array): Structured element node array representing the compiled, visual UI widgets currently drawn on the screen.
-* `activeSelectedElementId` (String): Tracks the current focused or clicked boundary item on the graphic canvas.
+## 3. The `AgiCanvasNode` Sub-System
+To support infinitely nested UI grids, layout elements are parsed by a recursive inner renderer named `AgiCanvasNode`[cite: 5].
 
-## 🔄 LIFECYCLE & ALWAYS-ACTIONS
-### Client Side:
-* Vue `mounted()` / `unmounted()` hooks
-  * Binds the canvas to intercept incoming `xml-source-mutated` broadcast streams to handle seamless visual hot-reloading.
+### Tag Mapping Strategies (`resolveQuasarTag`)
+Incoming generic XML elements are dynamically resolved to interactive Quasar elements[cite: 5]:
 
-## ⚙️ BEHAVIORS & BACKEND DATA CONTRACTS
-### Transitions / API Routes:
-* `/rest/s1/agi-ide/compileRawXmlToBlueprint`: POST endpoint that transmits raw XML code strings and receives back a clean, structured JSON rendering tree to draw on the canvas.
+| XML Tag Name | Quasar Element | Notes |
+| :--- | :--- | :--- |
+| `container`, `webroot`, `widgets` | `div` | Acts as standard layout block dividers[cite: 5]. |
+| `form`, `formsingle` | `q-form` | Mounts standard form actions[cite: 5]. |
+| `text-field`, `formfield` | `q-input` | Outlined text boxes with interactive labels[cite: 5]. |
+| `link`, `submit` | `q-btn` | Interactive action buttons[cite: 5]. |
+| `label` | `div` | Normal text display container[cite: 5]. |
 
-### Vue Internal Methods & Palette Interactions:
-* `handlePaletteDrop(event)`: Intercepts a native HTML drag-and-drop action originating from the `AgiEditorPalette` layout primitive cards. Extracts the dropped widget type, inserts the new XML tag stub at the drop coordinates, and immediately broadcasts `xml-source-mutated` to update the sister code editors.
-* `selectVisualElement(elementId)`: Handles canvas mouse clicks, updates `activeSelectedElementId`, and dispatches the outbound `canvas-element-selected` event over the context bus.
+### CSS Layout Mapping (`getNodeClasses`)
+Layout nodes automatically obtain specific layout wrapper styling configurations[cite: 5]:
+*   **Form/Containers**: Appends padding, margins, card backgrounds, rounded corners, shadows, and column structures (`'q-pa-md q-my-sm bg-white rounded-borders shadow-1 full-width column q-gutter-y-sm'`)[cite: 5].
+*   **Fields**: Configured with `'q-my-xs block full-width'` to preserve grid columns[cite: 5].
+*   **Buttons**: Rendered with `'q-mt-md block text-left'`[cite: 5].
+*   **Labels**: Styled with `'text-body2 text-grey-7 q-py-xs block'`[cite: 5].
 
-## 🎨 VISUAL CONFIGURATION / WIDGETS
-### Declarative Layout Tree:
-A split view-port container structure:
-1. **Left Main Area (The Visual Stage):** A sandboxed layout window that processes the compiled `canvasWidgetsTree` array into interactive Quasar interface elements.
-2. **Right Integrated Anchor Area:** Houses the `AgiEditorPalette` instance, explicitly binding its configuration to run in `editorMode='canvas'`.
+---
 
-## 💾 ENTITY DATA MODELS
-* **Extended Mantle UDM Entities:** None specified.
+## 4. Initialization Lifecycles & Event Subscriptions
 
-## 🔍 VERIFICATION STEPS (MANUAL TESTING)
-1. Verify that dragging a structural grid primitive out of the embedded palette and onto the canvas wrapper fires a valid mutation payload back to the data bus.
-2. Verify that clicking an element card highlights its visual boundaries and correctly dispatches the `canvas-element-selected` data model packet over the channel.
+### `mounted()` Event Broker Configuration
+1. **Pipeline Instantiation**: Opens the `'agi-ide-context-bus'` broadcast channel[cite: 5].
+2. **Synchronized Selection Monitoring**: Listens on the channel for incoming `'element-selected-by-id'` events[cite: 5]. Upon receipt, updates the local selection highlight and scrolls the target element into view[cite: 5].
+3. **Dynamic Mutation Interception**: Listens for `'artifact-state-mutated'` events, updating the preview structure when backend changes occur[cite: 5].
+
+---
+
+## 5. Method Specifications
+
+### Operational Actions
+*   **`executeBufferSave()`**
+    *   *Logic*: Emits the custom component event `'trigger-save'`, passing the modified layout tree state to the parent workspace[cite: 5].
+*   **`handleVisualNodeClick(clickedNode)`**
+    *   *Logic*: Sets the clicked element's `mariaId` as the active highlight state[cite: 5]. Broadcasts the selection details (`element-selected-by-id`) to the other editors over the broadcast channel and centers the view on the selection[cite: 5].
+*   **`scrollToNode(mariaId)`**
+    *   *Logic*: Locates the DOM element matching the active `mariaid`[cite: 5]. Performs a smooth scroll, adds the temporal `'pulse-highlight'` class, and removes it after $1000\text{ ms}$[cite: 5].
+
+### Reactive Tree Watchers
+*   **`layoutTree` Watcher**
+    *   *Logic*: Synchronizes local states when the parent workspace updates[cite: 5]. Standardizes Moqui’s root `"widgets"` arrays into the common Vue `"children"` structure[cite: 5].

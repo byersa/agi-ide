@@ -1,18 +1,42 @@
 (function () {
     const AgiScreenEditor = {
         name: 'AgiScreenEditor',
-        mixins: [window.AgiEditorShareMixin],
+        mixins: [window.AgiEditorShareMixin].filter(m => m !== undefined),
         template: `
+            <!-- Root Code Editor Container -->
             <div :class="['screen-editor-container fit column no-wrap q-pa-sm', activeHighlightedMariaId ? 'glow-active' : '']" style="height: 100%;">
+                
+                <!-- Toolbar Header (Unified layout translation) -->
                 <div class="q-mb-sm row items-center justify-between">
                     <div class="row items-center q-gutter-x-sm">
-                        <div class="text-subtitle2 text-grey-8">XML Screen Editor</div>
-                        <q-btn icon="save" label="Save Changes" dense flat @click="executeBufferSave" />
+                        <span class="text-subtitle2 text-grey-8">XML Screen Editor</span>
+                        
+                        <!-- Save Button mapped to native save function -->
+                        <q-btn 
+                            icon="save" 
+                            label="Save Changes" 
+                            dense 
+                            flat 
+                            @click="executeBufferSave" 
+                        />
                     </div>
-                    <q-chip v-if="activeHighlightedMariaId" color="primary" text-color="white" icon="gps_fixed" dense size="sm" @click="clearHighlight" clickable>
+                    
+                    <!-- Active Selection Focus Chip -->
+                    <q-chip 
+                        v-if="activeHighlightedMariaId" 
+                        color="primary" 
+                        text-color="white" 
+                        icon="gps_fixed" 
+                        dense 
+                        size="sm" 
+                        @click="clearHighlight" 
+                        clickable
+                    >
                         Synced: {{ activeHighlightedMariaId.split('#')[1] || activeHighlightedMariaId }}
                     </q-chip>
                 </div>
+
+                <!-- Text Area Editor Window Container -->
                 <div class="col col-stretch relative-position">
                     <textarea 
                         ref="xmlTextArea"
@@ -81,7 +105,7 @@
                 if (!this.localBlueprintTree) return;
                 const vm = this;
 
-                // 🎯 Dynamically resolve the native Pinia store layer instance safely
+                // Dynamically resolve the native Pinia store layer instance safely
                 let ideStore = null;
                 if (window.useAgiIdeStore) {
                     ideStore = window.useAgiIdeStore();
@@ -144,7 +168,23 @@
         }
     };
 
+    // Expose component globally
     window.AgiScreenEditor = AgiScreenEditor;
     if (!window.AgiComponents) window.AgiComponents = {};
     window.AgiComponents['agi-screen-editor'] = AgiScreenEditor;
+
+    // Safe Registration Function targeting the Vue 3 App Instance
+    const registerAgiScreenEditor = () => {
+        if (window.moqui && window.moqui.webrootVueApp) {
+            if (!window.moqui.webrootVueApp.component('agi-screen-editor')) {
+                window.moqui.webrootVueApp.component('agi-screen-editor', AgiScreenEditor);
+                console.info("🚀 [AGI] Registered 'agi-screen-editor' successfully.");
+            }
+        } else {
+            // Wait safely until the webroot vue app is loaded
+            setTimeout(registerAgiScreenEditor, 50);
+        }
+    };
+
+    registerAgiScreenEditor();
 })();

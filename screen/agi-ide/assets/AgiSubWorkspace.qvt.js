@@ -13,11 +13,11 @@
                             round 
                             dense 
                             size="sm" 
-                            :icon="layoutState && layoutState.state === 'maximized' ? 'fullscreen_exit' : 'maximize'" 
+                            :icon="isMaximized ? 'fullscreen_exit' : 'maximize'" 
                             @click="$emit('toggle-maximize', panelName)"
                         >
                             <q-tooltip>
-                                {{ layoutState && layoutState.state === 'maximized' ? 'Restore Panel' : 'Maximize Panel' }}
+                                {{ isMaximized ? 'Restore Panel' : 'Maximize Panel' }}
                             </q-tooltip>
                         </q-btn>
                         
@@ -57,11 +57,37 @@
                 required: true
             }
         },
-        emits: ['toggle-maximize', 'detach-panel']
+        emits: ['toggle-maximize', 'detach-panel'],
+        computed: {
+            // 🎯 SAFELY EXTRACT STATE FROM THE PROP PACKET
+            isMaximized() {
+                if (!this.layoutState) return false;
+                // If passed the master layout grid dictionary, target this panel's key specifically
+                if (this.layoutState[this.panelName]) {
+                    return this.layoutState[this.panelName].state === 'maximized';
+                }
+                // Fallback for standalone direct block assignment
+                return this.layoutState.state === 'maximized';
+            }
+        }
     };
 
     window.AgiSubWorkspace = AgiSubWorkspace;
 
     if (!window.AgiComponents) window.AgiComponents = {};
     window.AgiComponents['agi-sub-workspace'] = AgiSubWorkspace;
+
+    // 🎯 SAFE ASYNC BOOTSTRAP APPMOUNT REGISTRATION
+    const registerAgiSubWorkspace = () => {
+        if (window.moqui && window.moqui.webrootVueApp) {
+            if (!window.moqui.webrootVueApp.component('agi-sub-workspace')) {
+                window.moqui.webrootVueApp.component('agi-sub-workspace', AgiSubWorkspace);
+                console.info("🚀 [AGI] Registered 'agi-sub-workspace' dependency cleanly.");
+            }
+        } else {
+            setTimeout(registerAgiSubWorkspace, 50);
+        }
+    };
+
+    registerAgiSubWorkspace();
 })();

@@ -93,6 +93,11 @@ When the user requests structural modifications (such as adding input assets), s
 most appropriate tool from your manifest and execute it. Do not return raw text blocks 
 describing the change; use your tool execution pathways.
 
+INTENT COMPILATION INSTRUCTIONS:
+If the user's prompt starts with "COMPILATION INTENT REQUEST:", analyze the provided plain-text intent.
+Your job is to parse it, map it to our AGI Schema standard, and update the target node's attributes 
+using the correct tool execution pathway (e.g., updating 'v-if', 'v-data', or 'class' properties).
+
 [ACTIVE CANVAS STATE]:
 ${new JsonBuilder(activeTree).toPrettyString()}
 

@@ -67,7 +67,9 @@
             // Route asset calls smoothly over your streaming macro endpoint
             html_stylesheets.add('/agi-ide-include/agi-ide.css')
         ]]></script>
+        <!--
         <script location="component://agi-ide/script/AgiBootstrapper.groovy"/>
+        -->
     </pre-actions>
 
     <always-actions>

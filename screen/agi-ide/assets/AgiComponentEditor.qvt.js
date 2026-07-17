@@ -3,16 +3,41 @@
         name: 'AgiComponentEditor',
         mixins: [window.AgiEditorShareMixin],
         template: `
+            <!-- Root Code Editor Container -->
             <div :class="['component-editor-container fit column no-wrap q-pa-sm', activeHighlightedMariaId ? 'glow-active' : '']" style="height: 100%;">
+                
+                <!-- Toolbar Header (Direct Vue translation of the XML containers) -->
                 <div class="q-mb-sm row items-center justify-between">
                     <div class="row items-center q-gutter-x-sm">
-                        <div class="text-subtitle2 text-grey-8">XML Component Editor</div>
-                        <q-btn icon="save" label="Save Changes" dense flat @click="executeBufferSave" />
+                        <!-- Text Label Header -->
+                        <span class="text-subtitle2 text-grey-8">XML Component Editor</span>
+                        
+                        <!-- Save Button mapped to dynamic save function -->
+                        <q-btn 
+                            icon="save" 
+                            label="Save Changes" 
+                            dense 
+                            flat 
+                            @click="executeBufferSave" 
+                        />
                     </div>
-                    <q-chip v-if="activeHighlightedMariaId" color="primary" text-color="white" icon="gps_fixed" dense size="sm" @click="clearHighlight" clickable>
+
+                    <!-- Active Selection Focus Chip -->
+                    <q-chip 
+                        v-if="activeHighlightedMariaId" 
+                        color="primary" 
+                        text-color="white" 
+                        icon="gps_fixed" 
+                        dense 
+                        size="sm" 
+                        @click="clearHighlight" 
+                        clickable
+                    >
                         Synced: {{ activeHighlightedMariaId.split('#')[1] || activeHighlightedMariaId }}
                     </q-chip>
                 </div>
+
+                <!-- Text Area Editor Window Container -->
                 <div class="col col-stretch relative-position">
                     <textarea 
                         ref="xmlTextArea"
@@ -21,6 +46,7 @@
                         @input="onTextareaInput"
                     ></textarea>
                 </div>
+
             </div>
         `,
         props: {
@@ -205,4 +231,18 @@
     window.AgiComponentEditor = AgiComponentEditor;
     if (!window.AgiComponents) window.AgiComponents = {};
     window.AgiComponents['agi-component-editor'] = AgiComponentEditor;
+
+    // 🎯 Self-Registration Block
+    const registerAgiComponentEditor = () => {
+        if (window.moqui && window.moqui.webrootVueApp) {
+            if (!window.moqui.webrootVueApp.component('agi-component-editor')) {
+                window.moqui.webrootVueApp.component('agi-component-editor', AgiComponentEditor);
+                console.info("🚀 [AGI] Registered 'agi-component-editor' successfully.");
+            }
+        } else {
+            setTimeout(registerAgiComponentEditor, 50);
+        }
+    };
+
+    registerAgiComponentEditor();
 })();

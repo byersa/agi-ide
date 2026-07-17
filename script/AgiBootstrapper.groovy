@@ -27,6 +27,7 @@ if (fs != null) {
     fs.add('//agi-ai-assets/MoquiAiVueFunctions.js')
     fs.add('//agi-ai-assets/MoquiAiVue.qvt.js')
     fs.add('//agi-ai-assets/BlueprintClient.qvt.js')
+    fs.add('//agi-ide-assets/AgiWorkspace.qvt.js')
     
     ec.logger.info("⚙️ [AGI BOOTSTRAP] Fully synchronized and prioritized style/script asset arrays via Groovy backend plane.")
 }

@@ -388,4 +388,18 @@
     window.AgiCommandPalette = AgiCommandPalette;
     if (!window.AgiComponents) window.AgiComponents = {};
     window.AgiComponents['agi-command-palette'] = AgiCommandPalette;
+
+    // 🎯 Self-Registration Block
+    const registerAgiCommandPalette = () => {
+        if (window.moqui && window.moqui.webrootVueApp) {
+            if (!window.moqui.webrootVueApp.component('agi-command-palette')) {
+                window.moqui.webrootVueApp.component('agi-command-palette', AgiCommandPalette);
+                console.info("🚀 [AGI] Registered 'agi-command-palette' successfully.");
+            }
+        } else {
+            setTimeout(registerAgiCommandPalette, 50);
+        }
+    };
+
+    registerAgiCommandPalette();
 })();
