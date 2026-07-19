@@ -1,7 +1,7 @@
 (function () {
     const AgiComponentEditor = {
         name: 'AgiComponentEditor',
-        mixins: [window.AgiEditorShareMixin],
+        mixins: [window.AgiEditorShareMixin].filter(m => m !== undefined),
         template: `
             <!-- Root Code Editor Container -->
             <div :class="['component-editor-container fit column no-wrap q-pa-sm', activeHighlightedMariaId ? 'glow-active' : '']" style="height: 100%;">

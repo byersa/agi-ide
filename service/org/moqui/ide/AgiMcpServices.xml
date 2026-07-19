@@ -25,7 +25,7 @@
                 try {
                     // Leverages Moqui's native ScreenFacade to build a render pass programmatically
                     def renderComm = ec.screen.makeRender()
-                        .withScreen(screenLocation)
+                        .rootScreen(screenLocation)
                         .renderMode("qjson") // Tells ScreenRenderImpl to activate our custom renderer!
                     
                     StringWriter writer = new StringWriter()

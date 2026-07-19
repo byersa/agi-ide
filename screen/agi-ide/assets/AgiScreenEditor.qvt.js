@@ -105,18 +105,13 @@
                 if (!this.localBlueprintTree) return;
                 const vm = this;
 
-                // Dynamically resolve the native Pinia store layer instance safely
-                let ideStore = null;
-                if (window.useAgiIdeStore) {
-                    ideStore = window.useAgiIdeStore();
-                }
-
-                // Pull out the centralized headers cleanly from the getter computation rule
-                const axiosConfig = ideStore ? ideStore.getAxiosConfig : {};
+                // 🎯 EASIEST & DIRECT FIX: Fetch Moqui's native injected token directly from window context
+                const headers = {};
+                headers['X-CSRF-Token'] = window.AGI_SERVER_CSRF_TOKEN;
 
                 axios.post('/rest/s1/agi-ai/compileTreeToXml', {
                     layoutTree: this.localBlueprintTree
-                }, axiosConfig)
+                }, { headers: headers }) // 🎯 Pass the clean, authentic header payload directly
                     .then(function (response) {
                         vm.rawXmlSource = response.data?.xmlText || '';
                     })

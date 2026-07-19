@@ -119,9 +119,21 @@
                 handler(newTree) {
                     if (newTree) {
                         let normalizedTree = JSON.parse(JSON.stringify(newTree));
-                        if (normalizedTree && normalizedTree.widgets && !normalizedTree.children) {
-                            normalizedTree.children = normalizedTree.widgets;
-                        }
+
+                        // 🎯 FORCE NORMALIZATION ON EVERY UPDATE:
+                        // Recursively guarantee that whatever the server uses (widgets or children),
+                        // the canvas renderer maps it directly to "children" so the loop reads it cleanly.
+                        const normalize = (node) => {
+                            if (node.widgets) {
+                                node.children = node.widgets;
+                            }
+                            const nextLayer = node.children || node.widgets;
+                            if (Array.isArray(nextLayer)) {
+                                nextLayer.forEach(normalize);
+                            }
+                        };
+
+                        normalize(normalizedTree);
                         this.localBlueprintTree = normalizedTree;
                     }
                 },

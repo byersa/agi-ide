@@ -46,6 +46,7 @@ String currentMetaJsonStr = getBufferResult.metaJsonBuffer
 // Push these identifiers into the thread context so tools (like add#FormField) can mutate the real row buffer
 ec.context.put("activeLayoutBufferId", activeLayoutBufferId)
 ec.context.put("activeLayoutBuffer", currentMetaJsonStr)
+ec.logger.info("In executeAdkProxyLoop, currentMetaJsonStr: " + currentMetaJsonStr)
 
 // Parse the text string into a native map to construct the system prompt downstream
 Map activeTree = new groovy.json.JsonSlurper().parseText(currentMetaJsonStr)
@@ -141,15 +142,30 @@ try {
         Map adkSessionWrapper = AdkManager.createSession(activeUserId, initialState)
         verifiedSessionId = adkSessionWrapper.id as String
         activeSessionCache.put(browserTokenKey, verifiedSessionId)
-        
+
         ec.logger.info("🎯 [HARNESS] Token [${browserTokenKey}] securely mapped to Native ADK Session ID: [${verifiedSessionId}]")
     } else {
         ec.logger.info("🔄 [HARNESS] Continuous Turn: Re-attaching to existing native session [${verifiedSessionId}] via token [${browserTokenKey}]")
     }
 
+    // Inside executeAdkProxyLoop.groovy, right before AdkManager.runAgent(...)
+    def runner = org.moqui.adk.AdkManager.runnerForSession(verifiedSessionId)
+    def sessionService = runner.sessionService()
+    def adkSession = sessionService.getSession("moqui-adk", activeUserId, verifiedSessionId, java.util.Optional.empty()).blockingGet()
+
+    if (adkSession == null) {
+        throw new IllegalStateException("ADK Session could not be verified for ID: ${verifiedSessionId}")
+    }
+
+    // 🎯 Save the buffers directly into the ADK Session State!
+    adkSession.state().put("activeLayoutBufferId", activeLayoutBufferId)
+    adkSession.state().put("activeLayoutBuffer", currentMetaJsonStr)
+
     ec.logger.info("📡 Dispatching core prompt to Gemini via verified session: ${verifiedSessionId}")
     ec.message.clearAll()
     
+    ec.context.put("sessionId", verifiedSessionId)
+    context.sessionId = verifiedSessionId
     conversationEvents = AdkManager.runAgent(activeUserId, verifiedSessionId, contextPayload)
     
     if (ec.message.hasError()) {

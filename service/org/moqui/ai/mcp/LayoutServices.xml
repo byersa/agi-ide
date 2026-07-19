@@ -18,7 +18,7 @@
         </actions>
     </service>
 
-    <service verb="add" noun="FormField">
+<service verb="add" noun="FormField">
         <description>Use this tool when the user requests to add, create, or insert a new input field, form element, or data column into the active user interface layout canvas. Do not attempt to write text commands; execute this tool with the appropriate node target parameters to modify the layout structure directly.</description>
         <in-parameters>
             <parameter name="targetNodeId" required="true">
@@ -30,12 +30,19 @@
             <parameter name="encrypt" type="String" default-value="false">
                 <description>MUST be set to 'true' if the field captures sensitive data, medical history, or Personally Identifiable Information (PII) to comply with HIPAA guidelines.</description>
             </parameter>
+            
+            <!-- 🎯 THE BRIDGE PIPELINE PARAMETERS -->
+            <parameter name="activeLayoutBuffer">
+                <description>Optional incoming tree buffer passed directly by synchronous callers.</description>
+            </parameter>
+            <parameter name="activeLayoutBufferId">
+                <description>Optional incoming database tracking ID passed directly by synchronous callers.</description>
+            </parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="status" type="String"/>
         </out-parameters>
         <actions>
-        <!-- Inside LayoutServices.xml -> add#FormField -> actions -->
         <script><![CDATA[
             import groovy.json.JsonSlurper
             import groovy.json.JsonOutput
@@ -44,16 +51,37 @@
             boolean secureField = "true".equalsIgnoreCase(encrypt)
             String cleanName = label.replaceAll("\\s+", "")
         
-            // 🎯 LAYER RECOVERY STEP
-            // Look in the direct service parameters first, fall back to execution context memory
+            // 1. LAYER RECOVERY: Check parameters or local thread context first
             String currentMetaJsonStr = context.activeLayoutBuffer ?: ec.context.activeLayoutBuffer
+            String bufferId = context.activeLayoutBufferId ?: ec.context.activeLayoutBufferId
         
-            // 🛡️ REMEDIATION CRITICAL FALLBACK:
-            // If thread contexts are isolated, load the record fresh from the DB using the transaction context ID pointers
+            // 2. 🎯 PRIMARY BACKGROUND PIPELINE: If isolated by background execution threads, restore via ADK Session State
             if (!currentMetaJsonStr || currentMetaJsonStr.trim() == "") {
-                String bufferId = context.activeLayoutBufferId ?: ec.context.activeLayoutBufferId
-                ec.logger.info("ℹ️ [add#FormField] activeLayoutBuffer context empty. Attempting DB recovery via ID: ${bufferId}")
+                String activeSessionId = context.sessionId ?: ec.context.sessionId
+                String activeUserId = ec.user.getUserId() ?: "system_ide_user"
                 
+                if (activeSessionId) {
+                    ec.logger.info("ℹ️ [add#FormField] Thread context isolated. Extracting layout matrix from persistent ADK session state cache for session: ${activeSessionId}")
+                    def runner = org.moqui.adk.AdkManager.runnerForSession(activeSessionId)
+                    def sessionOpt = runner.sessionService().getSession("moqui-adk", activeUserId, activeSessionId, java.util.Optional.empty()).blockingGet()
+                    
+                    if (sessionOpt.isPresent()) {
+                        Map adkState = sessionOpt.get().state()
+                        // 🎯 DIAGNOSTIC: Print what the background thread actually sees
+                        ec.logger.info("🕵️‍♂️ [add#FormField DEBUG] Active keys in ADK State: ${adkState.keySet()}")
+                        ec.logger.info("🕵️‍♂️ [add#FormField DEBUG] activeLayoutBuffer value: ${adkState.get('activeLayoutBuffer')}")
+                        currentMetaJsonStr = adkState.get("activeLayoutBuffer")
+                        if (!bufferId) {
+                            bufferId = adkState.get("activeLayoutBufferId")
+                        }
+                        ec.logger.info("🎯 [add#FormField] Successfully restored tree layout from persistent ADK Session State.")
+                    }
+                }
+            }
+        
+            // 3. REMEDIATION DATABASE FALLBACK: If ADK session state was unhydrated, attempt DB recovery
+            if (!currentMetaJsonStr || currentMetaJsonStr.trim() == "") {
+                ec.logger.info("ℹ️ [add#FormField] activeLayoutBuffer empty. Attempting fallback DB recovery via ID: ${bufferId}")
                 if (bufferId) {
                     def bufferRow = ec.entity.find("org.moqui.ai.WorkspaceBuffer").condition("workspaceBufferId", bufferId).one()
                     currentMetaJsonStr = bufferRow?.metaJsonBuffer
@@ -61,7 +89,7 @@
                 }
             }
         
-            // Ultimate pristine fallback if both layers miss
+            // Ultimate pristine fallback if all lookup layers miss
             if (!currentMetaJsonStr) {
                 currentMetaJsonStr = "{ \"screen\": \"SampleForm\", \"mariaId\": \"SampleForm#root\", \"widgets\": [] }"
             }
@@ -88,12 +116,21 @@
                 ec.logger.info("🌲 [TOOL MUTATION SUCCESS] Node surgically injected under parent: ${targetNodeId}")
                 String updatedMetaJson = JsonOutput.toJson(layoutTree)
                 
-                // 🎯 WRITE-BACK RESYNC: Update the database record instantly so the child editors fetch fresh state
-                String bufferId = context.activeLayoutBufferId ?: ec.context.activeLayoutBufferId
+                // Write back synchronization updates to session state and database cache row layers
                 if (bufferId) {
                     ec.service.sync().name("org.moqui.ai.AgiWorkspaceServices.store#WorkspaceBuffer")
                         .parameters([workspaceBufferId: bufferId, metaJsonBuffer: updatedMetaJson])
                         .call()
+                }
+                
+                String activeSessionId = context.sessionId ?: ec.context.sessionId
+                if (activeSessionId) {
+                    String activeUserId = ec.user.getUserId() ?: "system_ide_user"
+                    def runner = org.moqui.adk.AdkManager.runnerForSession(activeSessionId)
+                    def sessionOpt = runner.sessionService().getSession("moqui-adk", activeUserId, activeSessionId, java.util.Optional.empty()).blockingGet()
+                    if (sessionOpt.isPresent()) {
+                        sessionOpt.get().state().put("activeLayoutBuffer", updatedMetaJson)
+                    }
                 }
         
                 String jsonPacket = groovy.json.JsonOutput.toJson([
