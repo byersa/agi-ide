@@ -13,5 +13,6 @@ tools.each { tool ->
         scriptBody: tool.scriptBody
     ])
 }
+ec.logger.info("In getAllTools, formattedList:" + formattedList)
 
 context.toolsList = formattedList

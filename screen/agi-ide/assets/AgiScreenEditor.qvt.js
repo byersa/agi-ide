@@ -85,13 +85,32 @@
             }
         },
         mounted() {
+            // 1. Initialize the shared context bus channel
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
 
-            // Listen for selection events broadcasting from the Visual Canvas
+            // 2. Attach message handler for workspace events
             this.contextBus.onmessage = (msg) => {
-                if (msg.data && msg.data.event === 'element-selected-by-id') {
+                if (!msg.data) return;
+
+                // A. Handle selection highlighting from canvas
+                if (msg.data.event === 'element-selected-by-id') {
                     const selectedId = msg.data.mariaId; // e.g., "SampleForm#username"
                     this.highlightAndScrollToSourceElement(selectedId);
+                }
+
+                // B. Handle mutation notification: Pull single source of truth from agiIdeStore
+                if (msg.data.event === 'artifact-state-mutated') {
+                    const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
+                    if (ideStore) {
+                        const latestTree = ideStore.getActiveBlueprint;
+                        if (latestTree) {
+                            console.info(`🎨 [AgiScreenEditor] Reacting to artifact-state-mutated event. Syncing with agiIdeStore.`);
+                            this.localBlueprintTree = JSON.parse(JSON.stringify(latestTree));
+
+                            // Re-compile updated layout tree down to XML text
+                            this.compileTreeToXmlText();
+                        }
+                    }
                 }
             };
         },

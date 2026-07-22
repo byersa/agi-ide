@@ -76,8 +76,17 @@
             layoutTree: {
                 handler(newTree) {
                     if (newTree) {
-                        console.info(`🔄 Editor [${this.$options.name}] deeply sync'd localBlueprintTree to new workspace layout state.`);
+                        console.info(` Editor [${this.$options.name}] deeply sync'd localBlueprintTree to new workspace layout state.`);
                         this.localBlueprintTree = JSON.parse(JSON.stringify(newTree));
+
+                        // 🎯 RE-FETCH RAW XML TEXT ON MUTATION
+                        const vm = this;
+                        const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
+                        const axiosConfig = ideStore ? ideStore.getAxiosConfig : {};
+                        axios.get('/agi-ide/getRawXml?screenPath=' + encodeURIComponent(this.screenPath), axiosConfig)
+                            .then(function (response) {
+                                vm.rawXmlSource = response.data || '';
+                            });
                     }
                 },
                 immediate: true,
@@ -85,16 +94,45 @@
             }
         },
         mounted() {
-            // Configure message event listener
-            // 2. Listen for selection events broadcasting from the Visual Canvas
+            // 1. Initialize the shared context bus channel
+            this.contextBus = new BroadcastChannel('agi-ide-context-bus');
+
+            // 2. Attach message handler for workspace events
             this.contextBus.onmessage = (msg) => {
-                if (msg.data && msg.data.event === 'element-selected-by-id') {
+                if (!msg.data) return;
+
+                // A. Handle selection highlighting from canvas
+                if (msg.data.event === 'element-selected-by-id') {
                     const selectedId = msg.data.mariaId; // e.g., "SampleForm#username"
                     this.highlightAndScrollToSourceElement(selectedId);
                 }
+
+                // B. Handle mutation notification: Pull single source of truth from agiIdeStore
+                if (msg.data.event === 'artifact-state-mutated') {
+                    const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
+                    if (ideStore) {
+                        const latestTree = ideStore.getActiveBlueprint;
+                        if (latestTree) {
+                            console.info(`🎨 [AgiComponentEditor] Reacting to artifact-state-mutated event. Syncing with agiIdeStore.`);
+                            this.localBlueprintTree = JSON.parse(JSON.stringify(latestTree));
+                        }
+                    }
+
+                    // Re-fetch raw XML definition from server buffer
+                    const vm = this;
+                    const ideStoreRef = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
+                    const axiosConfig = ideStoreRef ? ideStoreRef.getAxiosConfig : {};
+                    axios.get('/agi-ide/getRawXml?screenPath=' + encodeURIComponent(this.screenPath), axiosConfig)
+                        .then(function (response) {
+                            vm.rawXmlSource = response.data || '';
+                        })
+                        .catch(function (err) {
+                            console.warn("Failed re-fetching updated component XML:", err);
+                        });
+                }
             };
 
-            // Fetch raw XML component text definition with axios
+            // 3. Initial fetch of raw XML component text definition
             const vm = this;
             const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
             const axiosConfig = ideStore ? ideStore.getAxiosConfig : {};

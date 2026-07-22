@@ -144,12 +144,19 @@
         mounted() {
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
             this.contextBus.onmessage = (msg) => {
-                if (!msg.data) return;
-                if (msg.data.event === 'element-selected-by-id') {
-                    this.selectedMariaId = msg.data.mariaId;
-                    this.scrollToNode(msg.data.mariaId);
-                } else if (msg.data.event === 'artifact-state-mutated') {
-                    this.localBlueprintTree = msg.data.mutatedTree;
+                if (msg.data && msg.data.event === 'artifact-state-mutated') {
+                    // Read directly from the store (Single Source of Truth)
+                    const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
+                    if (ideStore) {
+                        const latestTree = ideStore.getActiveBlueprint;
+                        console.info("🎨 [EDITOR REACTION] Pulling fresh blueprint tree from agiIdeStore:", latestTree);
+
+                        // Reactive redraw in the local editor
+                        this.blueprintTree = [latestTree];
+                        if (typeof this.refreshCanvas === 'function') {
+                            this.refreshCanvas();
+                        }
+                    }
                 }
             };
         },

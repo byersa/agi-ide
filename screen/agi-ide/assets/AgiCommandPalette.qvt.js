@@ -84,7 +84,6 @@
                 searchPrompt: '',
                 activePanel: '',
                 activeArtifactLocation: '',
-                wsConnection: null,
                 isAgiAgentThinking: false,
                 aiConversationLog: [
                     { sender: 'assistant', text: 'System Online. Standing by for layout instructions or manual tool calls.' }
@@ -114,12 +113,6 @@
 
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
             this.contextBus.onmessage = (msg) => {
-                if (msg.data && msg.data.event === 'workspace-panel-focused') {
-                    this.activePanel = msg.data.panelName;
-                    this.activeArtifactLocation = msg.data.artifactLocation || '';
-                    console.info(`⚡ AgiCommandPalette synchronized context frame target to: [${this.activePanel}]`);
-                    this.initializeAgiWebSocketSession();
-                }
                 if (msg.data && msg.data.event === 'force-open-command-palette') {
                     this.activePanel = msg.data.panelName;
                     this.activeArtifactLocation = msg.data.artifactLocation || '';
@@ -127,7 +120,6 @@
                 }
             };
 
-            this.initializeAgiWebSocketSession();
         },
         beforeUnmount() {
             window.removeEventListener('keydown', this.handleGlobalShortcutInterceptor);
@@ -172,73 +164,6 @@
                 } else {
                     this.aiConversationLog.push({ sender: 'agent-stream', text: chunkText });
                 }
-            },
-            initializeAgiWebSocketSession() {
-                if (this.wsConnection) {
-                    if (this.wsConnection.readyState === WebSocket.OPEN || this.wsConnection.readyState === WebSocket.CONNECTING) {
-                        this.wsConnection.close();
-                    }
-                }
-                const currentChannel = this.activePanel || 'global_canvas';
-                const socketUrl = `ws://${window.location.host}/agi-ws/${currentChannel}?token=816554a337e2d73431bd2903642f993b`;
-
-                console.info("🔌 Opening communication line to server-side ADK core...", socketUrl);
-                this.wsConnection = new WebSocket(socketUrl);
-
-                this.wsConnection.onmessage = (event) => {
-                    try {
-                        const payload = JSON.parse(event.data);
-
-                        if (payload.event === 'artifact-state-mutated') {
-                            console.info("📡 [WIRE] Forwarding server layout mutation to workspace bus...");
-                            if (this.contextBus) {
-                                this.contextBus.postMessage({
-                                    event: 'artifact-state-mutated',
-                                    mutatedTree: payload.mutatedTree
-                                });
-                            }
-                            return;
-                        }
-
-                        if (payload.type === 'blueprint-updated') {
-                            console.info("🔄 [SYNC] Server broadcasted an active Meta-JSON blueprint modification:", payload.artifactPath);
-                            const canvasEditor = window.AgiComponents?.['agi-canvas-editor'];
-                            if (canvasEditor && canvasEditor.blueprintTree) {
-                                canvasEditor.blueprintTree[0] = typeof payload.newData === 'string'
-                                    ? JSON.parse(payload.newData)
-                                    : payload.newData;
-                                console.info("🎨 [RENDER] Canvas Editor synchronized and forced a reactive redraw stream.");
-                            }
-                            return;
-                        }
-
-                        if (payload.type === 'textToken') {
-                            this.isAgiAgentThinking = true;
-                            this.appendOrUpdateStreamingToken(payload.text);
-                        }
-
-                        if (payload.type === 'command') {
-                            this.isAgiAgentThinking = false;
-                            console.info("🎯 ADK Agent returned structural tool command payload:", payload.data);
-                            window.AgiMcpEngine.executeTool(
-                                payload.data.command,
-                                window.AgiComponents['agi-canvas-editor'].blueprintTree[0],
-                                this.activeArtifactLocation
-                            );
-                            this.aiConversationLog.push({
-                                sender: 'assistant',
-                                text: `Successfully executed layout modification: **${payload.data.command}**.`
-                            });
-                        }
-
-                        if (payload.type === 'error') {
-                            this.isAgiAgentThinking = false;
-                            this.aiConversationLog.push({ sender: 'assistant', text: `⚠️ ADK Error: ${payload.message}` });
-                        }
-                    } catch (err) {
-                        console.warn("Failed parsing streaming wire token payload:", err);
-                    }
-                };
             },
             handleCommandExecute() {
                 if (!this.searchPrompt.trim()) return;
@@ -302,52 +227,47 @@
                         this.isAgiAgentThinking = false;
                         if (result.error) throw new Error(result.error);
 
-                        let displayResponseText = "";
-                        const rawText = (result.completionText || "").trim();
-
-                        // Parse out any text explanation Gemini sent back
-                        const looksLikeJson = /^[\{\[]/.test(rawText);
-                        if (looksLikeJson) {
-                            try {
-                                const parsed = JSON.parse(rawText);
-                                displayResponseText = parsed.message || "Layout updated successfully.";
-                            } catch (e) {
-                                displayResponseText = rawText;
-                            }
-                        } else {
-                            displayResponseText = rawText;
-                        }
-
-                        // 🎯 THE FIX: Force a pure UI redraw instead of executing an MCP tool event
-                        const canvasEditor = window.AgiComponents?.['agi-canvas-editor'];
-                        if (canvasEditor) {
-                            console.log("🎨 Refreshing layout canvas with updated server-side state...");
-
-                            // If your canvas component has a reload/refresh method, invoke it directly:
-                            if (typeof canvasEditor.refreshCanvas === 'function') {
-                                canvasEditor.refreshCanvas();
-                            } else if (canvasEditor.blueprintTree) {
-                                // Fallback: If you have an active workspace sync routine, trigger it here
-                                // without passing it back into the AgiMcpEngine execution loop.
-                                ec.service.sync().name("org.moqui.ai.AgiWorkspaceServices.get#WorkspaceBuffer")
-                                    .parameters({ artifactUri: this.activeArtifactLocation })
-                                    .then(bufferRes => {
-                                        if (bufferRes?.data?.metaJsonBuffer) {
-                                            canvasEditor.blueprintTree = [JSON.parse(bufferRes.data.metaJsonBuffer)];
-                                        }
-                                    });
+                        // 🎯 DEFENSIVE UNWRAP: Unpack completionText whether it's a string or parsed object
+                        let payload = result;
+                        if (result.completionText) {
+                            if (typeof result.completionText === 'string') {
+                                try {
+                                    payload = JSON.parse(result.completionText);
+                                } catch (e) {
+                                    payload = { message: result.completionText };
+                                }
+                            } else if (typeof result.completionText === 'object') {
+                                payload = result.completionText;
                             }
                         }
 
-                        if (!displayResponseText) {
-                            displayResponseText = `Successfully processed layout modification intent.`;
+                        if (payload.status === 'error' || payload.error) {
+                            throw new Error(payload.error || payload.message || "Execution error encountered.");
                         }
 
-                        // Append Gemini's message to the visible chat stream
-                        this.aiConversationLog.push({
-                            sender: 'assistant',
-                            text: displayResponseText
-                        });
+                        let displayResponseText = payload.message || "Layout updated successfully.";
+
+                        // 1. COMMIT TO SINGLE SOURCE OF TRUTH (STORE) FIRST
+                        if (payload.metaJsonBuffer) {
+                            const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
+                            if (ideStore) {
+                                ideStore.updateActiveBlueprint({
+                                    artifactUri: this.activeArtifactLocation,
+                                    blueprintTree: payload.metaJsonBuffer
+                                });
+                            }
+
+                            // 2. EMIT LIGHTWEIGHT SIGNAL OVER CONTEXT BUS
+                            if (this.contextBus) {
+                                this.contextBus.postMessage({
+                                    event: 'artifact-state-mutated',
+                                    artifactLocation: this.activeArtifactLocation
+                                });
+                            }
+                        }
+
+                        // 3. Append assistant response to chat log
+                        this.aiConversationLog.push({ sender: 'assistant', text: displayResponseText });
                     })
                     .catch(err => {
                         this.isAgiAgentThinking = false;

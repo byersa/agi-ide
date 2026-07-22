@@ -1,7 +1,6 @@
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-3.0.xsd">
 
-    <!-- 🎯 Change the path name right here -->
     <service verb="modify" noun="Blueprint" type="inline" 
              name="org.moqui.ai.mcp.LayoutServices.modify#Blueprint">
         <description>Modify a blueprint layout tree on the server</description>
@@ -18,133 +17,190 @@
         </actions>
     </service>
 
-<service verb="add" noun="FormField">
-        <description>Use this tool when the user requests to add, create, or insert a new input field, form element, or data column into the active user interface layout canvas. Do not attempt to write text commands; execute this tool with the appropriate node target parameters to modify the layout structure directly.</description>
+    <service verb="add" noun="FormField">
+        <description>Use this tool when the user requests to add, create, or insert a new input field, form element, or data column into the active user interface layout canvas.</description>
         <in-parameters>
             <parameter name="targetNodeId" required="true">
                 <description>The unique ID string of the parent container element, section, or form panel inside the active layout tree where this new field should be appended.</description>
             </parameter>
+            <parameter name="name" required="false">
+                <description>The machine-readable field name or entity variable key (e.g., 'med_hist_39' or 'medicalHistory'). If omitted, will be derived from the label.</description>
+            </parameter>
             <parameter name="label" required="true">
-                <description>The human-readable label or title text that will display next to the field in the user interface (e.g., 'Medical History').</description>
+                <description>The human-readable label or title text that will display next to the field in the user interface (e.g., 'Medical History 39').</description>
             </parameter>
             <parameter name="encrypt" type="String" default-value="false">
                 <description>MUST be set to 'true' if the field captures sensitive data, medical history, or Personally Identifiable Information (PII) to comply with HIPAA guidelines.</description>
             </parameter>
             
-            <!-- 🎯 THE BRIDGE PIPELINE PARAMETERS -->
-            <parameter name="activeLayoutBuffer">
-                <description>Optional incoming tree buffer passed directly by synchronous callers.</description>
-            </parameter>
-            <parameter name="activeLayoutBufferId">
-                <description>Optional incoming database tracking ID passed directly by synchronous callers.</description>
-            </parameter>
+            <parameter name="activeLayoutBuffer"/>
+            <parameter name="activeLayoutBufferId"/>
+            <parameter name="activeArtifactLocation"/>
         </in-parameters>
         <out-parameters>
             <parameter name="status" type="String"/>
+            <parameter name="updatedMetaJson" type="String"/>
         </out-parameters>
         <actions>
         <script><![CDATA[
             import groovy.json.JsonSlurper
             import groovy.json.JsonOutput
         
-            ec.logger.info("🚀 [TOOL EXECUTION] add#FormField called with: targetNodeId=${targetNodeId}, label=${label}, encrypt=${encrypt}")
+            ec.logger.info("🚀 [TOOL EXECUTION] add#FormField called with: targetNodeId=${targetNodeId}, name=${name}, label=${label}, encrypt=${encrypt}")
             boolean secureField = "true".equalsIgnoreCase(encrypt)
-            String cleanName = label.replaceAll("\\s+", "")
+            
+            // 🎯 ROBUST TARGET URI RESOLUTION FROM targetNodeId OR CONTEXT
+            String targetUri = ""
+            if (targetNodeId && targetNodeId.contains("#") && targetNodeId.startsWith("component://")) {
+                targetUri = targetNodeId.split("#")[0]
+            }
+
+            if (!targetUri || targetUri.trim() == "") {
+                String rawUri = context.activeArtifactLocation ?: ec.context.activeArtifactLocation ?: context.focusCoordinate ?: ""
+                targetUri = rawUri.contains("#") ? rawUri.split("#")[0] : rawUri
+            }
+
+            if (!targetUri || targetUri.trim() == "") {
+                targetUri = (ec.context.get("activeArtifactLocation") ?: "").toString()
+            }
+
+            String rawName = context.name ?: ""
+            String cleanName = (rawName.trim() != "") 
+                ? rawName.trim() 
+                : label.replaceAll("[^a-zA-Z0-9_]", "")
+
+            ec.logger.info("ℹ️ [add#FormField] Resolved field cleanName: ${cleanName}, targetUri: '${targetUri}'")
         
-            // 1. LAYER RECOVERY: Check parameters or local thread context first
-            String currentMetaJsonStr = context.activeLayoutBuffer ?: ec.context.activeLayoutBuffer
-            String bufferId = context.activeLayoutBufferId ?: ec.context.activeLayoutBufferId
-        
-            // 2. 🎯 PRIMARY BACKGROUND PIPELINE: If isolated by background execution threads, restore via ADK Session State
-            if (!currentMetaJsonStr || currentMetaJsonStr.trim() == "") {
-                String activeSessionId = context.sessionId ?: ec.context.sessionId
-                String activeUserId = ec.user.getUserId() ?: "system_ide_user"
+            String currentMetaJsonStr = context.activeLayoutBuffer
+            String bufferId = context.activeLayoutBufferId
+            
+            String activeSessionId = context.sessionId ?: ec.context.sessionId
+            String activeUserId = ec.user.getUserId() ?: "system_ide_user"
+
+            // 🎯 1. CHECK ADK SESSION STATE FOR VALID JSON
+            if (activeSessionId) {
+                def runner = org.moqui.adk.AdkManager.runnerForSession(activeSessionId)
+                def sessionOpt = runner.sessionService().getSession("moqui-adk", activeUserId, activeSessionId, java.util.Optional.empty()).blockingGet()
                 
-                if (activeSessionId) {
-                    ec.logger.info("ℹ️ [add#FormField] Thread context isolated. Extracting layout matrix from persistent ADK session state cache for session: ${activeSessionId}")
-                    def runner = org.moqui.adk.AdkManager.runnerForSession(activeSessionId)
-                    def sessionOpt = runner.sessionService().getSession("moqui-adk", activeUserId, activeSessionId, java.util.Optional.empty()).blockingGet()
-                    
-                    if (sessionOpt.isPresent()) {
-                        Map adkState = sessionOpt.get().state()
-                        // 🎯 DIAGNOSTIC: Print what the background thread actually sees
-                        ec.logger.info("🕵️‍♂️ [add#FormField DEBUG] Active keys in ADK State: ${adkState.keySet()}")
-                        ec.logger.info("🕵️‍♂️ [add#FormField DEBUG] activeLayoutBuffer value: ${adkState.get('activeLayoutBuffer')}")
-                        currentMetaJsonStr = adkState.get("activeLayoutBuffer")
-                        if (!bufferId) {
-                            bufferId = adkState.get("activeLayoutBufferId")
-                        }
-                        ec.logger.info("🎯 [add#FormField] Successfully restored tree layout from persistent ADK Session State.")
+                if (sessionOpt && sessionOpt.isPresent()) {
+                    Map adkState = sessionOpt.get().state()
+                    String stateBuffer = adkState.get("activeLayoutBuffer")
+                    if (stateBuffer && stateBuffer.startsWith("{")) {
+                        currentMetaJsonStr = stateBuffer
+                    }
+                }
+            }
+
+            // 🎯 2. ALWAYS PREFER DATABASE BUFFER ROW IF currentMetaJsonStr IS INVALID OR NOT JSON
+            if (!currentMetaJsonStr || !currentMetaJsonStr.trim().startsWith("{")) {
+                if (targetUri && targetUri.trim() != "") {
+                    def bufferRow = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
+                        .condition("artifactUri", targetUri)
+                        .condition("userId", activeUserId)
+                        .one()
+                    if (bufferRow?.metaJsonBuffer) {
+                        currentMetaJsonStr = bufferRow.metaJsonBuffer
+                        bufferId = bufferRow.workspaceBufferId
+                        ec.logger.info("🎯 [add#FormField] Hydrated buffer from WorkspaceBuffer DB row: ${bufferId}")
                     }
                 }
             }
         
-            // 3. REMEDIATION DATABASE FALLBACK: If ADK session state was unhydrated, attempt DB recovery
-            if (!currentMetaJsonStr || currentMetaJsonStr.trim() == "") {
-                ec.logger.info("ℹ️ [add#FormField] activeLayoutBuffer empty. Attempting fallback DB recovery via ID: ${bufferId}")
-                if (bufferId) {
-                    def bufferRow = ec.entity.find("org.moqui.ai.WorkspaceBuffer").condition("workspaceBufferId", bufferId).one()
-                    currentMetaJsonStr = bufferRow?.metaJsonBuffer
-                    ec.logger.info("🎯 [add#FormField] Successfully restored tree layout from database cache row.")
+            ec.logger.info("ℹ️ [add#FormField] Working Meta-JSON Content: ${currentMetaJsonStr}")
+            
+            // 🎯 3. SAFE PARSING WITH CORRUPTION RECOVERY
+            Map layoutTree = [:]
+            boolean parseFailed = false
+            
+            if (currentMetaJsonStr && currentMetaJsonStr.trim().startsWith("{") && !currentMetaJsonStr.contains("[...]")) {
+                try {
+                    layoutTree = new JsonSlurper().parseText(currentMetaJsonStr) as Map
+                } catch (Exception parseEx) {
+                    ec.logger.warn("⚠️ [add#FormField] Invalid JSON buffer in DB/State (${parseEx.message}). Triggering auto-recovery...")
+                    parseFailed = true
                 }
+            } else {
+                parseFailed = true
+            }
+
+            if (parseFailed || layoutTree.isEmpty()) {
+                ec.logger.info("🛠️ [add#FormField] Building fresh root layout tree structure for URI: '${targetUri}'")
+                String screenName = targetUri ? targetUri.split("/")[-1].replace(".xml", "") : "ActiveScreen"
+                layoutTree = [
+                    screen: screenName,
+                    location: targetUri ?: "",
+                    mariaId: screenName + "#root",
+                    widgets: [
+                        [
+                            type: "form-single",
+                            id: "patient_intake",
+                            mariaId: (targetUri ?: "") + "#patient_intake",
+                            children: []
+                        ]
+                    ]
+                ]
             }
         
-            // Ultimate pristine fallback if all lookup layers miss
-            if (!currentMetaJsonStr) {
-                currentMetaJsonStr = "{ \"screen\": \"SampleForm\", \"mariaId\": \"SampleForm#root\", \"widgets\": [] }"
-            }
-        
-            ec.logger.info("[add#FormField] Working Meta-JSON Content: ${currentMetaJsonStr}")
-            Map layoutTree = new JsonSlurper().parseText(currentMetaJsonStr)
-        
-            // Build out the target child layout descriptor
+            // Build target node
             Map dynamicFieldNode = [
                 id: java.util.UUID.randomUUID().toString(),
                 type: "FormField",
                 name: cleanName,
                 title: label,
-                mariaId: "component://agi-ide/screen/SampleForm.xml#" + cleanName,
+                mariaId: targetUri + "#" + cleanName,
                 children: []
             ]
         
-            // Call the decoupled tree mutation engine
+            // Execute tree mutation
             Map mutationResult = ec.service.sync().name("org.moqui.ai.mcp.LayoutServices.mutate#JsonTree")
                 .parameters([layoutTree: layoutTree, targetNodeId: targetNodeId, action: "APPEND", payloadNode: dynamicFieldNode])
                 .call()
-        
+
             if (mutationResult.mutated) {
-                ec.logger.info("🌲 [TOOL MUTATION SUCCESS] Node surgically injected under parent: ${targetNodeId}")
                 String updatedMetaJson = JsonOutput.toJson(layoutTree)
-                
-                // Write back synchronization updates to session state and database cache row layers
+        
+                // 🎯 DIRECT ENTITY UPDATE (Bypasses service validation wrapper)
+                def bufferEntity = null
                 if (bufferId) {
-                    ec.service.sync().name("org.moqui.ai.AgiWorkspaceServices.store#WorkspaceBuffer")
-                        .parameters([workspaceBufferId: bufferId, metaJsonBuffer: updatedMetaJson])
-                        .call()
+                    bufferEntity = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
+                        .condition("workspaceBufferId", bufferId)
+                        .one()
                 }
-                
-                String activeSessionId = context.sessionId ?: ec.context.sessionId
+                if (!bufferEntity && targetUri) {
+                    bufferEntity = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
+                        .condition("artifactUri", targetUri)
+                        .condition("userId", activeUserId)
+                        .one()
+                }
+
+                if (bufferEntity) {
+                    bufferEntity.metaJsonBuffer = updatedMetaJson
+                    bufferEntity.update()
+                    ec.logger.info("💾 [add#FormField] DIRECT ENTITY UPDATE SUCCESS on ID [${bufferEntity.workspaceBufferId}] for URI: ${targetUri}")
+                } else {
+                    // Create new row if none exists
+                    def newBuffer = ec.entity.makeValue("org.moqui.ai.WorkspaceBuffer")
+                    newBuffer.artifactUri = targetUri
+                    newBuffer.userId = activeUserId
+                    newBuffer.metaJsonBuffer = updatedMetaJson
+                    newBuffer.setSequencedIdPrimary()
+                    newBuffer.create()
+                    ec.logger.info("💾 [add#FormField] CREATED new WorkspaceBuffer row [${newBuffer.workspaceBufferId}]")
+                }
+
+                // Update in-memory ADK Session State
                 if (activeSessionId) {
-                    String activeUserId = ec.user.getUserId() ?: "system_ide_user"
                     def runner = org.moqui.adk.AdkManager.runnerForSession(activeSessionId)
                     def sessionOpt = runner.sessionService().getSession("moqui-adk", activeUserId, activeSessionId, java.util.Optional.empty()).blockingGet()
-                    if (sessionOpt.isPresent()) {
+                    if (sessionOpt && sessionOpt.isPresent()) {
                         sessionOpt.get().state().put("activeLayoutBuffer", updatedMetaJson)
                     }
                 }
         
-                String jsonPacket = groovy.json.JsonOutput.toJson([
-                    event: "artifact-state-mutated",
-                    mutatedTree: layoutTree
-                ])
-                
-                ec.makeNotificationMessage()
-                    .topic("agi-ide-workspace")
-                    .message(jsonPacket)
-                    .send()
+                context.updatedMetaJson = updatedMetaJson
                 context.status = "SUCCESS"
             } else {
-                ec.logger.warn("❌ [TOOL MUTATION FAILED] Target node container [${targetNodeId}] was NOT found in the active tree buffer.")
+                ec.logger.warn("❌ [TOOL MUTATION FAILED] Target node container [${targetNodeId}] was NOT found in active tree buffer.")
                 context.status = "NODE_NOT_FOUND"
             }
         ]]></script>
@@ -163,24 +219,23 @@
         </out-parameters>
         <actions>
             <script><![CDATA[
-                ec.logger.info("[TOOL MUTATION] layoutTree: ${layoutTree}")
                 ec.logger.info("[TOOL MUTATION] targetNodeId: ${targetNodeId}")
                 ec.logger.info("[TOOL MUTATION] action: ${action}")
                 ec.logger.info("[TOOL MUTATION] payloadNode: ${payloadNode}")
+                
                 def processNode
                 processNode = { Map node ->
-                    ec.logger.info("[TOOL MUTATION] node(1): ${node}")
-                    // 🎯 ROBUST ROOT/NODE ID MATCHING
-                    // Checks if node.id matches, node.mariaId matches exactly, or ends with the target ID suffix (#root)
-                    boolean isTarget = (node.id == targetNodeId) || 
-                                       (node.mariaId == targetNodeId) || 
-                                       (node.mariaId?.toString()?.endsWith("#" + targetNodeId))
+                    String cleanTargetId = targetNodeId.contains("#") ? targetNodeId.split("#")[1] : targetNodeId
 
-                    ec.logger.info("[TOOL MUTATION] isTarget: ${isTarget}")
+                    boolean isTarget = (node.id == targetNodeId) || 
+                        (node.mariaId == targetNodeId) || 
+                        (node.id == cleanTargetId) ||
+                        (node.name == cleanTargetId) ||
+                        (node.mariaId?.toString()?.endsWith("#" + cleanTargetId))
+
                     if (isTarget) {
                         switch (action) {
                             case "APPEND":
-                                // Adapt gracefully to either a "widgets" structure or a standard "children" layout array
                                 if (node.widgets != null) {
                                     node.widgets.add(payloadNode)
                                 } else {
@@ -194,11 +249,8 @@
                                 return true
                         }
                     }
-                    ec.logger.info("[TOOL MUTATION] node(2): ${node}")
                     
-                    // Recursive array scanning block supporting both design idioms
                     def childList = node.widgets ?: node.children
-                    ec.logger.info("[TOOL MUTATION] childList: ${childList}")
                     if (childList && childList instanceof List) {
                         if (action == "DELETE") {
                             boolean removed = childList.removeIf { 

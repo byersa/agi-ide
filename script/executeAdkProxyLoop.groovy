@@ -2,6 +2,8 @@ package org.moqui.ai
 
 import org.moqui.adk.AdkManager
 import groovy.json.JsonBuilder
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
 import org.moqui.impl.entity.EntityDataLoaderImpl
 import java.util.concurrent.ConcurrentHashMap
 
@@ -22,9 +24,9 @@ if (!artifactUri || artifactUri.trim() == "") {
     ec.logger.error("👉 userPrompt: '${userPrompt}', focusCoordinate: '${context.focusCoordinate}'")
     
     // Instead of hiding the issue with SandboxForm, return a descriptive error map back to the UI palette
-    context.completionText = groovy.json.JsonOutput.toJson([
+    context.completionText = JsonOutput.toJson([
         error: "CONTEXT_ERROR",
-        message: "The AGI palette lost track of the active file pathway context. Please select a element on the canvas workspace and try again."
+        message: "The AGI palette lost track of the active file pathway context. Please select an element on the canvas workspace and try again."
     ])
     return // Halt execution cleanly right here
 }
@@ -46,10 +48,11 @@ String currentMetaJsonStr = getBufferResult.metaJsonBuffer
 // Push these identifiers into the thread context so tools (like add#FormField) can mutate the real row buffer
 ec.context.put("activeLayoutBufferId", activeLayoutBufferId)
 ec.context.put("activeLayoutBuffer", currentMetaJsonStr)
+ec.logger.info("In executeAdkProxyLoop, activeLayoutBufferId : " + activeLayoutBufferId )
 ec.logger.info("In executeAdkProxyLoop, currentMetaJsonStr: " + currentMetaJsonStr)
 
 // Parse the text string into a native map to construct the system prompt downstream
-Map activeTree = new groovy.json.JsonSlurper().parseText(currentMetaJsonStr)
+Map activeTree = new JsonSlurper().parseText(currentMetaJsonStr)
 
 // =========================================================================
 // REAL NATIVE IDEMPOTENCY BOOTSTRAPPER GUARD
@@ -94,6 +97,11 @@ When the user requests structural modifications (such as adding input assets), s
 most appropriate tool from your manifest and execute it. Do not return raw text blocks 
 describing the change; use your tool execution pathways.
 
+CRITICAL TOOL RULES:
+- When calling add#FormField, you MUST provide an explicit machine-readable field 'name' 
+  (e.g., 'med_hist_39') in addition to the human-readable 'label' (e.g., 'Medical History 39').
+- Never leave 'name' blank or null.
+
 INTENT COMPILATION INSTRUCTIONS:
 If the user's prompt starts with "COMPILATION INTENT REQUEST:", analyze the provided plain-text intent.
 Your job is to parse it, map it to our AGI Schema standard, and update the target node's attributes 
@@ -118,7 +126,7 @@ try {
     var servletContext = ec.web?.servletContext
     var activeSessionCache = servletContext?.getAttribute("AGI_ACTIVE_SESSIONS")
     if (activeSessionCache == null) {
-        activeSessionCache = new java.util.concurrent.ConcurrentHashMap<String, String>()
+        activeSessionCache = new ConcurrentHashMap<String, String>()
         servletContext?.setAttribute("AGI_ACTIVE_SESSIONS", activeSessionCache)
     }
 
@@ -161,11 +169,15 @@ try {
     adkSession.state().put("activeLayoutBufferId", activeLayoutBufferId)
     adkSession.state().put("activeLayoutBuffer", currentMetaJsonStr)
 
+    ec.logger.info("📡 adkSession.state, activeLayoutBufferId: ${adkSession.state().get('activeLayoutBufferId')}")
+    ec.logger.info("📡 adkSession.state, activeLayoutBuffer: ${adkSession.state().get('activeLayoutBuffer')}")
     ec.logger.info("📡 Dispatching core prompt to Gemini via verified session: ${verifiedSessionId}")
     ec.message.clearAll()
     
     ec.context.put("sessionId", verifiedSessionId)
     context.sessionId = verifiedSessionId
+
+    // AI call happens here
     conversationEvents = AdkManager.runAgent(activeUserId, verifiedSessionId, contextPayload)
     
     if (ec.message.hasError()) {
@@ -189,41 +201,98 @@ try {
         ec.logger.info("🔄 [SANDBOX HEALING] Re-prompting Gemini with explicit failure parameters...")
         conversationEvents = AdkManager.runAgent(activeUserId, verifiedSessionId, correctionCritiquePayload)
     }
-    
 
-    String extractedTextAnswer = ""
+String extractedTextAnswer = ""
     boolean wasToolCall = false
 
     if (conversationEvents) {
-        // 🎯 SCAN WHOLE TURN HISTORY: Checks both the initial run and the healing pass 
-        // to see if Gemini successfully triggered a functionCall anywhere in the event chain.
-        wasToolCall = conversationEvents.any { event ->
-            event.content?.parts?.any { part -> part.containsKey('functionCall') || part.get('functionCall') != null }
+        // 🎯 1. ADK TOOL CALL DETECTION
+        boolean hasMultiTurnEvents = conversationEvents.size() > 1
+        boolean hasToolPartSignature = conversationEvents.any { event ->
+            try {
+                if (event.content?.parts) {
+                    return event.content.parts.any { part ->
+                        (part instanceof Map && part.isEmpty()) ||
+                        (part.functionCall != null) || (part.functionResponse != null)
+                    }
+                }
+            } catch (Exception ignore) {}
+            return false
         }
-        
-        // Safely extract the final text response (Gemini's explanation of the fix or final reply)
-        def targetEvent = conversationEvents.reverse().find { it.content?.parts }
+
+        wasToolCall = hasMultiTurnEvents || hasToolPartSignature
+
+        // 🎯 2. EXTRACT FINAL TEXT RESPONSE
+        def targetEvent = conversationEvents.reverse().find { event ->
+            try {
+                if (event.content?.parts) {
+                    return event.content.parts.any { part -> 
+                        (part.text && part.text.trim() != "") || 
+                        (part instanceof Map && part.text && part.text.trim() != "") 
+                    }
+                }
+            } catch (Exception ignore) {}
+            return false
+        }
+
         if (targetEvent) {
-            def textPart = targetEvent.content.parts.find { it.text }
-            if (textPart) {
-                extractedTextAnswer = textPart.text
+            try {
+                def textPart = targetEvent.content.parts.find { it.text || (it instanceof Map && it.text) }
+                if (textPart) extractedTextAnswer = textPart.text ?: ""
+            } catch (Exception ignore) {}
+        }
+    }
+
+    ec.logger.info("📡 [AGI PROXY] evaluated wasToolCall: ${wasToolCall}, extractedTextAnswer: ${extractedTextAnswer}")
+
+    // =========================================================================
+    // 🎯 SINGLE, UNIFIED REST RETURN PAYLOAD
+    // Parse metaJsonBuffer back to a native Map/List before JsonOutput to avoid double escaping!
+    // =========================================================================
+    // Clear validation messages so Moqui doesn't mark the transaction rollback-only
+    if (ec.message.hasError()) {
+        ec.logger.warn("⚠️ Clearing error messages prior to response return: ${ec.message.getErrorsString()}")
+        ec.message.clearAll()
+    }
+
+    // =========================================================================
+    if (wasToolCall) {
+        // 1. Read directly from ADK session memory
+        String updatedJsonStr = adkSession.state().get("activeLayoutBuffer") as String
+
+        // 2. Fallback: Query live database record
+        if (!updatedJsonStr || updatedJsonStr.trim() == "" || !updatedJsonStr.contains("med_hist")) {
+            def bufferRow = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
+                .condition("artifactUri", artifactUri)
+                .condition("userId", userId)
+                .useCache(false)
+                .one()
+            if (bufferRow?.metaJsonBuffer) {
+                updatedJsonStr = bufferRow.metaJsonBuffer
             }
         }
-    }
 
-    // Protect the frontend JSON parser from breaking on raw prose text if an operation took place
-    if (wasToolCall && (!extractedTextAnswer || !extractedTextAnswer.trim().startsWith("{"))) {
-        context.completionText = groovy.json.JsonOutput.toJson([
+        Object parsedTree = new JsonSlurper().parseText(updatedJsonStr ?: "{}")
+
+        context.completionText = JsonOutput.toJson([
             status: "success",
             type: "MUTATION_EXECUTED",
-            message: "Dynamic form field structure successfully validated and updated on the server backend."
+            metaJsonBuffer: parsedTree,
+            message: extractedTextAnswer ?: "Canvas layout successfully updated."
         ])
+        ec.logger.info("[AGI PROXY RETURN] Fresh metaJsonBuffer returned successfully.")
     } else {
-        context.completionText = extractedTextAnswer ?: "{}"
+        context.completionText = JsonOutput.toJson([
+            status: "success",
+            type: "TEXT_RESPONSE",
+            message: extractedTextAnswer ?: "No response generated."
+        ])
     }
-
 
 } catch (Exception e) {
     ec.logger.error("❌ Google ADK Engine proxy execution failed: " + e.getMessage(), e)
-    context.completionText = """{ "error": "ADK Loop Exception: ${e.getMessage()}" }"""
+    context.completionText = JsonOutput.toJson([
+        status: "error",
+        error: "ADK Loop Exception: ${e.getMessage()}"
+    ])
 }

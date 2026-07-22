@@ -8,40 +8,6 @@
         </actions>
     </service>
 
-    <service verb="get" noun="XmlArtifactBlueprint" read-only="true">
-        <in-parameters>
-            <parameter name="targetComponent" required="true"/>
-            <parameter name="artifactPath" required="true"/>
-        </in-parameters>
-        <out-parameters>
-            <parameter name="blueprintJson" type="Map"/>
-        </out-parameters>
-        <actions>
-            <script><![CDATA[
-                // Constructs an isolated, mock execution context to force a qjson compile pass
-                // through your live DeterministicVueRenderer class.
-                String screenLocation = "component://${targetComponent}/${artifactPath}"
-                
-                try {
-                    // Leverages Moqui's native ScreenFacade to build a render pass programmatically
-                    def renderComm = ec.screen.makeRender()
-                        .rootScreen(screenLocation)
-                        .renderMode("qjson") // Tells ScreenRenderImpl to activate our custom renderer!
-                    
-                    StringWriter writer = new StringWriter()
-                    renderComm.withWriter(writer).render()
-                    
-                    // Slurp the generated JSON tree straight back into an operational Map object
-                    def jsonMap = new groovy.json.JsonSlurper().parseText(writer.toString())
-                    context.blueprintJson = jsonMap
-                } catch (Exception e) {
-                    ec.logger.error("❌ [AGI-IDE SERVICE ERROR] Failed to serialize artifact tree: " + e.getMessage(), e)
-                    context.blueprintJson = [name: "Error", attributes: [text: e.getMessage()]]
-                }
-            ]]></script>
-        </actions>
-    </service>
-
     <service verb="get" noun="AllTools" type="script" location="component://agi-ide/script/getAllTools.groovy">
         <out-parameters>
             <parameter name="toolsList" type="List"/>
@@ -60,6 +26,69 @@
         </out-parameters>
     </service>
 
+    <service verb="get" noun="XmlArtifactBlueprint" read-only="true">
+        <in-parameters>
+            <parameter name="targetComponent" required="true"/>
+            <parameter name="artifactPath" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="blueprintJson" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                String fileLocation = "component://${targetComponent}/${artifactPath}"
+                
+                try {
+                    def resourceRef = ec.resource.getLocationReference(fileLocation)
+                    if (resourceRef && resourceRef.exists) {
+                        def xmlNode = new groovy.xml.XmlParser().parseText(resourceRef.getText())
+                        
+                        // Parse direct node hierarchy without legacy ScreenRenderImpl / DeterministicVueRenderer
+                        def parseWidgetNode
+                        parseWidgetNode = { node ->
+                            if (!(node instanceof groovy.util.Node)) return null
+                            String tagName = node.name().toString()
+                            if (['parameter', 'transition'].contains(tagName)) return null
+                            
+                            if (tagName == 'field') {
+                                String fieldName = node.attribute('name') ?: 'unnamed'
+                                List children = []
+                                node.children().each { c -> def mapped = parseWidgetNode(c); if (mapped) children.add(mapped) }
+                                return [type: "FormField", name: fieldName, title: node.attribute('title') ?: fieldName, mariaId: fileLocation + "#" + fieldName, children: children]
+                            } else {
+                                String nodeId = node.attribute('id') ?: node.attribute('name') ?: (tagName + "_" + java.util.UUID.randomUUID().toString().take(8))
+                                List children = []
+                                node.children().each { c -> def mapped = parseWidgetNode(c); if (mapped) children.add(mapped) }
+                                return [type: tagName, id: nodeId, mariaId: fileLocation + "#" + nodeId, children: children]
+                            }
+                        }
+                        
+                        List rootWidgets = []
+                        def widgetsNode = xmlNode.widgets[0]
+                        if (widgetsNode) {
+                            widgetsNode.children().each { child ->
+                                def mapped = parseWidgetNode(child)
+                                if (mapped) rootWidgets.add(mapped)
+                            }
+                        }
+                        
+                        context.blueprintJson = [
+                            screen: artifactPath.split('/')[-1].replace(".xml", ""),
+                            location: fileLocation,
+                            mariaId: artifactPath.split('/')[-1].replace(".xml", "") + "#root",
+                            widgets: rootWidgets
+                        ]
+                    } else {
+                        context.blueprintJson = [widgets: []]
+                    }
+                } catch (Exception e) {
+                    ec.logger.error("❌ [AGI-IDE SERVICE ERROR] Failed to parse XML blueprint: " + e.getMessage(), e)
+                    context.blueprintJson = [name: "Error", attributes: [text: e.getMessage()]]
+                }
+            ]]></script>
+        </actions>
+    </service>
+
     <service verb="get" noun="FormMetadata" type="inline">
         <description>
             Compiles a raw Moqui XML screen form artifact path into a flattened Meta-JSON schema definition string.
@@ -73,57 +102,110 @@
         <actions>
             <log message="In get#FormMetadata, screenPath: ${screenPath}" />
             <script><![CDATA[
-                def targetForm = screenPath
-                def componentName = "agi-ide"
-
-//                if (targetForm.contains("/")) {
-//                    def pathParts = targetForm.split("/")
-//                    componentName = pathParts[0]
-//                    targetForm = pathParts[1]
-//                }
-
-//                String fileLocation = "component://${componentName}/screen/${componentName}/${targetForm}.xml".toString()
                 String fileLocation = screenPath
-                ec.logger.info("In getFormMetadata, fileLocation: " + fileLocation);
+                def componentName = "agi-ide"
+                ec.logger.info("🔍 [DEBUG FormMetadata] Input screenPath: ${screenPath}")
 
                 try {
                     def resourceRef = ec.resource.getLocationReference(fileLocation)
+                    
                     if (!resourceRef || !resourceRef.exists) {
-                        fileLocation = "component://${componentName}/screen/${targetForm}.xml".toString()
+                        String cleanFileName = fileLocation.contains("/") ? fileLocation.split('/')[-1] : fileLocation
+                        fileLocation = "component://${componentName}/screen/${cleanFileName}"
                         resourceRef = ec.resource.getLocationReference(fileLocation)
                     }
 
                     if (resourceRef && resourceRef.exists) {
-                        // 1. Initialize the base screen renderer context
-                        org.moqui.impl.screen.ScreenRenderImpl sri = new org.moqui.impl.screen.ScreenRenderImpl(ec.screen)
+                        String xmlContent = resourceRef.getText()
+                        String artifactFileName = fileLocation.substring(fileLocation.lastIndexOf("/") + 1)
                         
-                        // 2. Set standard configuration states
-                        sri.rootScreen(fileLocation)
-                        sri.renderMode("qmeta".toString())
-                        
-                        // FIXED: Pull the webapp name from the servlet context instead of the web facade property block
-                        String resolvedWebappName = ec.web.request.servletContext.getInitParameter("moqui-name")
-                        sri.webappName(resolvedWebappName ? resolvedWebappName.toString() : "agi-ide")
-                        
-                        // 3. Bind a dedicated text stream writer to catch the compiled metadata output
-                        java.io.StringWriter sw = new java.io.StringWriter()
-                        sri.internalWriter = sw
-                        
-                        // 4. Force isolated internal parsing structures without running an endless browser loop
-                        sri.rootScreenDef = ec.screen.getScreenDefinition(fileLocation)
-                        sri.screenUrlInfo = org.moqui.impl.screen.ScreenUrlInfo.getScreenUrlInfo(sri, sri.rootScreenDef, new ArrayList<String>(), null, 0)
-                        sri.screenUrlInstance = sri.screenUrlInfo.getInstance(sri, false)
-                        
-                        // Process the widget nodes straight into our local StringWriter string buffer
-                        sri.doActualRender()
-                        
-                        // 5. Assign the compiled text map down to the out-parameter variable
-                        metadataJson = sw.toString()
+                        // 1. Attempt rendering via get#XmlArtifactBlueprint
+                        Map blueprintResult = ec.service.sync()
+                            .name("org.moqui.ide.AgiMcpServices.get#XmlArtifactBlueprint")
+                            .parameter("targetComponent", componentName)
+                            .parameter("artifactPath", "screen/" + artifactFileName)
+                            .call()
+
+                        Map blueprintJson = blueprintResult?.blueprintJson
+
+                        // 2. Direct XML Parser Fallback if blueprint rendering is missing fields
+                        if (!blueprintJson || blueprintJson.name == "Error" || !blueprintJson.widgets || blueprintJson.widgets.isEmpty()) {
+                            ec.logger.warn("⚠️ [DEBUG FormMetadata] Executing structured XML Screen parser...")
+                            
+                            def xmlNode = new groovy.xml.XmlParser().parseText(xmlContent)
+                            
+                            // Recursive closure to map Moqui screen widgets into Blueprint nodes
+                            def parseWidgetNode
+                            parseWidgetNode = { node ->
+                                if (!(node instanceof groovy.util.Node)) return null
+                                
+                                String tagName = node.name().toString()
+                                
+                                // Ignore top-level metadata tags that aren't UI widgets
+                                if (['parameter', 'transition'].contains(tagName)) return null
+                                
+                                if (tagName == 'field') {
+                                    String fieldName = node.attribute('name') ?: 'unnamed'
+                                    String fieldTitle = node.attribute('title') ?: fieldName
+                                    
+                                    List widgetChildren = []
+                                    node.children().each { child ->
+                                        def childMapped = parseWidgetNode(child)
+                                        if (childMapped) widgetChildren.add(childMapped)
+                                    }
+                                    
+                                    return [
+                                        type: "FormField",
+                                        name: fieldName,
+                                        title: fieldTitle,
+                                        mariaId: fileLocation + "#" + fieldName,
+                                        children: widgetChildren
+                                    ]
+                                } else {
+                                    String nodeId = node.attribute('id') ?: node.attribute('name') ?: (tagName + "_" + java.util.UUID.randomUUID().toString().take(8))
+                                    
+                                    List widgetChildren = []
+                                    node.children().each { child ->
+                                        def childMapped = parseWidgetNode(child)
+                                        if (childMapped) widgetChildren.add(childMapped)
+                                    }
+                                    
+                                    return [
+                                        type: tagName,
+                                        id: nodeId,
+                                        name: node.attribute('name') ?: nodeId,
+                                        mariaId: fileLocation + "#" + nodeId,
+                                        children: widgetChildren
+                                    ]
+                                }
+                            }
+                            
+                            List rootWidgets = []
+                            // Locate the <widgets> section inside <screen>
+                            def widgetsNode = xmlNode.widgets[0]
+                            if (widgetsNode) {
+                                widgetsNode.children().each { child ->
+                                    def mapped = parseWidgetNode(child)
+                                    if (mapped) rootWidgets.add(mapped)
+                                }
+                            }
+                            
+                            blueprintJson = [
+                                screen: artifactFileName.replace(".xml", ""),
+                                location: fileLocation,
+                                mariaId: artifactFileName.replace(".xml", "") + "#root",
+                                widgets: rootWidgets
+                            ]
+                        }
+
+                        metadataJson = groovy.json.JsonOutput.toJson(blueprintJson)
+                        ec.logger.info("🎯 [DEBUG FormMetadata] Final Structured MetaJSON generated successfully!")
                     } else {
+                        ec.logger.error("❌ [DEBUG FormMetadata] Resource does not exist on disk for: ${screenPath}")
                         metadataJson = '{"error": "Target layout asset file not found on disk context."}'
                     }
                 } catch (Exception ex) {
-                    ec.logger.error("Failed to build dynamic component widget metadata tree via isolated rendering pass", ex)
+                    ec.logger.error("❌ [DEBUG FormMetadata] Exception caught during compilation pass", ex)
                     metadataJson = '{"error": "Exception occurred during direct screen compilation pass. See server console logs."}'
                 }
             ]]></script>

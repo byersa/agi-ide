@@ -20,7 +20,10 @@
                 moquiSessionToken: resolvedToken,
                 activeScreenPath: '',
                 selectedMariaId: '',
-                isBufferSaving: false
+                isBufferSaving: false,
+                // 🎯 SINGLE SOURCE OF TRUTH FOR METAJSON
+                activeBlueprintJson: null,
+                blueprintCache: {} // Map of artifactUri -> parsed JSON tree
             };
         },
         getters: {
@@ -34,6 +37,13 @@
                     }
                 };
             },
+            // Get active blueprint tree directly from state
+            getActiveBlueprint(state) {
+                if (state.activeScreenPath && state.blueprintCache[state.activeScreenPath]) {
+                    return state.blueprintCache[state.activeScreenPath];
+                }
+                return state.activeBlueprintJson;
+            }
         },
         actions: {
             initializeSession(token) {
@@ -44,6 +54,19 @@
             },
             setSelectedNode(mariaId) {
                 this.selectedMariaId = mariaId;
+            },
+            // 🎯 CENTRAL MUTATION ACTION
+            updateActiveBlueprint({ artifactUri, blueprintTree }) {
+                const parsedTree = typeof blueprintTree === 'string'
+                    ? JSON.parse(blueprintTree)
+                    : blueprintTree;
+
+                this.activeBlueprintJson = parsedTree;
+                if (artifactUri) {
+                    this.blueprintCache[artifactUri] = parsedTree;
+                    this.activeScreenPath = artifactUri;
+                }
+                console.info("💾 [agiIdeStore] Updated single source of truth for artifact:", artifactUri || 'Global');
             }
         }
     });
