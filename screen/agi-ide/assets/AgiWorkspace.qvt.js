@@ -208,8 +208,17 @@
                             : notification.message;
 
                         if (packet && packet.event === 'artifact-state-mutated' && packet.mutatedTree) {
-                            console.info("📡 [AgiWorkspace] Intercepted backend structural mutation. Syncing layout tree...");
+                            console.info("📡 [AgiWorkspace] Intercepted backend structural mutation. Syncing Pinia store...");
                             this.activeWorkspaceBuffer.metaJsonBuffer = packet.mutatedTree;
+
+                            // Sync directly into Pinia Store
+                            const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
+                            if (ideStore && typeof ideStore.updateActiveBlueprint === 'function') {
+                                ideStore.updateActiveBlueprint({
+                                    artifactUri: this.localScreenPath,
+                                    blueprintTree: packet.mutatedTree
+                                });
+                            }
                         }
                     } catch (err) {
                         console.error("❌ Error parsing agi-ide-workspace notification payload:", err);
@@ -493,37 +502,80 @@
                     if (this.localScreenPath) {
                         const response = await axios.get(`/rest/s1/agi-ai/getWorkspaceBuffer?artifactUri=${encodeURIComponent(this.localScreenPath)}&userId=${encodeURIComponent(activeUser)}`, axiosConfig);
                         const data = response.data;
-                        this.activeWorkspaceBuffer.metaJsonBuffer = JSON.parse(data.metaJsonBuffer);
-                        this.activeWorkspaceBuffer.workspaceBufferId = data.workspaceBufferId;
+
+                        if (data && data.metaJsonBuffer) {
+                            // 🎯 ENSURE JSON STRING IS PARSED TO A LIVE OBJECT
+                            const parsedBuffer = typeof data.metaJsonBuffer === 'string'
+                                ? JSON.parse(data.metaJsonBuffer)
+                                : data.metaJsonBuffer;
+
+                            this.activeWorkspaceBuffer.metaJsonBuffer = parsedBuffer;
+                            this.activeWorkspaceBuffer.workspaceBufferId = data.workspaceBufferId;
+
+                            // Hydrate Pinia Store
+                            const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
+                            if (ideStore && typeof ideStore.updateActiveBlueprint === 'function') {
+                                ideStore.updateActiveBlueprint({
+                                    artifactUri: this.localScreenPath,
+                                    blueprintTree: parsedBuffer
+                                });
+                                console.info("🎯 [AgiWorkspace] Hydrated Pinia store successfully.");
+                            }
+                        }
                     }
                 } catch (err) {
                     console.error("Failed to hydrate workspace buffer:", err);
                 }
             },
-            async handleChildEditorSave(updatedLayoutTree) {
-                console.info("📡 AgiWorkspace caught save signal from child editor window.");
+            async handleChildEditorSave() {
+                console.info("📡 [AgiWorkspace] Save signal received. Reading active blueprint from agiIdeStore...");
 
-                if (updatedLayoutTree) {
-                    this.activeWorkspaceBuffer.metaJsonBuffer = updatedLayoutTree;
-                }
+                // 🎯 1. READ EXCLUSIVELY FROM PINIA STORE AS SINGLE SOURCE OF TRUTH
+                const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
+                const activeBlueprint = ideStore ? ideStore.getActiveBlueprint : this.activeWorkspaceBuffer.metaJsonBuffer;
 
-                if (!this.activeWorkspaceBuffer.workspaceBufferId) {
-                    console.warn("⚠️ Cannot commit save loop: workspaceBufferId is missing or uninitialized.");
+                if (!activeBlueprint) {
+                    console.warn("⚠️ [AgiWorkspace] Save aborted: Pinia store contains no active blueprint.");
                     return;
                 }
 
-                try {
-                    const axiosConfig = this.studdleStore?.getAxiosConfig || {};
-                    const response = await axios.post('/rest/s1/mcp/storeWorkspaceBuffer', {
-                        workspaceBufferId: this.activeWorkspaceBuffer.workspaceBufferId,
-                        metaJsonBuffer: JSON.stringify(this.activeWorkspaceBuffer.metaJsonBuffer)
-                    }, axiosConfig);
+                const activeUser = window.AGI_SERVER_USER_ID;
+                const headers = { 'X-CSRF-Token': window.AGI_SERVER_CSRF_TOKEN };
+                const jsonStringPayload = JSON.stringify(activeBlueprint);
 
-                    this.$q?.notify({ type: 'positive', message: 'Workspace changes successfully committed to server!' });
-                    console.info("🎯 Database buffer layout state cleanly written.");
+                try {
+                    // 🎯 2. PHASE 1: Commit working buffer to WorkspaceBuffer database row
+                    await axios.post('/rest/s1/agi-ai/storeWorkspaceBuffer', {
+                        workspaceBufferId: this.activeWorkspaceBuffer.workspaceBufferId,
+                        artifactUri: this.localScreenPath,
+                        userId: activeUser,
+                        metaJsonBuffer: jsonStringPayload
+                    }, { headers });
+
+                    console.info("🎯 Database workspace buffer state cleanly updated.");
+
+                    // 🎯 3. PHASE 2: Convert Meta-JSON to Moqui XML and overwrite physical screen file on disk
+                    const fileSaveResponse = await axios.post('/rest/s1/agi-ai/saveScreenXml', {
+                        artifactUri: this.localScreenPath,
+                        metaJsonBuffer: jsonStringPayload
+                    }, { headers });
+
+                    if (fileSaveResponse.data?.status === 'SUCCESS') {
+                        this.$q?.notify({
+                            type: 'positive',
+                            message: 'Screen XML successfully compiled and saved to disk!'
+                        });
+                        console.info("🚀 [SAVE PIPELINE COMPLETE] Physical XML file overwritten on disk:", fileSaveResponse.data.savedFilePath);
+                    } else {
+                        throw new Error(fileSaveResponse.data?.status || 'XML file write failed');
+                    }
+
                 } catch (err) {
-                    console.error("❌ Failed to commit workspace buffer changes to Moqui backend:", err);
-                    this.$q?.notify({ type: 'negative', message: 'Failed to write workspace modifications to server.' });
+                    console.error("❌ Failed to complete workspace save pipeline:", err);
+                    this.$q?.notify({
+                        type: 'negative',
+                        message: 'Failed to write workspace modifications to disk.'
+                    });
                 }
             },
         }

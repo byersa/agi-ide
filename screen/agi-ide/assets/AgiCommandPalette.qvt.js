@@ -119,7 +119,6 @@
                     this.openPalette();
                 }
             };
-
         },
         beforeUnmount() {
             window.removeEventListener('keydown', this.handleGlobalShortcutInterceptor);
@@ -136,6 +135,15 @@
                 }
             },
             openPalette() {
+                // Fallback resolution for active artifact location if not set via contextBus
+                if (!this.activeArtifactLocation) {
+                    const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
+                    const urlParams = new URLSearchParams(window.location.search);
+                    this.activeArtifactLocation = (ideStore && ideStore.activeScreenPath)
+                        || urlParams.get('screenPath')
+                        || '';
+                }
+
                 this.isOpen = true;
                 this.$nextTick(() => {
                     if (this.$refs.commandInput) {
@@ -199,14 +207,16 @@
 
                 const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
                 const axiosConfig = ideStore ? ideStore.getAxiosConfig : {};
-                // Get the active screen context from component tracking, Pinia, or direct URL parameters
+
                 const urlParams = new URLSearchParams(window.location.search);
                 const urlScreenPath = urlParams.get('screenPath');
 
-                const currentFileUri = this.artifactLocation
+                const currentFileUri = this.activeArtifactLocation
                     || (ideStore && ideStore.activeScreenPath)
                     || urlScreenPath
                     || "";
+
+                this.activeArtifactLocation = currentFileUri;
 
                 console.info(`🎯 [AgiCommandPalette] Context coordinate resolved to: [${currentFileUri}]`);
 
@@ -216,8 +226,6 @@
                     focusCoordinate: currentFileUri
                 }, axiosConfig)
                     .then(res => {
-                        // 🎯 AXIOS CORRECTION: Axios rejects non-2xx status codes automatically.
-                        // The body data is mounted directly on res.data instead of needing res.json().
                         if (res.status < 200 || res.status >= 300) {
                             throw new Error(`HTTP network error status: ${res.status}`);
                         }
@@ -227,7 +235,6 @@
                         this.isAgiAgentThinking = false;
                         if (result.error) throw new Error(result.error);
 
-                        // 🎯 DEFENSIVE UNWRAP: Unpack completionText whether it's a string or parsed object
                         let payload = result;
                         if (result.completionText) {
                             if (typeof result.completionText === 'string') {
@@ -252,7 +259,7 @@
                             const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
                             if (ideStore) {
                                 ideStore.updateActiveBlueprint({
-                                    artifactUri: this.activeArtifactLocation,
+                                    artifactUri: currentFileUri,
                                     blueprintTree: payload.metaJsonBuffer
                                 });
                             }
@@ -261,7 +268,7 @@
                             if (this.contextBus) {
                                 this.contextBus.postMessage({
                                     event: 'artifact-state-mutated',
-                                    artifactLocation: this.activeArtifactLocation
+                                    artifactLocation: currentFileUri
                                 });
                             }
                         }

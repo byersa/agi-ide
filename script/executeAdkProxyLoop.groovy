@@ -262,11 +262,13 @@ String extractedTextAnswer = ""
 
         // 2. Fallback: Query live database record
         if (!updatedJsonStr || updatedJsonStr.trim() == "" || !updatedJsonStr.contains("med_hist")) {
-            def bufferRow = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
-                .condition("artifactUri", artifactUri)
-                .condition("userId", userId)
-                .useCache(false)
-                .one()
+            def bufferList = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
+                                           .condition("artifactUri", artifactUri)
+                                           .condition("userId", userId)
+                                           .orderBy("-lastUpdatedStamp")
+                                           .useCache(false)
+                                           .list()
+            def bufferRow = bufferList ? bufferList[0] : null
             if (bufferRow?.metaJsonBuffer) {
                 updatedJsonStr = bufferRow.metaJsonBuffer
             }

@@ -1,38 +1,204 @@
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-3.0.xsd">
 
+    <!-- ===================================================================== -->
+    <!-- 0. BLUEPRINT MODIFY SERVICE FACADE                                   -->
+    <!-- ===================================================================== -->
     <service verb="modify" noun="Blueprint" type="inline" 
              name="org.moqui.ai.mcp.LayoutServices.modify#Blueprint">
-        <description>Modify a blueprint layout tree on the server</description>
+        <description>Modify or update a blueprint layout tree on the server</description>
         <in-parameters>
             <parameter name="artifactPath" type="String" required="true"/>
             <parameter name="metaJsonData" type="String" required="true"/>
         </in-parameters>
         <actions>
             <script><![CDATA[
-                ec.service.sync().name("org.moqui.ide.BlueprintServices.store#Blueprint")
-                    .parameters([artifactPath: artifactPath, metaJsonData: metaJsonData])
+                String activeUserId = ec.user.getUserId() ?: "system_ide_user"
+                
+                // Store updated blueprint into WorkspaceBuffer
+                ec.service.sync().name("org.moqui.ai.AgiWorkspaceServices.store#WorkspaceBuffer")
+                    .parameters([artifactUri: artifactPath, userId: activeUserId, metaJsonBuffer: metaJsonData])
                     .call()
             ]]></script>
         </actions>
     </service>
 
-    <service verb="add" noun="FormField">
-        <description>Use this tool when the user requests to add, create, or insert a new input field, form element, or data column into the active user interface layout canvas.</description>
+    <!-- ===================================================================== -->
+    <!-- 1. CORE BUFFER MANAGEMENT SERVICE (Hydrate, Mutate, and Persist)     -->
+    <!-- ===================================================================== -->
+    <service verb="manage" noun="WorkspaceBuffer" type="inline">
+        <description>Centralized service to hydrate, mutate, and persist the active Meta-JSON tree buffer.</description>
         <in-parameters>
-            <parameter name="targetNodeId" required="true">
-                <description>The unique ID string of the parent container element, section, or form panel inside the active layout tree where this new field should be appended.</description>
-            </parameter>
-            <parameter name="name" required="false">
-                <description>The machine-readable field name or entity variable key (e.g., 'med_hist_39' or 'medicalHistory'). If omitted, will be derived from the label.</description>
-            </parameter>
-            <parameter name="label" required="true">
-                <description>The human-readable label or title text that will display next to the field in the user interface (e.g., 'Medical History 39').</description>
-            </parameter>
-            <parameter name="encrypt" type="String" default-value="false">
-                <description>MUST be set to 'true' if the field captures sensitive data, medical history, or Personally Identifiable Information (PII) to comply with HIPAA guidelines.</description>
-            </parameter>
-            
+            <parameter name="targetNodeId" type="String" required="true"/>
+            <parameter name="action" type="String" default-value="APPEND"/>
+            <parameter name="payloadNode" type="Map" required="true"/>
+            <parameter name="activeLayoutBuffer" type="String"/>
+            <parameter name="activeLayoutBufferId" type="String"/>
+            <parameter name="activeArtifactLocation" type="String"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="status" type="String"/>
+            <parameter name="updatedMetaJson" type="String"/>
+            <parameter name="targetUri" type="String"/>
+            <parameter name="mutated" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import groovy.json.JsonSlurper
+                import groovy.json.JsonOutput
+
+                String activeUserId = ec.user.getUserId() ?: "system_ide_user"
+                String activeSessionId = context.sessionId ?: ec.context.sessionId
+
+                // 🎯 A. RESOLVE TARGET URI
+                String targetUri = ""
+                if (targetNodeId && targetNodeId.contains("#") && targetNodeId.startsWith("component://")) {
+                    targetUri = targetNodeId.split("#")[0]
+                }
+                if (!targetUri || targetUri.trim() == "") {
+                    String rawUri = context.activeArtifactLocation ?: ec.context.activeArtifactLocation ?: context.focusCoordinate ?: ""
+                    targetUri = rawUri.contains("#") ? rawUri.split("#")[0] : rawUri
+                }
+                if (!targetUri || targetUri.trim() == "") {
+                    targetUri = (ec.context.get("activeArtifactLocation") ?: "").toString()
+                }
+
+                // 🎯 B. HYDRATE BUFFER (ADK Session State -> DB Fallback)
+                String currentMetaJsonStr = context.activeLayoutBuffer
+                String bufferId = context.activeLayoutBufferId
+
+                if (activeSessionId) {
+                    def runner = org.moqui.adk.AdkManager.runnerForSession(activeSessionId)
+                    def sessionOpt = runner.sessionService().getSession("moqui-adk", activeUserId, activeSessionId, java.util.Optional.empty()).blockingGet()
+                    if (sessionOpt && sessionOpt.isPresent()) {
+                        String stateBuffer = sessionOpt.get().state().get("activeLayoutBuffer")
+                        if (stateBuffer && stateBuffer.startsWith("{")) {
+                            currentMetaJsonStr = stateBuffer
+                        }
+                    }
+                }
+
+                if (!currentMetaJsonStr || !currentMetaJsonStr.trim().startsWith("{")) {
+                    if (targetUri && targetUri.trim() != "") {
+                        // 🎯 Fetch list ordered by latest timestamp to guarantee reading newest history entry
+                        def bufferList = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
+                            .condition("artifactUri", targetUri)
+                            .condition("userId", activeUserId)
+                            .orderBy("-lastUpdatedStamp")
+                            .useCache(false)
+                            .list()
+
+                        def bufferRow = bufferList ? bufferList[0] : null
+                        if (bufferRow?.metaJsonBuffer) {
+                            currentMetaJsonStr = bufferRow.metaJsonBuffer
+                            bufferId = bufferRow.workspaceBufferId
+                        }
+                    }
+                }
+
+                // 🎯 C. PARSE BUFFER OR INITIALIZE FROM PHYSICAL XML ON DISK
+                Map layoutTree = [:]
+                boolean parseFailed = false
+
+                if (currentMetaJsonStr && currentMetaJsonStr.trim().startsWith("{") && !currentMetaJsonStr.contains("[...]")) {
+                    try {
+                        layoutTree = new JsonSlurper().parseText(currentMetaJsonStr) as Map
+                    } catch (Exception parseEx) {
+                        ec.logger.warn("⚠️ [manage#WorkspaceBuffer] Invalid JSON buffer in DB/State (${parseEx.message}). Reading XML from disk...")
+                        parseFailed = true
+                    }
+                } else {
+                    parseFailed = true
+                }
+
+                // 🎯 RECOVERY: Read directly from physical XML file on disk if DB buffer is missing!
+                if (parseFailed || layoutTree.isEmpty()) {
+                    if (targetUri && targetUri.trim() != "") {
+                        try {
+                            ec.logger.info("📄 [manage#WorkspaceBuffer] No DB buffer found. Parsing physical XML file from disk: '${targetUri}'")
+                            Map parseResult = ec.service.sync().name("org.moqui.ai.AgiWorkspaceServices.parse#XmlToTree")
+                                .parameter("artifactUri", targetUri)
+                                .call()
+                            if (parseResult?.layoutTree) {
+                                layoutTree = parseResult.layoutTree as Map
+                            }
+                        } catch (Exception xmlEx) {
+                            ec.logger.error("❌ Failed to parse physical XML file [${targetUri}]: ${xmlEx.message}")
+                        }
+                    }
+
+                    // Absolute last-resort fallback if file does not exist on disk
+                    if (layoutTree.isEmpty()) {
+                        String screenName = targetUri ? targetUri.split("/")[-1].replace(".xml", "") : "ActiveScreen"
+                        ec.logger.info("🛠️ [manage#WorkspaceBuffer] Initializing default root tree for URI: '${targetUri}'")
+                        layoutTree = [
+                            screen: screenName,
+                            location: targetUri ?: "",
+                            mariaId: screenName + "#root",
+                            widgets: [
+                                [
+                                    type: "form-single",
+                                    id: "patient_intake",
+                                    mariaId: (targetUri ?: "") + "#patient_intake",
+                                    children: []
+                                ]
+                            ]
+                        ]
+                    }
+                }
+
+                // 🎯 D. EXECUTE TREE MUTATION
+                Map mutationResult = ec.service.sync().name("org.moqui.ai.mcp.LayoutServices.mutate#JsonTree")
+                    .parameters([layoutTree: layoutTree, targetNodeId: targetNodeId, action: action, payloadNode: payloadNode])
+                    .call()
+
+                boolean isMutated = Boolean.TRUE.equals(mutationResult.mutated)
+                context.mutated = isMutated
+
+                if (isMutated) {
+                    String updatedMetaJson = JsonOutput.toJson(layoutTree)
+
+                    // Persist newly populated tree directly to WorkspaceBuffer using service call
+                    ec.service.sync().name("org.moqui.ai.AgiWorkspaceServices.store#WorkspaceBuffer")
+                        .parameters([
+                            workspaceBufferId: bufferId,
+                            artifactUri: targetUri,
+                            userId: activeUserId,
+                            metaJsonBuffer: updatedMetaJson
+                        ])
+                        .call()
+
+                    // ADK Session Memory Sync
+                    if (activeSessionId) {
+                        def runner = org.moqui.adk.AdkManager.runnerForSession(activeSessionId)
+                        def sessionOpt = runner.sessionService().getSession("moqui-adk", activeUserId, activeSessionId, java.util.Optional.empty()).blockingGet()
+                        if (sessionOpt && sessionOpt.isPresent()) {
+                            sessionOpt.get().state().put("activeLayoutBuffer", updatedMetaJson)
+                        }
+                    }
+
+                    context.updatedMetaJson = updatedMetaJson
+                    context.targetUri = targetUri
+                    context.status = "SUCCESS"
+                } else {
+                    ec.logger.warn("❌ [manage#WorkspaceBuffer] Target container [${targetNodeId}] not found in tree.")
+                    context.status = "NODE_NOT_FOUND"
+                }
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- ===================================================================== -->
+    <!-- 2. LIGHTWEIGHT MCP TOOL FACADES                                      -->
+    <!-- ===================================================================== -->
+    <service verb="add" noun="FormField">
+        <description>Use this tool when the user requests to add, create, or insert a new input field into the active layout tree.</description>
+        <in-parameters>
+            <parameter name="targetNodeId" required="true"/>
+            <parameter name="name" required="false"/>
+            <parameter name="label" required="true"/>
+            <parameter name="encrypt" type="String" default-value="false"/>
+            <parameter name="aiIntent" type="String"/>
             <parameter name="activeLayoutBuffer"/>
             <parameter name="activeLayoutBufferId"/>
             <parameter name="activeArtifactLocation"/>
@@ -42,176 +208,65 @@
             <parameter name="updatedMetaJson" type="String"/>
         </out-parameters>
         <actions>
-        <script><![CDATA[
-            import groovy.json.JsonSlurper
-            import groovy.json.JsonOutput
-        
-            ec.logger.info("🚀 [TOOL EXECUTION] add#FormField called with: targetNodeId=${targetNodeId}, name=${name}, label=${label}, encrypt=${encrypt}")
-            boolean secureField = "true".equalsIgnoreCase(encrypt)
-            
-            // 🎯 ROBUST TARGET URI RESOLUTION FROM targetNodeId OR CONTEXT
-            String targetUri = ""
-            if (targetNodeId && targetNodeId.contains("#") && targetNodeId.startsWith("component://")) {
-                targetUri = targetNodeId.split("#")[0]
-            }
-
-            if (!targetUri || targetUri.trim() == "") {
-                String rawUri = context.activeArtifactLocation ?: ec.context.activeArtifactLocation ?: context.focusCoordinate ?: ""
-                targetUri = rawUri.contains("#") ? rawUri.split("#")[0] : rawUri
-            }
-
-            if (!targetUri || targetUri.trim() == "") {
-                targetUri = (ec.context.get("activeArtifactLocation") ?: "").toString()
-            }
-
-            String rawName = context.name ?: ""
-            String cleanName = (rawName.trim() != "") 
-                ? rawName.trim() 
-                : label.replaceAll("[^a-zA-Z0-9_]", "")
-
-            ec.logger.info("ℹ️ [add#FormField] Resolved field cleanName: ${cleanName}, targetUri: '${targetUri}'")
-        
-            String currentMetaJsonStr = context.activeLayoutBuffer
-            String bufferId = context.activeLayoutBufferId
-            
-            String activeSessionId = context.sessionId ?: ec.context.sessionId
-            String activeUserId = ec.user.getUserId() ?: "system_ide_user"
-
-            // 🎯 1. CHECK ADK SESSION STATE FOR VALID JSON
-            if (activeSessionId) {
-                def runner = org.moqui.adk.AdkManager.runnerForSession(activeSessionId)
-                def sessionOpt = runner.sessionService().getSession("moqui-adk", activeUserId, activeSessionId, java.util.Optional.empty()).blockingGet()
+            <script><![CDATA[
+                ec.logger.info("🚀 [TOOL EXECUTION] add#FormField -> targetNodeId=${targetNodeId}, label=${label}")
                 
-                if (sessionOpt && sessionOpt.isPresent()) {
-                    Map adkState = sessionOpt.get().state()
-                    String stateBuffer = adkState.get("activeLayoutBuffer")
-                    if (stateBuffer && stateBuffer.startsWith("{")) {
-                        currentMetaJsonStr = stateBuffer
-                    }
-                }
-            }
+                String rawName = context.name ?: ""
+                String cleanName = (rawName.trim() != "") 
+                    ? rawName.trim() 
+                    : label.replaceAll("[^a-zA-Z0-9_]", "")
 
-            // 🎯 2. ALWAYS PREFER DATABASE BUFFER ROW IF currentMetaJsonStr IS INVALID OR NOT JSON
-            if (!currentMetaJsonStr || !currentMetaJsonStr.trim().startsWith("{")) {
-                if (targetUri && targetUri.trim() != "") {
-                    def bufferRow = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
-                        .condition("artifactUri", targetUri)
-                        .condition("userId", activeUserId)
-                        .one()
-                    if (bufferRow?.metaJsonBuffer) {
-                        currentMetaJsonStr = bufferRow.metaJsonBuffer
-                        bufferId = bufferRow.workspaceBufferId
-                        ec.logger.info("🎯 [add#FormField] Hydrated buffer from WorkspaceBuffer DB row: ${bufferId}")
-                    }
-                }
-            }
-        
-            ec.logger.info("ℹ️ [add#FormField] Working Meta-JSON Content: ${currentMetaJsonStr}")
-            
-            // 🎯 3. SAFE PARSING WITH CORRUPTION RECOVERY
-            Map layoutTree = [:]
-            boolean parseFailed = false
-            
-            if (currentMetaJsonStr && currentMetaJsonStr.trim().startsWith("{") && !currentMetaJsonStr.contains("[...]")) {
-                try {
-                    layoutTree = new JsonSlurper().parseText(currentMetaJsonStr) as Map
-                } catch (Exception parseEx) {
-                    ec.logger.warn("⚠️ [add#FormField] Invalid JSON buffer in DB/State (${parseEx.message}). Triggering auto-recovery...")
-                    parseFailed = true
-                }
-            } else {
-                parseFailed = true
-            }
+                String resolvedUri = targetNodeId.contains("#") ? targetNodeId.split("#")[0] : (context.activeArtifactLocation ?: "")
 
-            if (parseFailed || layoutTree.isEmpty()) {
-                ec.logger.info("🛠️ [add#FormField] Building fresh root layout tree structure for URI: '${targetUri}'")
-                String screenName = targetUri ? targetUri.split("/")[-1].replace(".xml", "") : "ActiveScreen"
-                layoutTree = [
-                    screen: screenName,
-                    location: targetUri ?: "",
-                    mariaId: screenName + "#root",
-                    widgets: [
+                // 🎯 Populate children with an m-text-line input node so QMETA AST renders on the canvas
+                Map dynamicFieldNode = [
+                    id: java.util.UUID.randomUUID().toString(),
+                    "@type": "FormField",
+                    name: cleanName,
+                    title: label,
+                    mariaId: resolvedUri + "#" + cleanName,
+                    children: [
                         [
-                            type: "form-single",
-                            id: "patient_intake",
-                            mariaId: (targetUri ?: "") + "#patient_intake",
+                            "@type": "m-text-line",
+                            attributes: [
+                                placeholder: "",
+                                disabled: "false"
+                            ],
                             children: []
                         ]
                     ]
                 ]
-            }
-        
-            // Build target node
-            Map dynamicFieldNode = [
-                id: java.util.UUID.randomUUID().toString(),
-                type: "FormField",
-                name: cleanName,
-                title: label,
-                mariaId: targetUri + "#" + cleanName,
-                children: []
-            ]
-        
-            // Execute tree mutation
-            Map mutationResult = ec.service.sync().name("org.moqui.ai.mcp.LayoutServices.mutate#JsonTree")
-                .parameters([layoutTree: layoutTree, targetNodeId: targetNodeId, action: "APPEND", payloadNode: dynamicFieldNode])
-                .call()
 
-            if (mutationResult.mutated) {
-                String updatedMetaJson = JsonOutput.toJson(layoutTree)
-        
-                // 🎯 DIRECT ENTITY UPDATE (Bypasses service validation wrapper)
-                def bufferEntity = null
-                if (bufferId) {
-                    bufferEntity = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
-                        .condition("workspaceBufferId", bufferId)
-                        .one()
-                }
-                if (!bufferEntity && targetUri) {
-                    bufferEntity = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
-                        .condition("artifactUri", targetUri)
-                        .condition("userId", activeUserId)
-                        .one()
+                if (context.aiIntent) {
+                    dynamicFieldNode["ai-intent"] = context.aiIntent
                 }
 
-                if (bufferEntity) {
-                    bufferEntity.metaJsonBuffer = updatedMetaJson
-                    bufferEntity.update()
-                    ec.logger.info("💾 [add#FormField] DIRECT ENTITY UPDATE SUCCESS on ID [${bufferEntity.workspaceBufferId}] for URI: ${targetUri}")
-                } else {
-                    // Create new row if none exists
-                    def newBuffer = ec.entity.makeValue("org.moqui.ai.WorkspaceBuffer")
-                    newBuffer.artifactUri = targetUri
-                    newBuffer.userId = activeUserId
-                    newBuffer.metaJsonBuffer = updatedMetaJson
-                    newBuffer.setSequencedIdPrimary()
-                    newBuffer.create()
-                    ec.logger.info("💾 [add#FormField] CREATED new WorkspaceBuffer row [${newBuffer.workspaceBufferId}]")
-                }
+                // Delegate hydration, mutation, and persistence entirely to manage#WorkspaceBuffer
+                Map bufferResult = ec.service.sync().name("org.moqui.ai.mcp.LayoutServices.manage#WorkspaceBuffer")
+                    .parameters([
+                        targetNodeId: targetNodeId,
+                        action: "APPEND",
+                        payloadNode: dynamicFieldNode,
+                        activeLayoutBuffer: context.activeLayoutBuffer,
+                        activeLayoutBufferId: context.activeLayoutBufferId,
+                        activeArtifactLocation: context.activeArtifactLocation
+                    ])
+                    .call()
 
-                // Update in-memory ADK Session State
-                if (activeSessionId) {
-                    def runner = org.moqui.adk.AdkManager.runnerForSession(activeSessionId)
-                    def sessionOpt = runner.sessionService().getSession("moqui-adk", activeUserId, activeSessionId, java.util.Optional.empty()).blockingGet()
-                    if (sessionOpt && sessionOpt.isPresent()) {
-                        sessionOpt.get().state().put("activeLayoutBuffer", updatedMetaJson)
-                    }
-                }
-        
-                context.updatedMetaJson = updatedMetaJson
-                context.status = "SUCCESS"
-            } else {
-                ec.logger.warn("❌ [TOOL MUTATION FAILED] Target node container [${targetNodeId}] was NOT found in active tree buffer.")
-                context.status = "NODE_NOT_FOUND"
-            }
-        ]]></script>
+                context.status = bufferResult.status
+                context.updatedMetaJson = bufferResult.updatedMetaJson
+            ]]></script>
         </actions>
     </service>
 
+    <!-- ===================================================================== -->
+    <!-- 3. PURE RECURSIVE TREE MUTATION ENGINE                                -->
+    <!-- ===================================================================== -->
     <service verb="mutate" noun="JsonTree" type="inline">
         <in-parameters>
             <parameter name="layoutTree" type="Map" required="true"/>
             <parameter name="targetNodeId" type="String" required="true"/>
-            <parameter name="action" type="String" required="true"/>
+            <parameter name="action" type="String" default-value="APPEND"/>
             <parameter name="payloadNode" type="Map" required="false"/>
         </in-parameters>
         <out-parameters>
@@ -219,10 +274,6 @@
         </out-parameters>
         <actions>
             <script><![CDATA[
-                ec.logger.info("[TOOL MUTATION] targetNodeId: ${targetNodeId}")
-                ec.logger.info("[TOOL MUTATION] action: ${action}")
-                ec.logger.info("[TOOL MUTATION] payloadNode: ${payloadNode}")
-                
                 def processNode
                 processNode = { Map node ->
                     String cleanTargetId = targetNodeId.contains("#") ? targetNodeId.split("#")[1] : targetNodeId
@@ -234,25 +285,28 @@
                         (node.mariaId?.toString()?.endsWith("#" + cleanTargetId))
 
                     if (isTarget) {
-                        switch (action) {
-                            case "APPEND":
-                                if (node.widgets != null) {
-                                    node.widgets.add(payloadNode)
-                                } else {
-                                    if (node.children == null) node.children = []
-                                    node.children.add(payloadNode)
-                                }
-                                return true
-                            case "REPLACE":
-                                node.clear()
-                                node.putAll(payloadNode)
-                                return true
+                        if ("APPEND".equalsIgnoreCase(action)) {
+                            // 🎯 Normalize list key: Ensure we append to whichever array already holds existing fields
+                            if (node.children == null && node.widgets != null) {
+                                node.children = node.widgets
+                            }
+                            if (node.children == null) {
+                                node.children = []
+                            }
+                            
+                            // Append without clearing existing fields
+                            node.children.add(payloadNode)
+                            return true
+                        } else if ("REPLACE".equalsIgnoreCase(action)) {
+                            node.clear()
+                            node.putAll(payloadNode)
+                            return true
                         }
                     }
                     
-                    def childList = node.widgets ?: node.children
+                    def childList = node.children ?: node.widgets
                     if (childList && childList instanceof List) {
-                        if (action == "DELETE") {
+                        if ("DELETE".equalsIgnoreCase(action)) {
                             boolean removed = childList.removeIf { 
                                 it.id == targetNodeId || it.mariaId == targetNodeId || it.mariaId?.toString()?.endsWith("#" + targetNodeId)
                             }
@@ -268,4 +322,5 @@
             ]]></script>
         </actions>
     </service>
+
 </services>

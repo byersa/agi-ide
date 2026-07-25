@@ -1,32 +1,55 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-2.1.xsd">
-    <parameter name="facilityId"/>
+<?xml version="1.0" encoding="UTF-8"?><screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     
-    <transition name="storeAdmission">
-        <service-call name="org.moqui.impl.BasicServices.noop"/>
-        <default-response url="."/>
-    </transition>
-
-    <widgets>
-        <container id="admission_hull">
-            <form-single name="patient_intake" transition="storeAdmission">
-                <field name="fullName" title="Full Name">
-                    <text-line size="40" placeholder="Jane Doe"/>
-                </field>
-                <field name="classification" title="Care Tier">
-                    <drop-down>
-                        <option key="ICU" text="Intensive Care"/>
-                        <option key="GEN" text="General Ward"/>
-                    </drop-down>
-                </field>
-                <field name="huddleThreads">
-                    <discussion-tree entity-name="FacilityObservation" context-id="HUDDLE_2026"/>
-                </field>
-                <field name="saveAction">
-                    <submit text="Commit Admission"/>
-                </field>
-            </form-single>
-        </container>
-    </widgets>
+  <widgets>
+        
+    <container screen="SampleForm" location="component://agi-ide/screen/SampleForm.xml">
+            
+      <container style="">
+                
+        <form-single name="patient_intake" transition="createPatient" action="#">
+                    
+          <field name="fullName" title="Full Name">
+                        
+            <text-line placeholder="" disabled="false"/>
+                      
+          </field>
+                    
+          <field name="classification" title="Care Tier">
+                        
+            <drop-down allow-empty="true" value=""/>
+                      
+          </field>
+                    
+          <field name="huddleThreads" title="Huddle Threads">
+                        
+            <text-line type="textarea" placeholder=""/>
+                      
+          </field>
+                    
+          <field name="medical_history" title="Medical History">
+                        
+            <text-line type="textarea" placeholder=""/>
+                      
+          </field>
+                    
+          <field name="saveAction" title="Save Intake">
+                        
+            <submit label="Submit" type="submit" color="primary"/>
+                      
+          </field>
+                    
+          <field name="statusId" title="Status ID">
+                        
+            <text-line placeholder="" disabled="false"/>
+                      
+          </field>
+                  
+        </form-single>
+              
+      </container>
+          
+    </container>
+      
+  </widgets>
+  
 </screen>

@@ -84,40 +84,35 @@
                 deep: true
             }
         },
+        // Inside AgiScreenEditor.qvt.js -> mounted()
         mounted() {
-            // 1. Initialize the shared context bus channel
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
 
-            // 2. Attach message handler for workspace events
+            // 🎯 1. REACTIVE PINIA STORE SUBSCRIPTION
+            const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
+            if (ideStore && typeof ideStore.$subscribe === 'function') {
+                // Fires automatically whenever updateActiveBlueprint is called!
+                this._storeUnsub = ideStore.$subscribe((mutation, state) => {
+                    const activeTree = state.activeBlueprint || ideStore.getActiveBlueprint;
+                    if (activeTree) {
+                        console.info("📄 [AgiScreenEditor] Pinia store mutated. Re-compiling XML source...");
+                        this.localBlueprintTree = JSON.parse(JSON.stringify(activeTree));
+                        this.compileTreeToXmlText();
+                    }
+                });
+            }
+
+            // 🎯 2. KEEP CONTEXTBUS STRICTLY FOR UI HIGHLIGHTING
             this.contextBus.onmessage = (msg) => {
                 if (!msg.data) return;
-
-                // A. Handle selection highlighting from canvas
                 if (msg.data.event === 'element-selected-by-id') {
-                    const selectedId = msg.data.mariaId; // e.g., "SampleForm#username"
-                    this.highlightAndScrollToSourceElement(selectedId);
-                }
-
-                // B. Handle mutation notification: Pull single source of truth from agiIdeStore
-                if (msg.data.event === 'artifact-state-mutated') {
-                    const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
-                    if (ideStore) {
-                        const latestTree = ideStore.getActiveBlueprint;
-                        if (latestTree) {
-                            console.info(`🎨 [AgiScreenEditor] Reacting to artifact-state-mutated event. Syncing with agiIdeStore.`);
-                            this.localBlueprintTree = JSON.parse(JSON.stringify(latestTree));
-
-                            // Re-compile updated layout tree down to XML text
-                            this.compileTreeToXmlText();
-                        }
-                    }
+                    this.highlightAndScrollToSourceElement(msg.data.mariaId);
                 }
             };
         },
         beforeUnmount() {
-            if (this.contextBus) {
-                this.contextBus.close();
-            }
+            if (this._storeUnsub) this._storeUnsub();
+            if (this.contextBus) this.contextBus.close();
         },
         methods: {
             async compileTreeToXmlText() {
