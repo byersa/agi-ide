@@ -1,0 +1,10 @@
+<entity-facade-xml type="seed">
+    <org.moqui.ai.AgiArtifact 
+        agiArtifactId="SAMPLE_FORM_1" 
+        artifactPath="component://agi-ide/screen/SampleForm.xml" 
+        artifactTypeEnumId="AatXmlScreen" 
+        artifactStatusEnumId="AasDraft" 
+        totalIntentCount="0" 
+        completedIntentCount="0" 
+        completionPercentage="0.0"/>
+</entity-facade-xml>

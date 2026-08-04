@@ -218,7 +218,18 @@
 
                 String resolvedUri = targetNodeId.contains("#") ? targetNodeId.split("#")[0] : (context.activeArtifactLocation ?: "")
 
-                // 🎯 Populate children with an m-text-line input node so QMETA AST renders on the canvas
+                // 🎯 1. HIPAA PHI / Medical Field Auto-Detection
+                Set<String> sensitivePhiFields = [
+                    "ssn", "socialsecurity", "dob", "birthdate", "medicalhistory",
+                    "diagnosis", "diagnosiscode", "prescription", "patientname",
+                    "medication", "treatmentplan", "insuranceid", "vital"
+                ] as Set
+
+                String normalizedCheck = (cleanName + label).toLowerCase().replaceAll("[^a-z0-9]", "")
+                boolean autoPhiEncrypt = "true".equalsIgnoreCase(context.encrypt) || 
+                                         sensitivePhiFields.any { normalizedCheck.contains(it) }
+
+                // 🎯 2. Populate children with an m-text-line input node so QMETA AST renders on the canvas
                 Map dynamicFieldNode = [
                     id: java.util.UUID.randomUUID().toString(),
                     "@type": "FormField",
@@ -237,9 +248,14 @@
                     ]
                 ]
 
-                if (context.aiIntent) {
-                    dynamicFieldNode["ai-intent"] = context.aiIntent
+                // Enforce HIPAA Encryption if PHI data detected
+                if (autoPhiEncrypt) {
+                    dynamicFieldNode["encrypt"] = "true"
+                    ec.logger.info("🔒 [HIPAA Enforcement] Applied encrypt='true' on field: ${cleanName}")
                 }
+
+                // Stamp AI Intent if provided or default command
+                dynamicFieldNode["ai-intent"] = context.aiIntent ?: "/add-field ${cleanName}"
 
                 // Delegate hydration, mutation, and persistence entirely to manage#WorkspaceBuffer
                 Map bufferResult = ec.service.sync().name("org.moqui.ai.mcp.LayoutServices.manage#WorkspaceBuffer")

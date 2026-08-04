@@ -47,4 +47,51 @@
             <service name="org.moqui.ide.AgiMcpServices.executeAdkProxyLoop"/>
         </method>
     </resource>
+
+    <!-- ========================================================= -->
+    <!--  AGI HARNESS & TELEMETRY REST ENDPOINTS                    -->
+    <!-- ========================================================= -->
+
+    <!-- Telemetry Summary for At-a-Glance Agent Context -->
+    <resource name="telemetry">
+        <resource name="summary">
+            <method type="get" require-authentication="false">
+                <service name="org.moqui.ide.BlueprintServices.get#ArtifactTelemetrySummary"/>
+            </method>
+        </resource>
+    </resource>
+
+    <!-- Blueprint WorkEffort Tree & Node Operations -->
+    <resource name="blueprint">
+        <resource name="tree">
+            <method type="post" require-authentication="false">
+                <service name="org.moqui.ide.BlueprintServices.get#BlueprintArtifactTree"/>
+            </method>
+        </resource>
+        <resource name="create-node">
+            <method type="post" require-authentication="false">
+                <service name="org.moqui.ide.BlueprintServices.create#WorkEffortNode"/>
+            </method>
+        </resource>
+        <resource name="update-status">
+            <method type="post" require-authentication="false">
+                <service name="org.moqui.ide.BlueprintServices.update#WorkEffortStatus"/>
+            </method>
+        </resource>
+        <resource name="link-artifact">
+            <method type="post" require-authentication="false">
+                <service name="org.moqui.ide.BlueprintServices.associate#WorkEffortToArtifact"/>
+            </method>
+        </resource>
+        <resource name="query-artifacts">
+            <method type="get" require-authentication="false">
+                <service name="org.moqui.ide.BlueprintServices.get#ArtifactQueryList"/>
+            </method>
+        </resource>
+        <resource name="compile-xml">
+            <method type="post" require-authentication="false">
+                <service name="org.moqui.ide.BlueprintServices.compile#XmlFragment"/>
+            </method>
+        </resource>
+    </resource>
 </rest-api>

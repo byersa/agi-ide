@@ -303,4 +303,407 @@
         </actions>
     </service>
 
+
+
+    <!-- ===================================================================== -->
+    <!-- GET ARTIFACT TELEMETRY SUMMARY (At-a-Glance Agent Harness Metric)    -->
+    <!-- ===================================================================== -->
+    <service verb="get" noun="ArtifactTelemetrySummary" type="inline">
+        <description>
+            Provides an at-a-glance telemetry summary of application or artifact development status.
+            Enables AI agents to immediately gauge completion metrics without recursively parsing subtrees.
+        </description>
+        <in-parameters>
+            <parameter name="agiArtifactId"/>
+            <parameter name="artifactPath"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="telemetry" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                def artifactVal = null
+                if (agiArtifactId) {
+                    artifactVal = ec.entity.find("org.moqui.ai.AgiArtifact").condition("agiArtifactId", agiArtifactId).one()
+                } else if (artifactPath) {
+                    artifactVal = ec.entity.find("org.moqui.ai.AgiArtifact").condition("artifactPath", artifactPath).one()
+                }
+
+                if (!artifactVal) {
+                    // Return zeroed telemetry default
+                    context.telemetry = [
+                        artifactPath: artifactPath ?: "GLOBAL",
+                        status: "AasDraft",
+                        totalIntentCount: 0,
+                        completedIntentCount: 0,
+                        completionPercentage: 0.0
+                    ]
+                    return
+                }
+
+                // Query associated WorkEffort intent nodes
+                def assocList = ec.entity.find("org.moqui.ai.AgiArtifactWorkEffort")
+                    .condition("agiArtifactId", artifactVal.agiArtifactId)
+                    .list()
+
+                Set<String> workEffortIds = assocList*.workEffortId as Set
+                if (artifactVal.agiArtifactId) {
+                    def directList = ec.entity.find("mantle.work.effort.WorkEffort")
+                        .condition("agiArtifactId", artifactVal.agiArtifactId)
+                        .list()
+                    workEffortIds.addAll(directList*.workEffortId)
+                }
+
+                int totalIntents = 0
+                int completedIntents = 0
+
+                if (workEffortIds) {
+                    def intentNodes = ec.entity.find("mantle.work.effort.WorkEffort")
+                        .condition("workEffortId", "in", workEffortIds)
+                        .condition("workEffortTypeEnumId", "WetIntent")
+                        .list()
+
+                    totalIntents = intentNodes.size()
+                    completedIntents = intentNodes.findAll { it.statusId == 'WeComplete' }.size()
+                }
+
+                BigDecimal percentage = totalIntents > 0 
+                    ? ((completedIntents as BigDecimal) / (totalIntents as BigDecimal) * 100).setScale(1, java.math.RoundingMode.HALF_UP)
+                    : 0.0
+
+                // Update rollup fields directly on the AgiArtifact row
+                artifactVal.totalIntentCount = totalIntents
+                artifactVal.completedIntentCount = completedIntents
+                artifactVal.completionPercentage = percentage
+                artifactVal.update()
+
+                context.telemetry = [
+                    agiArtifactId: artifactVal.agiArtifactId,
+                    artifactPath: artifactVal.artifactPath,
+                    status: artifactVal.artifactStatusEnumId ?: "AasDraft",
+                    totalIntentCount: totalIntents,
+                    completedIntentCount: completedIntents,
+                    completionPercentage: percentage
+                ]
+            ]]></script>
+        </actions>
+    </service>
+
+<!-- ===================================================================== -->
+    <!-- GET BLUEPRINT ARTIFACT TREE                                           -->
+    <!-- ===================================================================== -->
+    <service verb="get" noun="BlueprintArtifactTree" type="inline">
+        <description>Recursively loads the hierarchical tree of WorkEffort intent, discussion, and action nodes linked to an AgiArtifact.</description>
+        <in-parameters>
+            <parameter name="agiArtifactId"/>
+            <parameter name="sourceReferenceId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="treeNodes" type="List"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                String targetArtifactId = agiArtifactId
+                if (!targetArtifactId && sourceReferenceId) {
+                    def artRow = ec.entity.find("org.moqui.ai.AgiArtifact").condition("artifactPath", sourceReferenceId).one()
+                    if (artRow) targetArtifactId = artRow.agiArtifactId
+                }
+
+                // Recursive node builder using Groovy .collect { } instead of .map { }
+                def buildNodeTree
+                buildNodeTree = { String parentId ->
+                    def children = ec.entity.find("mantle.work.effort.WorkEffort")
+                        .condition("parentWorkEffortId", parentId)
+                        .orderBy("workEffortId")
+                        .list()
+
+                    return children.collect { child ->
+                        def childMap = child.getMap()
+                        childMap.workEffortName = child.workEffortName
+                        childMap.statusId = child.statusId
+                        childMap.workEffortTypeEnumId = child.workEffortTypeEnumId
+                        childMap.targetMariaId = child.targetMariaId
+                        childMap.revisionNumber = child.revisionNumber
+                        
+                        // Fetch Facets
+                        def facets = ec.entity.find("org.moqui.ai.WorkEffortFacet")
+                            .condition("workEffortId", child.workEffortId)
+                            .list()
+                        childMap.facets = facets*.getMap()
+
+                        childMap.children = buildNodeTree(child.workEffortId as String)
+                        return childMap
+                    }
+                }
+
+                def rootList = []
+                if (targetArtifactId) {
+                    def roots = ec.entity.find("mantle.work.effort.WorkEffort")
+                        .condition("agiArtifactId", targetArtifactId)
+                        .condition("parentWorkEffortId", null)
+                        .list()
+
+                    rootList = roots.collect { root ->
+                        def rootMap = root.getMap()
+                        rootMap.children = buildNodeTree(root.workEffortId as String)
+                        return rootMap
+                    }
+                }
+
+                context.treeNodes = rootList
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- ===================================================================== -->
+    <!-- CREATE WORK EFFORT NODE                                               -->
+    <!-- ===================================================================== -->
+    <service verb="create" noun="WorkEffortNode" type="inline">
+        <description>Creates a new WorkEffort intent, discussion, or action node and binds it to an AgiArtifact.</description>
+        <in-parameters>
+            <parameter name="workEffortName" required="true"/>
+            <parameter name="parentWorkEffortId"/>
+            <parameter name="agiArtifactId"/>
+            <parameter name="sourceReferenceId"/>
+            <parameter name="workEffortTypeEnumId" default-value="WetDiscussion"/>
+            <parameter name="targetMariaId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="workEffortId"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                String targetArtifactId = agiArtifactId
+                if (!targetArtifactId && sourceReferenceId) {
+                    def artRow = ec.entity.find("org.moqui.ai.AgiArtifact").condition("artifactPath", sourceReferenceId).one()
+                    if (artRow) targetArtifactId = artRow.agiArtifactId
+                }
+
+                def newWe = ec.entity.makeValue("mantle.work.effort.WorkEffort")
+                newWe.workEffortName = workEffortName
+                newWe.parentWorkEffortId = parentWorkEffortId
+                newWe.agiArtifactId = targetArtifactId
+                newWe.sourceReferenceId = sourceReferenceId
+                newWe.workEffortTypeEnumId = workEffortTypeEnumId
+                newWe.targetMariaId = targetMariaId
+                newWe.statusId = "WeInPlanning"
+                newWe.setSequencedIdPrimary()
+                newWe.create()
+
+                // Also maintain many-to-many junction record if artifact exists
+                if (targetArtifactId) {
+                    def junction = ec.entity.makeValue("org.moqui.ai.AgiArtifactWorkEffort")
+                    junction.agiArtifactId = targetArtifactId
+                    junction.workEffortId = newWe.workEffortId
+                    junction.assocTypeEnumId = "AweaPrimary"
+                    junction.createOrUpdate()
+                }
+
+                context.workEffortId = newWe.workEffortId
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- ===================================================================== -->
+    <!-- UPDATE WORK EFFORT STATUS & RECALCULATE ROLLUPS                      -->
+    <!-- ===================================================================== -->
+    <service verb="update" noun="WorkEffortStatus" type="inline">
+        <description>Updates statusId on a WorkEffort node and triggers automatic parent rollup updates.</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="statusId" required="true"/>
+        </in-parameters>
+        <actions>
+            <script><![CDATA[
+                def weVal = ec.entity.find("mantle.work.effort.WorkEffort").condition("workEffortId", workEffortId).one()
+                if (weVal) {
+                    weVal.statusId = statusId
+                    weVal.update()
+
+                    // Trigger automatic telemetry recalculation for attached artifact
+                    if (weVal.agiArtifactId) {
+                        ec.service.sync().name("org.moqui.ai.AgiBlueprintServices.get#ArtifactTelemetrySummary")
+                            .parameter("agiArtifactId", weVal.agiArtifactId)
+                            .call()
+                    }
+                }
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- ===================================================================== -->
+    <!-- ASSOCIATE WORK EFFORT TO MULTIPLE ARTIFACTS (Many-to-Many Junction)   -->
+    <!-- ===================================================================== -->
+    <service verb="associate" noun="WorkEffortToArtifact" type="inline">
+        <description>Associates a single decision or action WorkEffort node to an additional AgiArtifact.</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="agiArtifactId" required="true"/>
+            <parameter name="assocTypeEnumId" default-value="AweaCrossReference"/>
+        </in-parameters>
+        <actions>
+            <script><![CDATA[
+                def junction = ec.entity.makeValue("org.moqui.ai.AgiArtifactWorkEffort")
+                junction.agiArtifactId = agiArtifactId
+                junction.workEffortId = workEffortId
+                junction.assocTypeEnumId = assocTypeEnumId
+                junction.createOrUpdate()
+                ec.logger.info("🔗 [Many-to-Many Anchor] Linked WorkEffort [${workEffortId}] to AgiArtifact [${agiArtifactId}]")
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- ===================================================================== -->
+    <!-- GET ARTIFACT QUERY LIST (Faceted Search for Artifact Discovery)       -->
+    <!-- ===================================================================== -->
+    <service verb="get" noun="ArtifactQueryList" type="inline">
+        <description>
+            Queries AgiArtifact records supporting keyword filtering, type selection, 
+            and WorkEffortFacet criteria. Auto-registers matching screen files if needed.
+        </description>
+        <in-parameters>
+            <parameter name="queryString"/>
+            <parameter name="artifactTypeEnumId"/>
+            <parameter name="artifactStatusEnumId"/>
+            <parameter name="facetKey"/>
+            <parameter name="facetValue"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="50"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="artifactList" type="List"/>
+            <parameter name="artifactCount" type="Long"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                // 🎯 Auto-Register requested path if directly passed via queryString
+                if (queryString && queryString.startsWith("component://")) {
+                    def existing = ec.entity.find("org.moqui.ai.AgiArtifact").condition("artifactPath", queryString).one()
+                    if (!existing) {
+                        // Check if enumeration seed data is present in database
+                        def enumCheck = ec.entity.find("moqui.basic.Enumeration").condition("enumId", "AatXmlScreen").one()
+                        String typeEnumId = enumCheck ? "AatXmlScreen" : null
+                
+                        ec.entity.makeValue("org.moqui.ai.AgiArtifact")
+                            .set("artifactPath", queryString)
+                            .set("artifactTypeEnumId", typeEnumId)
+                            .set("artifactStatusEnumId", "AasDraft")
+                            .set("totalIntentCount", 0)
+                            .set("completedIntentCount", 0)
+                            .set("completionPercentage", 0.0)
+                            .setSequencedIdPrimary()
+                            .create()
+                    }
+                }
+
+                def find = ec.entity.find("org.moqui.ai.AgiArtifact")
+
+                if (queryString && queryString.trim() != "") {
+                    find.condition("artifactPath", org.moqui.entity.EntityCondition.LIKE, "%" + queryString.trim() + "%")
+                }
+
+                if (artifactTypeEnumId) find.condition("artifactTypeEnumId", artifactTypeEnumId)
+                if (artifactStatusEnumId) find.condition("artifactStatusEnumId", artifactStatusEnumId)
+
+                if (facetKey || facetValue) {
+                    def weList = ec.entity.find("org.moqui.ai.WorkEffortFacet")
+                    if (facetKey) weList.condition("facetKey", facetKey)
+                    if (facetValue) weList.condition("facetValue", org.moqui.entity.EntityCondition.LIKE, "%" + facetValue + "%")
+                    
+                    List<String> matchingWeIds = weList.list()*.workEffortId
+                    if (matchingWeIds) {
+                        def matchingArtifactIds = ec.entity.find("mantle.work.effort.WorkEffort")
+                            .condition("workEffortId", "in", matchingWeIds)
+                            .list()*.agiArtifactId.findAll { it != null }
+
+                        if (matchingArtifactIds) {
+                            find.condition("agiArtifactId", "in", matchingArtifactIds)
+                        } else {
+                            context.artifactList = []
+                            context.artifactCount = 0L
+                            return
+                        }
+                    } else {
+                        context.artifactList = []
+                        context.artifactCount = 0L
+                        return
+                    }
+                }
+
+                context.artifactCount = find.count()
+                
+                find.orderBy("artifactPath")
+                find.offset(pageIndex * pageSize)
+                find.limit(pageSize)
+
+                def list = find.list()
+                context.artifactList = list*.getMap()
+            ]]></script>
+        </actions>
+    </service>
+<service verb="compile" noun="XmlFragment" type="inline">
+        <in-parameters>
+            <parameter name="xmlText" type="String" required="true" allow-html="any"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="qmetaAst" type="Object"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                String fullXml = xmlText.trim()
+                if (!fullXml.startsWith("<screen")) {
+                    fullXml = """<?xml version="1.0" encoding="UTF-8"?>
+                    <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+                        <widgets>${xmlText}</widgets>
+                    </screen>"""
+                }
+
+                String virtualLocation = "component://agi-ide/screen/InlineFragment.xml"
+                org.moqui.util.MNode screenNode = org.moqui.util.MNode.parseText(virtualLocation, fullXml)
+                org.moqui.util.MNode widgetsNode = screenNode.first("widgets") ?: screenNode
+
+                // 🎯 Transform XML Form AST into normalized UI Layout AST
+                def convertToUiNode
+                convertToUiNode = { org.moqui.util.MNode node ->
+                    String nodeName = node.name
+
+                    // Unwrap form-single / form-list into a generic Container
+                    if (nodeName == "form-single" || nodeName == "form-list") {
+                        return [
+                            "@type": "m-container",
+                            attributes: [class: "q-gutter-y-xs q-pa-xs"],
+                            children: node.children ? node.children.collect { child -> convertToUiNode(child) } : []
+                        ]
+                    }
+
+                    // Unwrap field and default-field into unified form controls
+                    if (nodeName == "field") {
+                        org.moqui.util.MNode defaultField = node.first("default-field")
+                        org.moqui.util.MNode inputWidget = defaultField?.children ? defaultField.children[0] : null
+                        
+                        String title = defaultField?.attribute("title") ?: node.attribute("name")
+                        String fieldType = inputWidget ? inputWidget.name : "text-line"
+
+                        Map attrs = inputWidget ? inputWidget.attributes : [:]
+                        attrs.name = node.attribute("name")
+                        attrs.label = title
+
+                        return [
+                            "@type": "m-" + fieldType,
+                            attributes: attrs
+                        ]
+                    }
+
+                    // Fallback for standalone widgets (submit, etc.)
+                    return [
+                        "@type": "m-" + nodeName,
+                        attributes: node.attributes ?: [:],
+                        children: node.children ? node.children.collect { child -> convertToUiNode(child) } : []
+                    ]
+                }
+
+                context.qmetaAst = convertToUiNode(widgetsNode)
+            ]]></script>
+        </actions>
+    </service>
 </services>

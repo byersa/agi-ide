@@ -31,14 +31,18 @@
                     AgiCanvasEditor: false,
                     AgiScreenEditor: false,
                     AgiComponentEditor: false,
-                    AgiCommandPalette: false
+                    AgiCommandPalette: false,
+                    AgiBlueprintEditor: false,
+                    MoquiXmlHost: false,
                 },
                 // 🎯 Explicit local registry map for constructors
                 editorConstructors: {
                     AgiCanvasEditor: null,
                     AgiScreenEditor: null,
                     AgiComponentEditor: null,
-                    AgiCommandPalette: null
+                    AgiCommandPalette: null,
+                    AgiBlueprintEditor: null,
+                    MoquiXmlHost: null,
                 }
             };
         },
@@ -48,7 +52,8 @@
                 return this.loadedComponents.AgiCanvasEditor &&
                     this.loadedComponents.AgiScreenEditor &&
                     this.loadedComponents.AgiComponentEditor &&
-                    this.loadedComponents.AgiCommandPalette;
+                    this.loadedComponents.AgiCommandPalette &&
+                    this.loadedComponents.MoquiXmlHost;
             }
         },
         template: `
@@ -88,6 +93,16 @@
                             @click="triggerCommandPaletteOverlay"
                         >
                             <q-tooltip class="bg-slate-900 text-caption">Launch AGI AI Assistant Core</q-tooltip>
+                        </q-btn>
+                        <q-btn 
+                            color="teal-7" 
+                            icon="account_tree" 
+                            label="Blueprint Manager" 
+                            dense 
+                            class="q-px-md q-ml-sm"
+                            @click="triggerBlueprintEditorOverlay"
+                        >
+                            <q-tooltip class="bg-slate-900 text-caption">Launch AgiBlueprintEditor & Version Controller</q-tooltip>
                         </q-btn>
                     </div>
                 </div>
@@ -151,10 +166,14 @@
                 </div>
                 
                 <component :is="editorConstructors.AgiCommandPalette" v-if="isWorkspaceReady"></component>
+                <component :is="editorConstructors.AgiBlueprintEditor" v-if="isWorkspaceReady"></component>
             </div>
         `,
         // Keep rest of your data watches, methods, loadRequiredComponents(), and mounted hooks exactly as they are!
         mounted() {
+            // ContextBus strictly for UI signals (e.g. node focus/highlight)
+            this.contextBus = new BroadcastChannel('agi-ide-context-bus');
+
             // 🎯 ASYNC LOAD ALL ASSETS DYNAMICALLY ON MOUNT
             this.loadRequiredComponents();
 
@@ -279,21 +298,27 @@
         methods: {
             async loadRequiredComponents() {
                 const vm = this;
-                // Guard: Ensure global Vue utility handle is present
                 const markRaw = (window.Vue && window.Vue.markRaw) ? window.Vue.markRaw : (obj) => obj;
 
                 const assets = [
                     { name: 'AgiCanvasEditor', url: '/agi-ide-assets/AgiCanvasEditor.qvt.js', globalVar: 'AgiCanvasEditor' },
                     { name: 'AgiScreenEditor', url: '/agi-ide-assets/AgiScreenEditor.qvt.js', globalVar: 'AgiScreenEditor' },
                     { name: 'AgiComponentEditor', url: '/agi-ide-assets/AgiComponentEditor.qvt.js', globalVar: 'AgiComponentEditor' },
-                    { name: 'AgiCommandPalette', url: '/agi-ide-assets/AgiCommandPalette.qvt.js', globalVar: 'AgiCommandPalette' }
+                    { name: 'AgiCommandPalette', url: '/agi-ide-assets/AgiCommandPalette.qvt.js', globalVar: 'AgiCommandPalette' },
+                    { name: 'MoquiXmlHost', url: '/agi-ai-assets/moqui-xml-host.qvt.js', globalVar: 'MoquiXmlHost' },
+                    { name: 'DiscussionDetail', url: '/agi-ai-assets/DiscussionDetail.qvt.js', globalVar: 'DiscussionDetail' },
+                    { name: 'DiscussionTree', url: '/agi-ai-assets/DiscussionTree.qvt.js', globalVar: 'DiscussionTree' },
+                    { name: 'AgiBlueprintEditor', url: '/agi-ide-assets/AgiBlueprintEditor.qvt.js', globalVar: 'AgiBlueprintEditor' },
                 ];
 
                 assets.forEach(asset => {
                     if (window[asset.globalVar]) {
-                        // 🎯 Wrap constructor in markRaw to avoid Vue deep reactivity proxy overhead
-                        vm.editorConstructors[asset.name] = markRaw(window[asset.globalVar]);
-                        vm.loadedComponents[asset.name] = true;
+                        if (vm.editorConstructors.hasOwnProperty(asset.name)) {
+                            vm.editorConstructors[asset.name] = markRaw(window[asset.globalVar]);
+                        }
+                        if (vm.loadedComponents.hasOwnProperty(asset.name)) {
+                            vm.loadedComponents[asset.name] = true;
+                        }
                         return;
                     }
 
@@ -307,9 +332,12 @@
 
                         const checkRegistration = () => {
                             if (window[asset.globalVar]) {
-                                // 🎯 Wrap constructor in markRaw here as well during async arrival
-                                vm.editorConstructors[asset.name] = markRaw(window[asset.globalVar]);
-                                vm.loadedComponents[asset.name] = true;
+                                if (vm.editorConstructors.hasOwnProperty(asset.name)) {
+                                    vm.editorConstructors[asset.name] = markRaw(window[asset.globalVar]);
+                                }
+                                if (vm.loadedComponents.hasOwnProperty(asset.name)) {
+                                    vm.loadedComponents[asset.name] = true;
+                                }
                                 console.info(`✅ [AgiWorkspace] Acknowledged registration for: ${asset.name}`);
                             } else {
                                 setTimeout(checkRegistration, 20);
@@ -492,6 +520,17 @@
                     if (paletteComponent && typeof paletteComponent.openPalette === 'function') {
                         paletteComponent.openPalette();
                     }
+                }
+            },
+            triggerBlueprintEditorOverlay() {
+                console.info("📡 [AgiWorkspace] Launching AgiBlueprintEditor overlay/panel...");
+
+                // Broadcast event over context bus or toggle modal/panel state
+                if (this.contextBus) {
+                    this.contextBus.postMessage({
+                        event: 'open-blueprint-editor',
+                        artifactLocation: this.localScreenPath
+                    });
                 }
             },
             async hydrateWorkspaceBuffer() {

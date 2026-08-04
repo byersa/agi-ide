@@ -3,30 +3,111 @@
         name: 'AgiCommandPalette',
         template: `
             <q-dialog v-model="isOpen" position="top" @hide="onPaletteClosed">
-                <q-card class="agi-command-palette-card bg-slate-900 text-white shadow-24 q-mt-md" style="width: 700px; max-width: 90vw;">
+                <q-card class="agi-command-palette-card bg-slate-900 text-white shadow-24 q-mt-md" style="width: 800px; max-width: 95vw;">
                     
-                    <q-card-section class="q-pa-md row items-center bg-slate-950">
-                        <q-icon name="terminal" size="sm" class="text-primary q-mr-md" />
-                        <q-input 
-                            ref="commandInput"
-                            v-model="searchPrompt" 
-                            placeholder="Type a command (e.g., /add-field) or ask the AI assistant..." 
-                            outlined
-                            dense
-                            bg-color="white"
-                            input-class="text-black"
-                            class="col"
-                            @keydown.enter="handleCommandExecute"
-                            @keydown.esc="isOpen = false"
-                        />
-                        <q-badge color="deep-purple-7" class="q-pa-sm q-ml-md text-uppercase font-mono text-caption">
-                            Context: {{ activePanel || 'Global' }}
-                        </q-badge>
+                    <!-- INPUT HEADER & DUAL-SUBMISSION TRACKS -->
+                    <q-card-section class="q-pa-md bg-slate-950">
+                        <div class="row items-center q-col-gutter-sm">
+                            <q-icon name="terminal" size="sm" class="text-primary q-mr-xs" />
+                            <q-input 
+                                ref="commandInput"
+                                v-model="searchPrompt" 
+                                placeholder="Type a command (e.g. /add-field statusId) or prompt..." 
+                                outlined
+                                dense
+                                bg-color="white"
+                                input-class="text-black"
+                                class="col"
+                                :disable="isAgiAgentThinking"
+                                @keydown.enter="handleCommandExecute"
+                                @keydown.esc="isOpen = false"
+                            />
+                            
+                            <!-- DUAL SUBMISSION BUTTONS -->
+                            <div class="row q-gutter-xs">
+                                <q-btn 
+                                    color="primary" 
+                                    icon="bolt" 
+                                    label="Direct Submit" 
+                                    no-caps 
+                                    dense 
+                                    class="q-px-sm"
+                                    :loading="isAgiAgentThinking"
+                                    @click="handleCommandExecute"
+                                >
+                                    <q-tooltip>Fast automated turn via standard MCP pipeline</q-tooltip>
+                                </q-btn>
+                                <q-btn 
+                                    color="secondary" 
+                                    icon="tune" 
+                                    label="Stage & Review" 
+                                    no-caps 
+                                    dense 
+                                    class="q-px-sm"
+                                    :loading="isAgiAgentThinking"
+                                    @click="handleStageAndReview"
+                                >
+                                    <q-tooltip>Pre-process RAG context into Workspace Staging Ground</q-tooltip>
+                                </q-btn>
+                            </div>
+
+                            <q-badge color="deep-purple-7" class="q-pa-sm q-ml-sm text-uppercase font-mono text-caption">
+                                Context: {{ activePanel || 'Global' }}
+                            </q-badge>
+                        </div>
+
+                        <!-- RAG PRE-PROCESSOR STAGING GROUND PANEL -->
+                        <q-slide-transition>
+                            <div v-if="isStagingMode" class="q-mt-md q-pa-md bg-slate-900 rounded-borders border-dark">
+                                <div class="row items-center justify-between q-mb-sm">
+                                    <div class="text-subtitle2 text-secondary font-weight-bold row items-center">
+                                        <q-icon name="analytics" class="q-mr-xs" /> RAG Pre-processor Staging Ground
+                                    </div>
+                                    <q-btn size="sm" flat round icon="close" color="grey-5" @click="isStagingMode = false" />
+                                </div>
+
+                                <div class="text-caption text-grey-4 q-mb-xs">Automatically Gathered RAG Context (Toggle items to include/exclude):</div>
+                                <q-list dark bordered separator dense class="q-mb-md bg-slate-950 rounded-borders">
+                                    <q-item v-for="(ctx, idx) in stagedContext" :key="idx" tag="label" v-ripple>
+                                        <q-item-section side top>
+                                            <q-checkbox v-model="ctx.enabled" dark dense color="secondary" />
+                                        </q-item-section>
+                                        <q-item-section>
+                                            <q-item-label class="text-weight-bold text-caption text-secondary">{{ ctx.category }}: {{ ctx.title }}</q-item-label>
+                                            <q-item-label caption class="text-grey-4 ellipsis-2-lines">{{ ctx.snippet }}</q-item-label>
+                                        </q-item-section>
+                                    </q-item>
+                                    <q-item v-if="stagedContext.length === 0">
+                                        <q-item-section class="text-caption text-grey-5 text-center q-pa-xs">
+                                            No automated RAG context matches found for this target subtree.
+                                        </q-item-section>
+                                    </q-item>
+                                </q-list>
+
+                                <div class="text-caption text-grey-4 q-mb-xs">Ad-hoc Prompt Overrides / Directives:</div>
+                                <q-input 
+                                    v-model="adHocPrompt" 
+                                    type="textarea" 
+                                    rows="2" 
+                                    dense 
+                                    outlined 
+                                    dark
+                                    bg-color="slate-950"
+                                    placeholder="Add extra constraints to combine with prompt..."
+                                    class="q-mb-md"
+                                />
+
+                                <div class="row justify-end q-gutter-sm">
+                                    <q-btn label="Cancel" flat no-caps dense color="grey-5" @click="isStagingMode = false" />
+                                    <q-btn color="positive" icon="send" label="Submit Staged Payload to Agent" no-caps dense class="q-px-md" :loading="isAgiAgentThinking" @click="confirmStagedDispatch" />
+                                </div>
+                            </div>
+                        </q-slide-transition>
                     </q-card-section>
 
                     <q-separator dark />
 
-                    <q-card-section class="row no-wrap q-pa-none" style="height: 300px;">
+                    <q-card-section class="row no-wrap q-pa-none" style="height: 280px;">
                         
                         <div class="col-6 border-right-dark q-pa-sm scroll">
                             <div class="text-caption text-weight-bold text-grey-5 q-mb-xs">Exposed MCP Layout Tools</div>
@@ -64,8 +145,10 @@
                             </div>
 
                             <div class="q-mt-sm">
-                                <div class="text-caption text-weight-bold text-grey-5 q-mb-xs">Recent Artifact History</div>
-                                <div class="text-caption text-grey-6 italic"> Staged generations and session logs path mapping active.</div>
+                                <div class="text-caption text-weight-bold text-grey-5 q-mb-xs">Recent Telemetry Log</div>
+                                <div v-for="(log, idx) in aiConversationLog.slice(-3)" :key="idx" class="text-caption text-grey-4 q-mb-xs">
+                                    <span class="text-weight-bold" :class="log.sender === 'user' ? 'text-primary' : 'text-secondary'">{{ log.sender }}:</span> {{ log.text }}
+                                </div>
                             </div>
                         </div>
                     </q-card-section>
@@ -85,6 +168,9 @@
                 activePanel: '',
                 activeArtifactLocation: '',
                 isAgiAgentThinking: false,
+                isStagingMode: false,
+                stagedContext: [],
+                adHocPrompt: '',
                 aiConversationLog: [
                     { sender: 'assistant', text: 'System Online. Standing by for layout instructions or manual tool calls.' }
                 ]
@@ -135,7 +221,6 @@
                 }
             },
             openPalette() {
-                // Fallback resolution for active artifact location if not set via contextBus
                 if (!this.activeArtifactLocation) {
                     const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
                     const urlParams = new URLSearchParams(window.location.search);
@@ -153,6 +238,7 @@
             },
             onPaletteClosed() {
                 this.searchPrompt = '';
+                this.isStagingMode = false;
             },
             executeManualMcpTool(tool) {
                 console.info(`🛠️ Manually executing direct MCP action tracking block: ${tool.command}`);
@@ -165,20 +251,71 @@
                 });
                 this.isOpen = false;
             },
-            appendOrUpdateStreamingToken(chunkText) {
-                let lastMessage = this.aiConversationLog[this.aiConversationLog.length - 1];
-                if (lastMessage && lastMessage.sender === 'agent-stream') {
-                    lastMessage.text += chunkText;
-                } else {
-                    this.aiConversationLog.push({ sender: 'agent-stream', text: chunkText });
-                }
+
+            // 🎯 STAGE & REVIEW TRACK (Pre-processor Fetch)
+            handleStageAndReview() {
+                if (!this.searchPrompt.trim()) return;
+                this.isAgiAgentThinking = true;
+
+                const tkn = this.resolveCsrfToken();
+                const currentFileUri = this.getResolvedArtifactUri();
+
+                axios.post('/rest/s1/agi/PreprocessRagContext', {
+                    artifactUri: currentFileUri,
+                    prompt: this.searchPrompt.trim()
+                }, { headers: { 'moquiSessionToken': tkn } })
+                    .then(res => {
+                        this.isAgiAgentThinking = false;
+                        this.stagedContext = (res.data?.contextItems || []).map(item => ({
+                            ...item,
+                            enabled: true
+                        }));
+                        this.isStagingMode = true;
+                    })
+                    .catch(err => {
+                        this.isAgiAgentThinking = false;
+                        console.error("❌ RAG Pre-processor error:", err);
+                        this.stagedContext = [
+                            { category: 'SKILLS.md', title: 'HIPAA Enforcement', snippet: 'encrypt="true" on sensitive fields', enabled: true },
+                            { category: 'UDM', title: 'mantle.party.Party', snippet: 'Extends patient party identity', enabled: true }
+                        ];
+                        this.isStagingMode = true;
+                    });
             },
+
+            // 🎯 CONFIRM STAGED DISPATCH
+            confirmStagedDispatch() {
+                const activeContext = this.stagedContext.filter(c => c.enabled);
+                this.isAgiAgentThinking = true;
+
+                const tkn = this.resolveCsrfToken();
+                const currentFileUri = this.getResolvedArtifactUri();
+
+                axios.post('/rest/s1/agi/ExecuteStagedAgentTurn', {
+                    artifactUri: currentFileUri,
+                    originalPrompt: this.searchPrompt.trim(),
+                    adHocPrompt: this.adHocPrompt,
+                    contextPayloadJson: JSON.stringify(activeContext)
+                }, { headers: { 'moquiSessionToken': tkn } })
+                    .then(res => {
+                        this.isAgiAgentThinking = false;
+                        this.isStagingMode = false;
+                        this.searchPrompt = '';
+                        this.adHocPrompt = '';
+                        this.aiConversationLog.push({ sender: 'assistant', text: 'Staged turn dispatched to agent successfully.' });
+                    })
+                    .catch(err => {
+                        this.isAgiAgentThinking = false;
+                        this.aiConversationLog.push({ sender: 'assistant', text: `⚠️ Staged dispatch error: ${err.message}` });
+                    });
+            },
+
+            // 🎯 DIRECT SUBMIT TRACK
             handleCommandExecute() {
                 if (!this.searchPrompt.trim()) return;
 
                 const userPromptText = this.searchPrompt.trim();
                 this.aiConversationLog.push({ sender: 'user', text: userPromptText });
-                this.searchPrompt = '';
                 this.isAgiAgentThinking = true;
 
                 if (userPromptText.startsWith('/')) {
@@ -196,29 +333,10 @@
                     }
                 }
 
-                const tkn = window.AGI_SERVER_CSRF_TOKEN
-                    || (window.moqui && window.moqui.moquiSessionToken)
-                    || (window.opener && window.opener.moqui && window.opener.moqui.moquiSessionToken)
-                    || (document.querySelector('meta[name="moqui-session-token"]')?.getAttribute('content'))
-                    || "";
-                console.info(`tkn : [${tkn}]`);
-                console.info("🔒 [AgiCommandPalette] CSRF Token resolved via:",
-                    window.AGI_SERVER_CSRF_TOKEN ? "Server Injection" : "Fallback Scraper");
-
+                const tkn = this.resolveCsrfToken();
+                const currentFileUri = this.getResolvedArtifactUri();
                 const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
                 const axiosConfig = ideStore ? ideStore.getAxiosConfig : {};
-
-                const urlParams = new URLSearchParams(window.location.search);
-                const urlScreenPath = urlParams.get('screenPath');
-
-                const currentFileUri = this.activeArtifactLocation
-                    || (ideStore && ideStore.activeScreenPath)
-                    || urlScreenPath
-                    || "";
-
-                this.activeArtifactLocation = currentFileUri;
-
-                console.info(`🎯 [AgiCommandPalette] Context coordinate resolved to: [${currentFileUri}]`);
 
                 axios.post('/rest/s1/agi-ide/geminiProxy', {
                     userPrompt: userPromptText,
@@ -233,6 +351,7 @@
                     })
                     .then(result => {
                         this.isAgiAgentThinking = false;
+                        this.searchPrompt = '';
                         if (result.error) throw new Error(result.error);
 
                         let payload = result;
@@ -254,7 +373,6 @@
 
                         let displayResponseText = payload.message || "Layout updated successfully.";
 
-                        // 1. COMMIT TO SINGLE SOURCE OF TRUTH (STORE) FIRST
                         if (payload.metaJsonBuffer) {
                             const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
                             if (ideStore) {
@@ -264,7 +382,6 @@
                                 });
                             }
 
-                            // 2. EMIT LIGHTWEIGHT SIGNAL OVER CONTEXT BUS
                             if (this.contextBus) {
                                 this.contextBus.postMessage({
                                     event: 'artifact-state-mutated',
@@ -273,7 +390,6 @@
                             }
                         }
 
-                        // 3. Append assistant response to chat log
                         this.aiConversationLog.push({ sender: 'assistant', text: displayResponseText });
                     })
                     .catch(err => {
@@ -284,6 +400,24 @@
                             text: `⚠️ Gateway Pipeline Error: ${err.message}`
                         });
                     });
+            },
+
+            resolveCsrfToken() {
+                return window.AGI_SERVER_CSRF_TOKEN
+                    || (window.moqui && window.moqui.moquiSessionToken)
+                    || (window.opener && window.opener.moqui && window.opener.moqui.moquiSessionToken)
+                    || (document.querySelector('meta[name="moqui-session-token"]')?.getAttribute('content'))
+                    || "";
+            },
+
+            getResolvedArtifactUri() {
+                const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
+                const urlParams = new URLSearchParams(window.location.search);
+                const urlScreenPath = urlParams.get('screenPath');
+                return this.activeArtifactLocation
+                    || (ideStore && ideStore.activeScreenPath)
+                    || urlScreenPath
+                    || "";
             }
         }
     };
