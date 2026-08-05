@@ -179,10 +179,23 @@
         computed: {
             filteredTools() {
                 const search = this.searchPrompt.toLowerCase();
-                if (!window.AgiMcpEngine || !window.AgiMcpEngine.registry) {
-                    return [];
+
+                // 🎯 Built-in System Scaffolding Commands
+                const builtInTools = [
+                    {
+                        command: '/new-component',
+                        description: 'Initialize a new Moqui component directory structure & component.xml',
+                        icon: 'extension',
+                        scope: 'Global'
+                    }
+                ];
+
+                let allToolsArray = [...builtInTools];
+
+                if (window.AgiMcpEngine && window.AgiMcpEngine.registry) {
+                    allToolsArray = allToolsArray.concat(Array.from(window.AgiMcpEngine.registry.values()));
                 }
-                const allToolsArray = Array.from(window.AgiMcpEngine.registry.values());
+
                 return allToolsArray.filter(tool => {
                     const matchesSearch = tool.command.toLowerCase().includes(search) ||
                         (tool.description && tool.description.toLowerCase().includes(search));
@@ -315,6 +328,26 @@
                 if (!this.searchPrompt.trim()) return;
 
                 const userPromptText = this.searchPrompt.trim();
+                if (userPromptText.startsWith('/new-component') ||
+                    userPromptText.startsWith('/create-component') ||
+                    userPromptText.startsWith('/component')) {
+
+                    // Extract optional default component name (e.g. "/new-component nursinghome")
+                    const parts = userPromptText.split(/\s+/);
+                    const defaultName = parts.length > 1 ? parts[1] : '';
+
+                    if (this.contextBus) {
+                        this.contextBus.postMessage({
+                            event: 'open-new-component-wizard',
+                            defaultName: defaultName
+                        });
+                    }
+
+                    this.isOpen = false;
+                    this.searchPrompt = '';
+                    return;
+                }
+
                 this.aiConversationLog.push({ sender: 'user', text: userPromptText });
                 this.isAgiAgentThinking = true;
 

@@ -161,34 +161,16 @@
                                         <template v-slot:node-detail="{ node }">
                                             <discussion-detail :node="node">
                                                 
-                                                <!-- 🎯 Pass raw Moqui XML directly into moqui-xml-host! -->
-                                                <moqui-xml-host 
-                                                    :context-data="{ node: node }"
-                                                    xml="
-                                                        <form-single name='WorkEffortDetailForm' transition='updateWorkEffort'>
-                                                            <field name='workEffortName'>
-                                                                <default-field title='Title / Summary'>
-                                                                    <text-line size='40'/>
-                                                                </default-field>
-                                                            </field>
-                                                            <field name='description'>
-                                                                <default-field title='Detailed Description / Intent Specs'>
-                                                                    <text-area rows='3'/>
-                                                                </default-field>
-                                                            </field>
-                                                            <field name='targetMariaId'>
-                                                                <default-field title='Canvas Element Target (#mariaId)'>
-                                                                    <text-line size='30'/>
-                                                                </default-field>
-                                                            </field>
-                                                            <field name='submitButton'>
-                                                                <default-field title='Save Specification'>
-                                                                    <submit button-type='primary' icon='save'/>
-                                                                </default-field>
-                                                            </field>
-                                                        </form-single>
-                                                    " 
-                                                />
+                                                 <template v-slot:default="{ node }">
+                                                     <q-form @submit="saveCustomDetail(node)" class="q-gutter-xs q-pa-xs">
+                                                         <q-input v-model="node.workEffortName" label="Title / Summary (Inline Slot)" dense outlined />
+                                                         <q-input v-model="node.description" label="Detailed Description (Inline Slot)" type="textarea" rows="3" dense outlined />
+                                                         <q-input v-model="node.targetMariaId" label="Canvas Element Target (#mariaId)" dense outlined />
+                                                         <div class="row justify-end q-mt-xs">
+                                                             <q-btn type="submit" label="Save Custom Spec" icon="save" color="secondary" size="sm" />
+                                                         </div>
+                                                     </q-form>
+                                                 </template>
                                     
                                             </discussion-detail>
                                         </template>
@@ -371,7 +353,48 @@
                     });
                 });
             }
-        }
+        },
+        saveCustomDetail(node) {
+            if (!node || !node.workEffortId) {
+                if (this.$q) this.$q.notify({ type: 'warning', message: 'No valid WorkEffort node selected to save.' });
+                return;
+            }
+            var vm = this;
+
+            $.ajax({
+                type: 'POST',
+                url: '/rest/s1/agi-ide/blueprint/create-node',
+                data: {
+                    workEffortId: node.workEffortId,
+                    workEffortName: node.workEffortName || '',
+                    description: node.description || '',
+                    targetMariaId: node.targetMariaId || '',
+                    agiArtifactId: vm.selectedArtifact ? vm.selectedArtifact.agiArtifactId : '',
+                    sourceReferenceId: vm.selectedArtifact ? vm.selectedArtifact.artifactPath : ''
+                },
+                dataType: 'json',
+                headers: { 'moquiSessionToken': window.AGI_SERVER_CSRF_TOKEN || "" },
+                success: function (data) {
+                    if (vm.$q) {
+                        vm.$q.notify({
+                            type: 'positive',
+                            message: 'Specification detail updated successfully.'
+                        });
+                    }
+                    // Refresh telemetry metrics and tree state
+                    vm.fetchTelemetry();
+                },
+                error: function (err) {
+                    console.error("Failed to save custom specification detail:", err);
+                    if (vm.$q) {
+                        vm.$q.notify({
+                            type: 'negative',
+                            message: 'Failed to save specification detail.'
+                        });
+                    }
+                }
+            });
+        },
     };
 
     window.AgiBlueprintEditor = AgiBlueprintEditor;

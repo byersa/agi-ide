@@ -54,9 +54,14 @@
                 type: String,
                 required: true
             },
-            layoutTree: {
+            node: {
                 type: Object,
-                default: () => ({ id: "root", tagName: "form", children: [] })
+                required: false,
+                default: () => ({ attributes: {}, children: [] })
+            },
+            layoutTree: {
+                type: [Object, Array],
+                default: () => []
             }
         },
         computed: {

@@ -34,6 +34,8 @@
                     AgiCommandPalette: false,
                     AgiBlueprintEditor: false,
                     MoquiXmlHost: false,
+                    AgiWorkEffortDetail: false,
+                    AgiNewComponentWizard: false,
                 },
                 // 🎯 Explicit local registry map for constructors
                 editorConstructors: {
@@ -43,6 +45,8 @@
                     AgiCommandPalette: null,
                     AgiBlueprintEditor: null,
                     MoquiXmlHost: null,
+                    AgiWorkEffortDetail: null,
+                    AgiNewComponentWizard: null,
                 }
             };
         },
@@ -54,7 +58,16 @@
                     this.loadedComponents.AgiComponentEditor &&
                     this.loadedComponents.AgiCommandPalette &&
                     this.loadedComponents.MoquiXmlHost;
-            }
+            },
+            activeEditorComponent() {
+                const targetEditor = this.agiIdeStore.currentArtifact?.editor;
+
+                if (targetEditor === 'AgiComponentEditor') {
+                    return 'agi-component-editor';
+                }
+
+                return 'agi-screen-editor'; // Default fallback for standard Moqui screens
+            },
         },
         template: `
             <div class="column fit no-wrap q-pa-md q-gutter-y-md" style="min-height: 85vh;">
@@ -104,6 +117,16 @@
                         >
                             <q-tooltip class="bg-slate-900 text-caption">Launch AgiBlueprintEditor & Version Controller</q-tooltip>
                         </q-btn>
+                        <q-btn 
+                            color="primary" 
+                            icon="add_box" 
+                            label="New Component" 
+                            dense 
+                            class="q-px-md q-ml-sm"
+                            @click="triggerNewComponentWizard"
+                        >
+                            <q-tooltip class="bg-slate-900 text-caption">Initialize a new Moqui component skeleton</q-tooltip>
+                        </q-btn>
                     </div>
                 </div>
 
@@ -130,6 +153,7 @@
                             <!-- 🎯 standard component tag works natively now because it's registered globally on boot -->
                             <agi-sub-workspace title="Canvas Renderer" panel-name="AgiCanvasEditor" :layout-state="activeLayoutGrid" @toggle-maximize="toggleMaximize" @detach-panel="detachPanelToExternalWindow">
                                 <component 
+                                    v-if="editorConstructors.AgiCanvasEditor"
                                     :is="editorConstructors.AgiCanvasEditor" 
                                     :screen-path="localScreenPath" 
                                     :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" 
@@ -142,6 +166,7 @@
                         <div v-if="isPanelVisible('AgiScreenEditor')" :class="[getPanelClass('AgiScreenEditor'), 'column']">
                             <agi-sub-workspace title="Screen Source Editor" panel-name="AgiScreenEditor" :layout-state="activeLayoutGrid" @toggle-maximize="toggleMaximize" @detach-panel="detachPanelToExternalWindow">
                                 <component 
+                                    v-if="editorConstructors.AgiScreenEditor"
                                     :is="editorConstructors.AgiScreenEditor" 
                                     :screen-path="localScreenPath" 
                                     :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" 
@@ -154,6 +179,7 @@
                         <div v-if="isPanelVisible('AgiComponentEditor')" :class="[getPanelClass('AgiComponentEditor'), 'column']">
                             <agi-sub-workspace title="Component Source Editor" panel-name="AgiComponentEditor" :layout-state="activeLayoutGrid" @toggle-maximize="toggleMaximize" @detach-panel="detachPanelToExternalWindow">
                                 <component 
+                                    v-if="editorConstructors.AgiComponentEditor"
                                     :is="editorConstructors.AgiComponentEditor" 
                                     :screen-path="localScreenPath" 
                                     :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" 
@@ -167,6 +193,7 @@
                 
                 <component :is="editorConstructors.AgiCommandPalette" v-if="isWorkspaceReady"></component>
                 <component :is="editorConstructors.AgiBlueprintEditor" v-if="isWorkspaceReady"></component>
+                <component :is="editorConstructors.AgiNewComponentWizard" v-if="isWorkspaceReady"></component>
             </div>
         `,
         // Keep rest of your data watches, methods, loadRequiredComponents(), and mounted hooks exactly as they are!
@@ -306,9 +333,11 @@
                     { name: 'AgiComponentEditor', url: '/agi-ide-assets/AgiComponentEditor.qvt.js', globalVar: 'AgiComponentEditor' },
                     { name: 'AgiCommandPalette', url: '/agi-ide-assets/AgiCommandPalette.qvt.js', globalVar: 'AgiCommandPalette' },
                     { name: 'MoquiXmlHost', url: '/agi-ai-assets/moqui-xml-host.qvt.js', globalVar: 'MoquiXmlHost' },
+                    { name: 'AgiWorkEffortDetail', url: '/agi-ai-assets/AgiWorkEffortDetail.qvt.js', globalVar: 'AgiWorkEffortDetail' },
                     { name: 'DiscussionDetail', url: '/agi-ai-assets/DiscussionDetail.qvt.js', globalVar: 'DiscussionDetail' },
                     { name: 'DiscussionTree', url: '/agi-ai-assets/DiscussionTree.qvt.js', globalVar: 'DiscussionTree' },
                     { name: 'AgiBlueprintEditor', url: '/agi-ide-assets/AgiBlueprintEditor.qvt.js', globalVar: 'AgiBlueprintEditor' },
+                    { name: 'AgiNewComponentWizard', url: '/agi-ide-assets/AgiNewComponentWizard.qvt.js', globalVar: 'AgiNewComponentWizard' },
                 ];
 
                 assets.forEach(asset => {
@@ -617,7 +646,15 @@
                     });
                 }
             },
-        }
+            triggerNewComponentWizard() {
+                console.info("📡 [AgiWorkspace] Opening New Component Wizard...");
+                if (this.contextBus) {
+                    this.contextBus.postMessage({
+                        event: 'open-new-component-wizard'
+                    });
+                }
+            },
+        },
     };
 
     window.AgiWorkspace = AgiWorkspace;

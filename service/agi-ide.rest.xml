@@ -94,4 +94,11 @@
             </method>
         </resource>
     </resource>
+    <resource name="component">
+        <resource name="create">
+            <method type="post">
+                <service name="org.moqui.ide.ComponentServices.create#Component"/>
+            </method>
+        </resource>
+    </resource>
 </rest-api>

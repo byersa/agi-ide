@@ -67,7 +67,17 @@
                     this.activeScreenPath = artifactUri;
                 }
                 console.info("💾 [agiIdeStore] Updated single source of truth for artifact:", artifactUri || 'Global');
-            }
+            },
+            setArtifactMetadata(artifactPath, metaJsonData) {
+                let parsed = typeof metaJsonData === 'string' ? JSON.parse(metaJsonData) : metaJsonData;
+
+                this.currentArtifact = {
+                    path: artifactPath,
+                    // 🎯 Store the explicit editor handle ('AgiComponentEditor' vs 'AgiBlueprintEditor')
+                    editor: parsed.editor || 'AgiBlueprintEditor',
+                    rawMeta: parsed
+                };
+            },
         }
     });
 

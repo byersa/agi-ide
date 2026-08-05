@@ -54,7 +54,7 @@
                     return
                 }
 
-                // f. FALLBACK INITIALIZATION: If the record does not exist in the entity table yet, use the dynamic screen parsing logic found inside the 'getFormMetadata' transition of agi-ide.xml to compile the XML on disk into a 'qmeta' JSON tree string format. Save this generated tree string to the ArtifactBlueprint entity table, put it into the ServletContext cache map, and return it as the out-parameter.
+                // f. FALLBACK INITIALIZATION: If the record does not exist in the entity table yet, parse the file on disk.
                 def targetForm = artifactPath
                 def componentName = "agi-ide"
 
@@ -74,39 +74,59 @@
                     }
 
                     if (resourceRef && resourceRef.exists) {
-                        // 1. Initialize the base screen renderer context
+                        // 1. Inspect root <screen> tag for the explicit 'editor' attribute
+                        org.moqui.util.MNode screenNode = org.moqui.util.MNode.parse(resourceRef)
+                        String declaredEditor = screenNode?.attribute("editor") ?: "AgiBlueprintEditor"
+
+                        // 2. Initialize the base screen renderer context
                         org.moqui.impl.screen.ScreenRenderImpl sri = new org.moqui.impl.screen.ScreenRenderImpl(ec.screen)
                         
-                        // 2. Set standard configuration states
+                        // 3. Set standard configuration states
                         sri.rootScreen(fileLocation)
                         sri.renderMode("qmeta".toString())
                         
-                        // Pull the webapp name from the servlet context instead of the web facade property block
                         String resolvedWebappName = servletContext?.getInitParameter("moqui-name")
                         sri.webappName(resolvedWebappName ? resolvedWebappName.toString() : "agi-ide")
                         
-                        // 3. Bind a dedicated text stream writer to catch the compiled metadata output
+                        // 4. Bind a dedicated text stream writer to catch the compiled metadata output
                         java.io.StringWriter sw = new java.io.StringWriter()
                         sri.internalWriter = sw
                         
-                        // 4. Force isolated internal parsing structures without running an endless browser loop
+                        // 5. Force isolated internal parsing structures
                         sri.rootScreenDef = ec.screen.getScreenDefinition(fileLocation)
                         sri.screenUrlInfo = org.moqui.impl.screen.ScreenUrlInfo.getScreenUrlInfo(sri, sri.rootScreenDef, new java.util.ArrayList<String>(), null, 0)
                         sri.screenUrlInstance = sri.screenUrlInfo.getInstance(sri, false)
                         
-                        // Process the widget nodes straight into our local StringWriter string buffer
+                        // Render widget tree
                         sri.doActualRender()
                         
-                        metaJsonData = sw.toString()
+                        String rawTreeOutput = sw.toString()
                         
-                        // Save this generated tree string to the ArtifactBlueprint entity table
+                        // 6. Inject the declared 'editor' handle into the JSON metadata payload
+                        def slurper = new groovy.json.JsonSlurper()
+                        def metaMap = [:]
+                        try {
+                            metaMap = slurper.parseText(rawTreeOutput)
+                        } catch (Exception e) {
+                            metaMap = [rawTree: rawTreeOutput]
+                        }
+
+                        if (metaMap instanceof Map) {
+                            metaMap.editor = declaredEditor
+                            metaMap.artifactPath = artifactPath
+                            metaJsonData = groovy.json.JsonOutput.toJson(metaMap)
+                        } else {
+                            metaJsonData = rawTreeOutput
+                        }
+                        
+                        // Save generated tree string to ArtifactBlueprint entity table
                         ec.entity.makeValue("org.moqui.ai.ArtifactBlueprint")
                             .set("artifactPath", artifactPath)
                             .set("metaJsonData", metaJsonData)
                             .set("lastUpdatedBy", ec.user.userId)
                             .create()
                             
-                        // Put it into the ServletContext cache map
+                        // Put into ServletContext cache map
                         if (activeBlueprintsCache != null) {
                             activeBlueprintsCache.put(artifactPath, metaJsonData)
                         }

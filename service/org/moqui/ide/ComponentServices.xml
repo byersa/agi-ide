@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-3.0.xsd">
+
+    <service verb="create" noun="Component" type="inline">
+        <description>
+            Scaffolds a new Moqui component directory structure on disk, generates component.xml,
+            and auto-registers the primary screen artifact into AgiArtifact.
+        </description>
+        <in-parameters>
+            <parameter name="componentName" type="String" required="true"/>
+            <parameter name="preset" type="String" default-value="mantle-domain"/>
+            <parameter name="description" type="String"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="componentPath" type="String"/>
+            <parameter name="rootArtifactPath" type="String"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                // Sanitization
+                String compName = componentName.trim().toLowerCase().replaceAll("[^a-z0-9-]", "")
+                if (!compName) {
+                    ec.message.addError("Invalid component name specified.")
+                    return
+                }
+
+                // 1. Locate Runtime Component Directory
+                String runtimeCompPath = "runtime/component/" + compName
+                File baseDir = new File(runtimeCompPath)
+                if (baseDir.exists()) {
+                    ec.message.addError("Component directory already exists at: " + runtimeCompPath)
+                    return
+                }
+
+                // 2. Build Directory Skeleton
+                File entityDir = new File(baseDir, "entity")
+                File serviceDir = new File(baseDir, "service/" + compName.replace('-', '/'))
+                File screenDir = new File(baseDir, "screen/" + compName)
+                File dataDir = new File(baseDir, "data")
+
+                entityDir.mkdirs()
+                serviceDir.mkdirs()
+                screenDir.mkdirs()
+                dataDir.mkdirs()
+
+                // 3. Generate component.xml based on Preset
+                String componentXmlContent = ""
+                if (preset == "mantle-domain") {
+                    componentXmlContent = """<?xml version="1.0" encoding="UTF-8"?>
+<component xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/component-3.0.xsd"
+           name="${compName}">
+    <!-- Depends on Mantle Universal Data Model (UDM/USL) -->
+    <depends on="mantle-usl"/>
+</component>
+"""
+                } else if (preset == "web-app") {
+                    componentXmlContent = """<?xml version="1.0" encoding="UTF-8"?>
+<component xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/component-3.0.xsd"
+           name="${compName}">
+    <depends on="webroot"/>
+</component>
+"""
+                } else {
+                    // Barebones
+                    componentXmlContent = """<?xml version="1.0" encoding="UTF-8"?>
+<component xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/component-3.0.xsd"
+           name="${compName}">
+</component>
+"""
+                }
+
+                new File(baseDir, "component.xml").text = componentXmlContent
+
+                // 4. Generate Root Screen XML Shell (${compName}.xml)
+                String rootScreenPath = "component://${compName}/screen/${compName}/${compName}.xml"
+                String rootScreenXml = """<?xml version="1.0" encoding="UTF-8"?>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="true"
+        editor="AgiBlueprintEditor">
+
+    <widgets>
+        <container id="${compName}-root">
+            <label text="${description ?: 'Root screen for ' + compName}" type="h4"/>
+        </container>
+    </widgets>
+</screen>
+"""
+                File rootScreenFile = new File(screenDir, compName + ".xml")
+                rootScreenFile.text = rootScreenXml
+
+                // 5. Auto-Register Primary Artifact into AgiArtifact Table for Discovery
+                def enumCheck = ec.entity.find("moqui.basic.Enumeration").condition("enumId", "AatXmlScreen").one()
+                String typeEnumId = enumCheck ? "AatXmlScreen" : null
+
+                def artifactVal = ec.entity.makeValue("org.moqui.ai.AgiArtifact")
+                artifactVal.set("artifactPath", rootScreenPath)
+                artifactVal.set("artifactTypeEnumId", typeEnumId)
+                artifactVal.set("artifactStatusEnumId", "AasDraft")
+                artifactVal.set("totalIntentCount", 0)
+                artifactVal.set("completedIntentCount", 0)
+                artifactVal.set("completionPercentage", 0.0)
+                artifactVal.setSequencedIdPrimary()
+                artifactVal.create()
+
+                context.componentPath = runtimeCompPath
+                context.rootArtifactPath = rootScreenPath
+
+                ec.logger.info("🚀 [AGI SCAFFOLD] Component '${compName}' successfully initialized on disk at ${runtimeCompPath}")
+            ]]></script>
+        </actions>
+    </service>
+
+</services>

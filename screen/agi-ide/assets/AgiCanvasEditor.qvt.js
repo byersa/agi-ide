@@ -28,8 +28,19 @@
             </div>
         `,
         props: {
-            screenPath: { type: String, required: true },
-            layoutTree: { type: Object, default: () => ({ id: "root", tagName: "form", children: [] }) }
+            screenPath: {
+                type: String,
+                required: true
+            },
+            node: {
+                type: Object,
+                required: false,
+                default: () => ({ attributes: {}, children: [] })
+            },
+            layoutTree: {
+                type: Object,
+                default: () => ({ id: "root", tagName: "form", children: [] })
+            }
         },
         data() {
             return {
