@@ -50,7 +50,7 @@
                                 <!-- Facet Filtering Sub-Inputs -->
                                 <div class="row q-col-gutter-xs">
                                     <div class="col-6">
-                                        <q-input 
+                                        <q-input
                                             v-model="query.facetKey" 
                                             dense 
                                             outlined 
@@ -155,26 +155,22 @@
                                     <!-- Active Discussion Tree Container -->
                                     <div class="col scroll q-pa-xs">
                                     <discussion-tree 
-                                        :agi-artifact-id="selectedArtifact.agiArtifactId"
-                                        :source-reference-id="selectedArtifact.artifactPath">
-                                        
-                                        <template v-slot:node-detail="{ node }">
-                                            <discussion-detail :node="node">
-                                                
-                                                 <template v-slot:default="{ node }">
-                                                     <q-form @submit="saveCustomDetail(node)" class="q-gutter-xs q-pa-xs">
-                                                         <q-input v-model="node.workEffortName" label="Title / Summary (Inline Slot)" dense outlined />
-                                                         <q-input v-model="node.description" label="Detailed Description (Inline Slot)" type="textarea" rows="3" dense outlined />
-                                                         <q-input v-model="node.targetMariaId" label="Canvas Element Target (#mariaId)" dense outlined />
-                                                         <div class="row justify-end q-mt-xs">
-                                                             <q-btn type="submit" label="Save Custom Spec" icon="save" color="secondary" size="sm" />
-                                                         </div>
-                                                     </q-form>
-                                                 </template>
-                                    
-                                            </discussion-detail>
-                                        </template>
-                                    </discussion-tree>
+                                         ref="discussionTree"
+                                         :agi-artifact-id="selectedArtifact.agiArtifactId"
+                                         :source-reference-id="selectedArtifact.artifactPath">
+                                         
+                                         <template v-slot:node-detail="{ node }">
+                                             <discussion-detail :node="node">
+                                                 <!-- 🎯 Replaced inline form with AgiIntentDetail asset -->
+                                                 <agi-intent-detail 
+                                                     :node="node" 
+                                                     :selected-artifact="selectedArtifact"
+                                                     @intent-saved="onIntentSaved"
+                                                     @cancel-draft="onCancelDraft"
+                                                 />
+                                             </discussion-detail>
+                                         </template>
+                                     </discussion-tree>
                                     </div>
                                 </div>
                             </div>
@@ -323,77 +319,87 @@
                 }
             },
 
+            // 🎯 Requirement 3: Add an empty WorkEffort draft directly into active tree view
             onAddNewRootIntent() {
                 if (!this.selectedArtifact) return;
-                var vm = this;
 
-                this.$q.dialog({
-                    title: 'New Root Blueprint Intent',
-                    message: 'Enter overarching design goal/intent for: ' + vm.selectedArtifact.artifactPath,
-                    prompt: { model: '', type: 'text' },
-                    cancel: true
-                }).onOk(function (val) {
-                    if (!val) return;
-                    $.ajax({
-                        type: 'POST',
-                        url: '/rest/s1/agi-ide/blueprint/create-node',
-                        data: {
-                            workEffortName: val,
-                            agiArtifactId: vm.selectedArtifact.agiArtifactId,
-                            sourceReferenceId: vm.selectedArtifact.artifactPath,
-                            workEffortTypeEnumId: 'WetIntent'
-                        },
-                        dataType: 'json',
-                        headers: { 'moquiSessionToken': window.AGI_SERVER_CSRF_TOKEN || "" },
-                        success: function () {
-                            if (vm.$refs.discussionTree) vm.$refs.discussionTree.fetchTree();
-                            vm.fetchTelemetry();
-                            vm.queryArtifacts();
-                        }
-                    });
-                });
-            }
-        },
-        saveCustomDetail(node) {
-            if (!node || !node.workEffortId) {
-                if (this.$q) this.$q.notify({ type: 'warning', message: 'No valid WorkEffort node selected to save.' });
-                return;
-            }
-            var vm = this;
+                const draftNode = {
+                    workEffortId: 'DRAFT_NEW',
+                    workEffortName: '',
+                    description: '',
+                    targetMariaId: '',
+                    workEffortTypeEnumId: 'WetIntent',
+                    isDraft: true
+                };
 
-            $.ajax({
-                type: 'POST',
-                url: '/rest/s1/agi-ide/blueprint/create-node',
-                data: {
-                    workEffortId: node.workEffortId,
-                    workEffortName: node.workEffortName || '',
-                    description: node.description || '',
-                    targetMariaId: node.targetMariaId || '',
-                    agiArtifactId: vm.selectedArtifact ? vm.selectedArtifact.agiArtifactId : '',
-                    sourceReferenceId: vm.selectedArtifact ? vm.selectedArtifact.artifactPath : ''
-                },
-                dataType: 'json',
-                headers: { 'moquiSessionToken': window.AGI_SERVER_CSRF_TOKEN || "" },
-                success: function (data) {
-                    if (vm.$q) {
-                        vm.$q.notify({
-                            type: 'positive',
-                            message: 'Specification detail updated successfully.'
-                        });
-                    }
-                    // Refresh telemetry metrics and tree state
-                    vm.fetchTelemetry();
-                },
-                error: function (err) {
-                    console.error("Failed to save custom specification detail:", err);
-                    if (vm.$q) {
-                        vm.$q.notify({
-                            type: 'negative',
-                            message: 'Failed to save specification detail.'
-                        });
+                // Inject draft into tree via ref or set as selected node
+                if (this.$refs.discussionTree) {
+                    if (typeof this.$refs.discussionTree.injectDraftNode === 'function') {
+                        this.$refs.discussionTree.injectDraftNode(draftNode);
+                    } else {
+                        // Fallback: reload tree and attach draft
+                        this.activeDraftNode = draftNode;
                     }
                 }
-            });
+            },
+
+            onIntentSaved(savedData) {
+                this.activeDraftNode = null;
+                if (this.$refs.discussionTree && typeof this.$refs.discussionTree.fetchTree === 'function') {
+                    this.$refs.discussionTree.fetchTree();
+                }
+                this.fetchTelemetry();
+                this.queryArtifacts();
+            },
+
+            onCancelDraft() {
+                this.activeDraftNode = null;
+                if (this.$refs.discussionTree && typeof this.$refs.discussionTree.fetchTree === 'function') {
+                    this.$refs.discussionTree.fetchTree();
+                }
+            },
+
+            saveCustomDetail(node) {
+                if (!node || !node.workEffortId) {
+                    if (this.$q) this.$q.notify({ type: 'warning', message: 'No valid WorkEffort node selected to save.' });
+                    return;
+                }
+                var vm = this;
+
+                $.ajax({
+                    type: 'POST',
+                    url: '/rest/s1/agi-ide/blueprint/create-node',
+                    data: {
+                        workEffortId: node.workEffortId,
+                        workEffortName: node.workEffortName || '',
+                        description: node.description || '',
+                        targetMariaId: node.targetMariaId || '',
+                        agiArtifactId: vm.selectedArtifact ? vm.selectedArtifact.agiArtifactId : '',
+                        sourceReferenceId: vm.selectedArtifact ? vm.selectedArtifact.artifactPath : ''
+                    },
+                    dataType: 'json',
+                    headers: { 'moquiSessionToken': window.AGI_SERVER_CSRF_TOKEN || "" },
+                    success: function (data) {
+                        if (vm.$q) {
+                            vm.$q.notify({
+                                type: 'positive',
+                                message: 'Specification detail updated successfully.'
+                            });
+                        }
+                        // Refresh telemetry metrics and tree state
+                        vm.fetchTelemetry();
+                    },
+                    error: function (err) {
+                        console.error("Failed to save custom specification detail:", err);
+                        if (vm.$q) {
+                            vm.$q.notify({
+                                type: 'negative',
+                                message: 'Failed to save specification detail.'
+                            });
+                        }
+                    }
+                });
+            },
         },
     };
 

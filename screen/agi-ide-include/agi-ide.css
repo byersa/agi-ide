@@ -65,3 +65,17 @@
                         outline: none;
                         padding: 8px;
                     }
+
+                    /* Enforce dark text on inputs within menus/dropdowns */
+                    .q-menu .q-field__native,
+                    .q-item .q-field__native,
+                    .q-menu .q-field__input,
+                    .q-item .q-field__input {
+                        color: rgba(0, 0, 0, 0.87) !important;
+                    }
+
+                    /* Ensure label color is visible when not focused */
+                    .q-menu .q-field__label,
+                    .q-item .q-field__label {
+                        color: rgba(0, 0, 0, 0.6) !important;
+                    }

@@ -10,6 +10,10 @@
         data() {
             return {
                 localScreenPath: this.screenPath || '',
+                // 🎯 Target Component Centric State
+                targetComponentName: 'nursinghome',
+                ignoredFrameworkComponents: ['agi-ide', 'agi-ai', 'moqui-usl', 'mantle-usl', 'webroot', 'tools'],
+
                 windowDisplayMode: 'Collage Grid',
                 displayModeOptions: ['Collage Grid', 'Focus Canvas', 'Focus Source'],
                 activeScreens: ['AgiCanvasEditor', 'AgiScreenEditor', 'AgiComponentEditor'],
@@ -31,22 +35,22 @@
                     AgiCanvasEditor: false,
                     AgiScreenEditor: false,
                     AgiComponentEditor: false,
-                    AgiCommandPalette: false,
-                    AgiBlueprintEditor: false,
+                    AgiPromptEditor: false,
                     MoquiXmlHost: false,
                     AgiWorkEffortDetail: false,
                     AgiNewComponentWizard: false,
+                    AgiIntentDetail: false,
                 },
                 // 🎯 Explicit local registry map for constructors
                 editorConstructors: {
                     AgiCanvasEditor: null,
                     AgiScreenEditor: null,
                     AgiComponentEditor: null,
-                    AgiCommandPalette: null,
-                    AgiBlueprintEditor: null,
+                    AgiPromptEditor: null,
                     MoquiXmlHost: null,
                     AgiWorkEffortDetail: null,
                     AgiNewComponentWizard: null,
+                    AgiIntentDetail: null,
                 }
             };
         },
@@ -56,11 +60,11 @@
                 return this.loadedComponents.AgiCanvasEditor &&
                     this.loadedComponents.AgiScreenEditor &&
                     this.loadedComponents.AgiComponentEditor &&
-                    this.loadedComponents.AgiCommandPalette &&
+                    this.loadedComponents.AgiPromptEditor &&
                     this.loadedComponents.MoquiXmlHost;
             },
             activeEditorComponent() {
-                const targetEditor = this.agiIdeStore.currentArtifact?.editor;
+                const targetEditor = this.agiIdeStore?.currentArtifact?.editor;
 
                 if (targetEditor === 'AgiComponentEditor') {
                     return 'agi-component-editor';
@@ -71,16 +75,36 @@
         },
         template: `
             <div class="column fit no-wrap q-pa-md q-gutter-y-md" style="min-height: 85vh;">
-                <!-- 1. Header Toolbar Controls -->
-                <div id="agi-workspace-header" class="row items-center justify-between q-pa-sm bg-grey-2 style='border-bottom: 1px solid #ccc;'">
-                    <div class="row q-gutter-md">
+                <!-- 1. Target Component Centric Header Toolbar -->
+                <div id="agi-workspace-header" class="row items-center justify-between q-pa-sm bg-slate-900 text-white rounded-borders shadow-2">
+                    
+                    <!-- Left: Target Component Identity Badge -->
+                    <div class="row items-center q-gutter-x-sm">
+                        <q-icon name="dashboard_customize" color="primary" size="sm" />
+                        <div>
+                            <div class="text-caption text-grey-4 text-uppercase font-mono" style="font-size: 10px; letter-spacing: 1px;">
+                                ACTIVE TARGET APP
+                            </div>
+                            <div class="text-subtitle1 text-weight-bolder text-primary font-mono row items-center">
+                                {{ targetComponentName }}
+                                <q-badge color="deep-purple-8" class="q-ml-xs text-caption font-mono" style="font-size: 9px;">
+                                    DOMAIN APP
+                                </q-badge>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Controls -->
+                    <div class="row items-center q-gutter-x-sm">
                         <q-select
                             v-model="windowDisplayMode"
                             :options="displayModeOptions"
-                            label="Window Display Mode"
+                            label="Display Mode"
                             dense
                             outlined
-                            style="min-width: 220px;"
+                            dark
+                            bg-color="slate-800"
+                            style="min-width: 160px;"
                             @update:model-value="handleDisplayModeChange"
                         ></q-select>
 
@@ -94,35 +118,29 @@
                             map-options
                             dense
                             outlined
-                            style="min-width: 320px;"
+                            dark
+                            bg-color="slate-800"
+                            style="min-width: 260px;"
                         ></q-select>
 
                         <q-btn 
                             color="deep-purple-7" 
                             icon="terminal" 
-                            label="AI Palette" 
+                            label="AI Prompt" 
                             dense 
-                            class="q-px-md"
-                            @click="triggerCommandPaletteOverlay"
+                            class="q-px-sm"
+                            @click="triggerPromptOverlay"
                         >
                             <q-tooltip class="bg-slate-900 text-caption">Launch AGI AI Assistant Core</q-tooltip>
                         </q-btn>
-                        <q-btn 
-                            color="teal-7" 
-                            icon="account_tree" 
-                            label="Blueprint Manager" 
-                            dense 
-                            class="q-px-md q-ml-sm"
-                            @click="triggerBlueprintEditorOverlay"
-                        >
-                            <q-tooltip class="bg-slate-900 text-caption">Launch AgiBlueprintEditor & Version Controller</q-tooltip>
-                        </q-btn>
+                        
+                        
                         <q-btn 
                             color="primary" 
                             icon="add_box" 
                             label="New Component" 
                             dense 
-                            class="q-px-md q-ml-sm"
+                            class="q-px-sm"
                             @click="triggerNewComponentWizard"
                         >
                             <q-tooltip class="bg-slate-900 text-caption">Initialize a new Moqui component skeleton</q-tooltip>
@@ -133,18 +151,18 @@
                 <!-- 2. Loading Spinner Placeholder: Shown while scripts are dynamically injected -->
                 <div v-if="!isWorkspaceReady" class="col column justify-center items-center q-gutter-md bg-grey-1 text-center">
                     <q-spinner-gears color="deep-purple-7" size="4em" />
-                    <div class="text-subtitle1 text-grey-7 text-weight-medium">Synchronizing Workspace Components...</div>
+                    <div class="text-subtitle1 text-grey-7 text-weight-medium">Synchronizing Workspace Components for {{ targetComponentName }}...</div>
                 </div>
 
                 <!-- 3. Active Workspace Workspace (Rendered ONLY when isWorkspaceReady is TRUE) -->
                 <div v-else class="column fit no-wrap q-pa-md q-gutter-y-md" style="min-height: 85vh;">
         
-                    <div v-if="!localScreenPath || localScreenPath === ''" class="column justify-center items-center col q-gutter-md bg-grey-1 text-center">
-                        <q-icon name="folder_open" size="64px" color="grey-5" />
-                        <div class="text-h5 text-grey-7">No Workspace Artifact Selected</div>
-                        <p class="text-caption text-grey-6 max-w-sm">
-                            Please provide a qualified Moqui resource destination path in your URL query string parameter.<br/>
-                            Example: ?screenPath=component://nursing-home/screen/Form.xml
+                    <div v-if="!localScreenPath || localScreenPath === ''" class="column justify-center items-center col q-gutter-md bg-grey-1 text-center rounded-borders">
+                        <q-icon name="folder_open" size="64px" color="primary" />
+                        <div class="text-h5 text-grey-8 text-weight-bold">Target App: {{ targetComponentName }}</div>
+                        <p class="text-caption text-grey-7 max-w-sm">
+                            No artifact screen selected for <strong>{{ targetComponentName }}</strong>.<br/>
+                            Select an artifact screen from the Blueprint Manager or command palette to begin editing.
                         </p>
                     </div>
                     <template v-else>
@@ -191,12 +209,10 @@
             
                 </div>
                 
-                <component :is="editorConstructors.AgiCommandPalette" v-if="isWorkspaceReady"></component>
-                <component :is="editorConstructors.AgiBlueprintEditor" v-if="isWorkspaceReady"></component>
+                <component :is="editorConstructors.AgiPromptEditor" v-if="isWorkspaceReady"></component>
                 <component :is="editorConstructors.AgiNewComponentWizard" v-if="isWorkspaceReady"></component>
             </div>
         `,
-        // Keep rest of your data watches, methods, loadRequiredComponents(), and mounted hooks exactly as they are!
         mounted() {
             // ContextBus strictly for UI signals (e.g. node focus/highlight)
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
@@ -204,33 +220,8 @@
             // 🎯 ASYNC LOAD ALL ASSETS DYNAMICALLY ON MOUNT
             this.loadRequiredComponents();
 
-            if (!this.localScreenPath) {
-                const path = window.location.pathname;
-                const workspaceToken = "/AgiWorkspace";
-                const wsIndex = path.indexOf(workspaceToken);
-
-                if (wsIndex !== -1) {
-                    const baseRoute = path.substring(0, wsIndex + workspaceToken.length);
-
-                    if (path.length > baseRoute.length) {
-                        let subPath = path.substring(baseRoute.length);
-                        if (subPath.startsWith('/')) subPath = subPath.substring(1);
-                        if (subPath.endsWith('/')) subPath = subPath.slice(0, -1);
-
-                        if (subPath) {
-                            const segments = subPath.split('/');
-                            const componentName = segments[0];
-                            this.localScreenPath = `component://${componentName}/${segments.slice(1).join('/')}.xml`;
-                            console.info("🎯 [AgiWorkspace] Parsed sub-path path:", this.localScreenPath);
-                        }
-                    }
-                }
-            }
-
-            if (!this.localScreenPath) {
-                const urlParams = new URLSearchParams(window.location.search);
-                this.localScreenPath = urlParams.get('screenPath') || '';
-            }
+            // 🎯 Extract Target Component (ignoring framework components)
+            this.resolveTargetComponentAndPath();
 
             this._unloadHandler = () => this.closeExternalWindows();
             window.addEventListener('beforeunload', this._unloadHandler);
@@ -323,6 +314,44 @@
             }
         },
         methods: {
+            resolveTargetComponentAndPath() {
+                let path = window.location.pathname;
+                const urlParams = new URLSearchParams(window.location.search);
+                let queryPath = urlParams.get('screenPath') || this.screenPath || '';
+
+                if (queryPath) {
+                    this.localScreenPath = queryPath;
+                } else {
+                    const workspaceToken = "/AgiWorkspace";
+                    const wsIndex = path.indexOf(workspaceToken);
+
+                    if (wsIndex !== -1) {
+                        let subPath = path.substring(wsIndex + workspaceToken.length);
+                        if (subPath.startsWith('/')) subPath = subPath.substring(1);
+                        if (subPath.endsWith('/')) subPath = subPath.slice(0, -1);
+
+                        if (subPath) {
+                            const segments = subPath.split('/');
+                            const parsedComp = segments[0];
+                            this.localScreenPath = `component://${parsedComp}/${segments.slice(1).join('/')}.xml`;
+                            console.info("🎯 [AgiWorkspace] Parsed sub-path path:", this.localScreenPath);
+                        }
+                    }
+                }
+
+                // 🎯 Extract Component Name from path (e.g. component://nursinghome/... -> nursinghome)
+                if (this.localScreenPath && this.localScreenPath.startsWith("component://")) {
+                    const cleanPath = this.localScreenPath.replace("component://", "");
+                    const parts = cleanPath.split('/');
+                    const candidateComp = parts[0];
+
+                    // If candidate is a framework component, fall back to default domain target app
+                    if (!this.ignoredFrameworkComponents.includes(candidateComp)) {
+                        this.targetComponentName = candidateComp;
+                    }
+                }
+            },
+
             async loadRequiredComponents() {
                 const vm = this;
                 const markRaw = (window.Vue && window.Vue.markRaw) ? window.Vue.markRaw : (obj) => obj;
@@ -331,13 +360,13 @@
                     { name: 'AgiCanvasEditor', url: '/agi-ide-assets/AgiCanvasEditor.qvt.js', globalVar: 'AgiCanvasEditor' },
                     { name: 'AgiScreenEditor', url: '/agi-ide-assets/AgiScreenEditor.qvt.js', globalVar: 'AgiScreenEditor' },
                     { name: 'AgiComponentEditor', url: '/agi-ide-assets/AgiComponentEditor.qvt.js', globalVar: 'AgiComponentEditor' },
-                    { name: 'AgiCommandPalette', url: '/agi-ide-assets/AgiCommandPalette.qvt.js', globalVar: 'AgiCommandPalette' },
+                    { name: 'AgiPromptEditor', url: '/agi-ide-assets/AgiPromptEditor.qvt.js', globalVar: 'AgiPromptEditor' },
                     { name: 'MoquiXmlHost', url: '/agi-ai-assets/moqui-xml-host.qvt.js', globalVar: 'MoquiXmlHost' },
                     { name: 'AgiWorkEffortDetail', url: '/agi-ai-assets/AgiWorkEffortDetail.qvt.js', globalVar: 'AgiWorkEffortDetail' },
                     { name: 'DiscussionDetail', url: '/agi-ai-assets/DiscussionDetail.qvt.js', globalVar: 'DiscussionDetail' },
                     { name: 'DiscussionTree', url: '/agi-ai-assets/DiscussionTree.qvt.js', globalVar: 'DiscussionTree' },
-                    { name: 'AgiBlueprintEditor', url: '/agi-ide-assets/AgiBlueprintEditor.qvt.js', globalVar: 'AgiBlueprintEditor' },
                     { name: 'AgiNewComponentWizard', url: '/agi-ide-assets/AgiNewComponentWizard.qvt.js', globalVar: 'AgiNewComponentWizard' },
+                    { name: 'AgiIntentDetail', url: '/agi-ide-assets/AgiIntentDetail.qvt.js', globalVar: 'AgiIntentDetail' },
                 ];
 
                 assets.forEach(asset => {
@@ -382,12 +411,10 @@
                     document.head.appendChild(script);
                 });
             },
+
             // 🎯 FIXED CONTEXT DYNAMIC ASSET INJECTION
             isPanelVisible(panelName) {
-                // 🎯 Guard: If the component script hasn't finished loading and registering, hide the panel!
                 if (!this.loadedComponents[panelName]) return false;
-
-                // If the user unselected it via the toolbar dropdown checklist, hide it completely
                 if (!this.activeScreens.includes(panelName)) return false;
 
                 const panel = this.activeLayoutGrid[panelName];
@@ -535,30 +562,28 @@
                 });
                 console.info("🎯 Local fallback tool registry is ready for testing execution.");
             },
-            triggerCommandPaletteOverlay() {
+            triggerPromptOverlay() {
                 console.info("📡 AgiWorkspace broadcasting manual click activation pass to layout overlay panel...");
 
                 if (this.contextBus) {
                     this.contextBus.postMessage({
-                        event: 'force-open-command-palette',
-                        panelName: this.activeScreens[0] || 'AgiCanvasEditor',
-                        artifactLocation: this.screenPath
+                        event: 'open-prompt-editor',
+                        panelName: this.activeScreens[0],
+                        artifactLocation: this.localScreenPath,
+                        targetComponent: this.targetComponentName
                     });
                 } else {
-                    const paletteComponent = window.AgiComponents?.['agi-command-palette'];
-                    if (paletteComponent && typeof paletteComponent.openPalette === 'function') {
-                        paletteComponent.openPalette();
+                    const promptComponent = window.AgiComponents?.['agi-prompt-editor'];
+                    if (promptComponent && typeof promptComponent.openPalette === 'function') {
+                        promptComponent.openPalette();
                     }
                 }
             },
-            triggerBlueprintEditorOverlay() {
-                console.info("📡 [AgiWorkspace] Launching AgiBlueprintEditor overlay/panel...");
-
-                // Broadcast event over context bus or toggle modal/panel state
+            triggerNewComponentWizard() {
+                console.info("📡 [AgiWorkspace] Opening New Component Wizard...");
                 if (this.contextBus) {
                     this.contextBus.postMessage({
-                        event: 'open-blueprint-editor',
-                        artifactLocation: this.localScreenPath
+                        event: 'open-new-component-wizard'
                     });
                 }
             },
@@ -572,7 +597,6 @@
                         const data = response.data;
 
                         if (data && data.metaJsonBuffer) {
-                            // 🎯 ENSURE JSON STRING IS PARSED TO A LIVE OBJECT
                             const parsedBuffer = typeof data.metaJsonBuffer === 'string'
                                 ? JSON.parse(data.metaJsonBuffer)
                                 : data.metaJsonBuffer;
@@ -580,7 +604,6 @@
                             this.activeWorkspaceBuffer.metaJsonBuffer = parsedBuffer;
                             this.activeWorkspaceBuffer.workspaceBufferId = data.workspaceBufferId;
 
-                            // Hydrate Pinia Store
                             const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
                             if (ideStore && typeof ideStore.updateActiveBlueprint === 'function') {
                                 ideStore.updateActiveBlueprint({
@@ -598,7 +621,6 @@
             async handleChildEditorSave() {
                 console.info("📡 [AgiWorkspace] Save signal received. Reading active blueprint from agiIdeStore...");
 
-                // 🎯 1. READ EXCLUSIVELY FROM PINIA STORE AS SINGLE SOURCE OF TRUTH
                 const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
                 const activeBlueprint = ideStore ? ideStore.getActiveBlueprint : this.activeWorkspaceBuffer.metaJsonBuffer;
 
@@ -612,7 +634,6 @@
                 const jsonStringPayload = JSON.stringify(activeBlueprint);
 
                 try {
-                    // 🎯 2. PHASE 1: Commit working buffer to WorkspaceBuffer database row
                     await axios.post('/rest/s1/agi-ai/storeWorkspaceBuffer', {
                         workspaceBufferId: this.activeWorkspaceBuffer.workspaceBufferId,
                         artifactUri: this.localScreenPath,
@@ -622,7 +643,6 @@
 
                     console.info("🎯 Database workspace buffer state cleanly updated.");
 
-                    // 🎯 3. PHASE 2: Convert Meta-JSON to Moqui XML and overwrite physical screen file on disk
                     const fileSaveResponse = await axios.post('/rest/s1/agi-ai/saveScreenXml', {
                         artifactUri: this.localScreenPath,
                         metaJsonBuffer: jsonStringPayload
@@ -646,22 +666,14 @@
                     });
                 }
             },
-            triggerNewComponentWizard() {
-                console.info("📡 [AgiWorkspace] Opening New Component Wizard...");
-                if (this.contextBus) {
-                    this.contextBus.postMessage({
-                        event: 'open-new-component-wizard'
-                    });
-                }
-            },
         },
     };
 
     window.AgiWorkspace = AgiWorkspace;
 
     if (!window.AgiComponents) window.AgiComponents = {};
-    window.AgiComponents['agi-workspace'] = AgiWorkspace; // Lowercase matching the XML container type element attribute
-    window.AgiComponents['AgiWorkspace'] = AgiWorkspace;  // Pascal case safety handle
+    window.AgiComponents['agi-workspace'] = AgiWorkspace;
+    window.AgiComponents['AgiWorkspace'] = AgiWorkspace;
 
     const registerAgiWorkspace = () => {
         if (window.moqui && window.moqui.webrootVueApp) {

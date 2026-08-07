@@ -33,10 +33,10 @@
                     return
                 }
 
-                // 2. Build Directory Skeleton
+                // 2. Build Directory Skeleton (screen directory directly under component)
                 File entityDir = new File(baseDir, "entity")
                 File serviceDir = new File(baseDir, "service/" + compName.replace('-', '/'))
-                File screenDir = new File(baseDir, "screen/" + compName)
+                File screenDir = new File(baseDir, "screen")
                 File dataDir = new File(baseDir, "data")
 
                 entityDir.mkdirs()
@@ -75,8 +75,8 @@
 
                 new File(baseDir, "component.xml").text = componentXmlContent
 
-                // 4. Generate Root Screen XML Shell (${compName}.xml)
-                String rootScreenPath = "component://${compName}/screen/${compName}/${compName}.xml"
+                // 4. Generate Root Screen XML Shell directly under screen/ (${compName}.xml)
+                String rootScreenPath = "component://${compName}/screen/${compName}.xml"
                 String rootScreenXml = """<?xml version="1.0" encoding="UTF-8"?>
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
@@ -93,19 +93,30 @@
                 File rootScreenFile = new File(screenDir, compName + ".xml")
                 rootScreenFile.text = rootScreenXml
 
-                // 5. Auto-Register Primary Artifact into AgiArtifact Table for Discovery
+                // 5. Auto-Register Primary Artifact into AgiArtifact Table
                 def enumCheck = ec.entity.find("moqui.basic.Enumeration").condition("enumId", "AatXmlScreen").one()
                 String typeEnumId = enumCheck ? "AatXmlScreen" : null
-
+                
                 def artifactVal = ec.entity.makeValue("org.moqui.ai.AgiArtifact")
                 artifactVal.set("artifactPath", rootScreenPath)
                 artifactVal.set("artifactTypeEnumId", typeEnumId)
                 artifactVal.set("artifactStatusEnumId", "AasDraft")
-                artifactVal.set("totalIntentCount", 0)
+                artifactVal.set("totalIntentCount", 1)
                 artifactVal.set("completedIntentCount", 0)
                 artifactVal.set("completionPercentage", 0.0)
                 artifactVal.setSequencedIdPrimary()
                 artifactVal.create()
+                
+                // 🎯 Auto-Seed Description as the Primary Root Intent WorkEffort
+                if (description && description.trim()) {
+                    ec.service.sync().name("org.moqui.ide.BlueprintServices.create#WorkEffortNode").parameters([
+                        workEffortName: "Root Intent: " + compName,
+                        description: description,
+                        agiArtifactId: artifactVal.agiArtifactId,
+                        sourceReferenceId: rootScreenPath,
+                        workEffortTypeEnumId: "WetIntent"
+                    ]).call()
+                }
 
                 context.componentPath = runtimeCompPath
                 context.rootArtifactPath = rootScreenPath

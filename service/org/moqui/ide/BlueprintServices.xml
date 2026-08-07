@@ -492,16 +492,21 @@
             <parameter name="workEffortId"/>
         </out-parameters>
         <actions>
-            <script><![CDATA[
+        <script><![CDATA[
                 String targetArtifactId = agiArtifactId
                 if (!targetArtifactId && sourceReferenceId) {
                     def artRow = ec.entity.find("org.moqui.ai.AgiArtifact").condition("artifactPath", sourceReferenceId).one()
                     if (artRow) targetArtifactId = artRow.agiArtifactId
                 }
 
+                // 🎯 FIX: Sanitize empty string to null for foreign key integrity
+                String cleanParentId = (parentWorkEffortId != null && parentWorkEffortId.trim().length() > 0) 
+                    ? parentWorkEffortId.trim() 
+                    : null
+
                 def newWe = ec.entity.makeValue("mantle.work.effort.WorkEffort")
                 newWe.workEffortName = workEffortName
-                newWe.parentWorkEffortId = parentWorkEffortId
+                newWe.parentWorkEffortId = cleanParentId
                 newWe.agiArtifactId = targetArtifactId
                 newWe.sourceReferenceId = sourceReferenceId
                 newWe.workEffortTypeEnumId = workEffortTypeEnumId
@@ -542,7 +547,7 @@
 
                     // Trigger automatic telemetry recalculation for attached artifact
                     if (weVal.agiArtifactId) {
-                        ec.service.sync().name("org.moqui.ai.AgiBlueprintServices.get#ArtifactTelemetrySummary")
+                        ec.service.sync().name("org.moqui.ide.BlueprintServices.get#ArtifactTelemetrySummary")
                             .parameter("agiArtifactId", weVal.agiArtifactId)
                             .call()
                     }
@@ -574,15 +579,18 @@
     </service>
 
     <!-- ===================================================================== -->
-    <!-- GET ARTIFACT QUERY LIST (Faceted Search for Artifact Discovery)       -->
+    <!-- GET ARTIFACT QUERY LIST (Target App Filtering for Artifact Discovery) -->
     <!-- ===================================================================== -->
     <service verb="get" noun="ArtifactQueryList" type="inline">
         <description>
             Queries AgiArtifact records supporting keyword filtering, type selection, 
             and WorkEffortFacet criteria. Auto-registers matching screen files if needed.
+            Filters out infrastructure components by default to keep discovery target-app centric.
         </description>
         <in-parameters>
             <parameter name="queryString"/>
+            <parameter name="targetComponent" default-value="nursinghome"/>
+            <parameter name="includeFramework" type="Boolean" default="false"/>
             <parameter name="artifactTypeEnumId"/>
             <parameter name="artifactStatusEnumId"/>
             <parameter name="facetKey"/>
@@ -600,7 +608,6 @@
                 if (queryString && queryString.startsWith("component://")) {
                     def existing = ec.entity.find("org.moqui.ai.AgiArtifact").condition("artifactPath", queryString).one()
                     if (!existing) {
-                        // Check if enumeration seed data is present in database
                         def enumCheck = ec.entity.find("moqui.basic.Enumeration").condition("enumId", "AatXmlScreen").one()
                         String typeEnumId = enumCheck ? "AatXmlScreen" : null
                 
@@ -618,7 +625,21 @@
 
                 def find = ec.entity.find("org.moqui.ai.AgiArtifact")
 
-                if (queryString && queryString.trim() != "") {
+                // 🎯 PART 5.3: TARGET APP CENTRIC FILTERING
+                // Exclude infrastructure components by default unless includeFramework=true
+                if (!includeFramework) {
+                    List<String> frameworkComps = ["agi-ide", "agi-ai", "moqui-usl", "mantle-usl", "webroot", "tools"]
+                    for (String fw : frameworkComps) {
+                        find.condition("artifactPath", org.moqui.entity.EntityCondition.NOT_LIKE, "component://" + fw + "/%")
+                    }
+                }
+
+                // If a target component is specified (e.g. nursinghome), prioritize artifacts under that component
+                if (targetComponent && !queryString?.startsWith("component://")) {
+                    find.condition("artifactPath", org.moqui.entity.EntityCondition.LIKE, "component://" + targetComponent.trim() + "/%")
+                }
+
+                if (queryString && queryString.trim() != "" && !queryString.startsWith("component://")) {
                     find.condition("artifactPath", org.moqui.entity.EntityCondition.LIKE, "%" + queryString.trim() + "%")
                 }
 
@@ -661,6 +682,7 @@
             ]]></script>
         </actions>
     </service>
+
 <service verb="compile" noun="XmlFragment" type="inline">
         <in-parameters>
             <parameter name="xmlText" type="String" required="true" allow-html="any"/>

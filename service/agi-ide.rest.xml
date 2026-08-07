@@ -101,4 +101,12 @@
             </method>
         </resource>
     </resource>
+
+    <resource name="screen">
+        <resource name="create">
+            <method type="post">
+                <service name="org.moqui.ai.mcp.MCPScreenServices.create#Screen"/>
+            </method>
+        </resource>
+    </resource>
 </rest-api>
