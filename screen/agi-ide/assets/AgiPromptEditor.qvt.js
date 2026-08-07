@@ -51,27 +51,25 @@
                             </q-input>
 
                             <!-- Selected Tool Parameter Form (Dynamically built from MCP Schema) -->
-                                <!-- Selected Tool Parameter Form (Dynamically built from MCP Schema) -->
-                                <q-slide-transition>
-                                    <div v-if="selectedCommand" class="q-pa-sm bg-slate-950 rounded-borders border-dark row items-center q-gutter-x-sm">
-                                        <q-chip color="primary" text-color="white" dense size="sm" icon="build" removable @remove="clearSelectedCommand">
-                                            {{ selectedCommand.command }}
-                                        </q-chip>
-                                        <span class="text-caption text-grey-4 ellipsis" style="max-width: 260px;">{{ selectedCommand.description }}</span>
-                                        
-                                        <!-- 🎯 Render visibleParams instead of raw params -->
-                                        <div v-for="param in visibleParams" :key="param.name" class="col-auto">
-                                            <q-input 
-                                                v-model="commandParamValues[param.name]" 
-                                                :label="param.name" 
-                                                dense 
-                                                outlined 
-                                                class="text-caption font-mono" 
-                                                style="min-width: 150px;"
-                                            />
-                                        </div>
+                            <q-slide-transition>
+                                <div v-if="selectedCommand" class="q-pa-sm bg-slate-950 rounded-borders border-dark row items-center q-gutter-x-sm">
+                                    <q-chip color="primary" text-color="white" dense size="sm" icon="build" removable @remove="clearSelectedCommand">
+                                        {{ selectedCommand.command }}
+                                    </q-chip>
+                                    <span class="text-caption text-grey-4 ellipsis" style="max-width: 260px;">{{ selectedCommand.description }}</span>
+                                    
+                                    <div v-for="param in visibleParams" :key="param.name" class="col-auto">
+                                        <q-input 
+                                            v-model="commandParamValues[param.name]" 
+                                            :label="param.name" 
+                                            dense 
+                                            outlined 
+                                            class="text-caption font-mono" 
+                                            style="min-width: 150px;"
+                                        />
                                     </div>
-                                </q-slide-transition>
+                                </div>
+                            </q-slide-transition>
 
                             <!-- Dynamic Slash Command Auto-complete Dropdown -->
                             <div 
@@ -116,7 +114,8 @@
                     <!-- TAB 2: BLUEPRINT INTENT HIERARCHY -->
                     <q-card-section v-else-if="activeTab === 'blueprint'" class="q-pa-md bg-slate-900" style="height: 380px; overflow-y: auto;">
                         <discussion-tree 
-                            v-if="targetArtifactId"
+                            v-if="targetArtifactId || activeArtifactLocation"
+                            :key="blueprintTreeKey"
                             :agi-artifact-id="targetArtifactId"
                             :source-reference-id="activeArtifactLocation">
                             <template v-slot:node-detail="{ node }">
@@ -135,22 +134,35 @@
 
                     <!-- TAB 3: RAG PAYLOAD INSPECTOR -->
                     <q-card-section v-else-if="activeTab === 'context'" class="q-pa-md bg-slate-900" style="height: 380px; overflow-y: auto;">
-                        <div class="text-caption text-weight-bold text-grey-4 q-mb-xs">ACTIVE SCREEN AST & RAG CONTEXT</div>
+                        <div class="row items-center justify-between q-mb-xs">
+                            <div class="text-caption text-weight-bold text-grey-4">ACTIVE SCREEN AST & RAG CONTEXT</div>
+                            <q-btn flat dense icon="refresh" size="xs" color="primary" @click="fetchActiveRagContext(activeArtifactLocation)">
+                                <q-tooltip>Reload Context Payload</q-tooltip>
+                            </q-btn>
+                        </div>
                         <div class="q-pa-sm bg-slate-950 rounded-borders font-mono text-caption text-grey-3 break-all" style="white-space: pre-wrap;">
-{{ activeRagContextJson || 'No context loaded.' }}
+{{ activeRagContextJson || 'No context loaded for active artifact.' }}
                         </div>
                     </q-card-section>
 
                     <!-- TAB 4: PROMPT HISTORY -->
                     <q-card-section v-else-if="activeTab === 'history'" class="q-pa-md bg-slate-900" style="height: 380px; overflow-y: auto;">
-                        <q-list dark separator dense>
+                        <q-list dark separator dense v-if="promptHistory.length > 0">
                             <q-item v-for="(hist, idx) in promptHistory" :key="idx">
                                 <q-item-section>
-                                    <q-item-label class="font-mono text-caption text-primary">{{ hist.timestamp }} - {{ hist.command || 'Prompt' }}</q-item-label>
-                                    <q-item-label caption class="text-grey-3">{{ hist.text }}</q-item-label>
+                                    <q-item-label class="font-mono text-caption text-primary">
+                                        {{ hist.timestamp }} - <q-badge color="cyan-9" class="q-ml-xs">{{ hist.command || 'Prompt' }}</q-badge>
+                                    </q-item-label>
+                                    <q-item-label caption class="text-grey-3 font-mono q-mt-xs">{{ hist.text }}</q-item-label>
+                                    <q-item-label v-if="hist.resultUri" caption class="text-cyan-4 font-mono text-caption ellipsis">
+                                        👉 Created/Updated: {{ hist.resultUri }}
+                                    </q-item-label>
                                 </q-item-section>
                             </q-item>
                         </q-list>
+                        <div v-else class="text-center text-grey-5 q-pa-lg text-italic">
+                            No execution history in this session yet.
+                        </div>
                     </q-card-section>
 
                     <!-- FOOTER STATUS -->
@@ -170,13 +182,14 @@
                 targetComponent: 'nursinghome',
                 activeArtifactLocation: '',
                 targetArtifactId: '',
+                blueprintTreeKey: 1, // Key forcing discussion-tree reload
                 isExecuting: false,
                 showCommandList: false,
                 selectedCommand: null,
                 commandParamValues: {},
                 activeRagContextJson: '',
                 promptHistory: [],
-                registeredCommands: [] // 🎯 Populated dynamically from AgiMcpBridgeServices
+                registeredCommands: []
             };
         },
         computed: {
@@ -185,7 +198,6 @@
                 const search = this.userPrompt.toLowerCase();
                 return this.registeredCommands.filter(c => c.command.toLowerCase().includes(search));
             },
-            // Filter out parameters marked as internal in the MCP schema definition
             visibleParams() {
                 if (!this.selectedCommand || !this.selectedCommand.params) return [];
                 return this.selectedCommand.params.filter(p => !p.internal);
@@ -198,60 +210,126 @@
                 if (event.data && (event.data.event === 'force-open-command-palette' || event.data.event === 'open-prompt-editor')) {
                     vm.targetComponent = event.data.targetComponent || 'nursinghome';
                     vm.activeArtifactLocation = event.data.artifactLocation || '';
+                    vm.targetArtifactId = event.data.agiArtifactId || '';
                     vm.isOpen = true;
-                    // Load dynamic tools from server whenever prompt editor opens
+
                     vm.fetchDynamicTools();
+                    if (vm.activeArtifactLocation) {
+                        vm.fetchActiveRagContext(vm.activeArtifactLocation);
+                    }
                 }
             };
 
-            // Initial fetch on mount
             this.fetchDynamicTools();
         },
         beforeUnmount() {
             if (this.contextBus) this.contextBus.close();
         },
         methods: {
-            // 🎯 Fetch dynamically registered MCP tools from AgiMcpBridgeServices
-            fetchDynamicTools() {
+            async fetchDynamicTools() {
                 var vm = this;
-                $.ajax({
-                    type: 'GET',
-                    url: '/rest/s1/agi-ai/tools', // Points to AgiMcpBridgeServices.list#Tools or load#DynamicTools endpoint
-                    dataType: 'json',
-                    headers: { 'moquiSessionToken': window.AGI_SERVER_CSRF_TOKEN || "" },
-                    success: function (data) {
-                        const rawTools = data.tools || data.toolsList || [];
-                        vm.registeredCommands = rawTools.map(t => {
-                            // Format tool name into slash command format (e.g., create_screen -> /create-screen)
-                            const cleanName = t.name ? '/' + t.name.replace(/_/g, '-') : '/tool';
+                const headers = { 'moquiSessionToken': window.AGI_SERVER_CSRF_TOKEN || "" };
 
-                            // Extract parameter definitions from JSON Schema
-                            const params = [];
-                            if (t.inputSchema && t.inputSchema.properties) {
-                                Object.keys(t.inputSchema.properties).forEach(pKey => {
-                                    const prop = t.inputSchema.properties[pKey];
-                                    params.push({
-                                        name: pKey,
-                                        type: prop.type || 'string',
-                                        description: prop.description || '',
-                                        internal: prop.internal || false // 🎯 Driven by backend schema
-                                    });
+                try {
+                    const response = await axios.get('/rest/s1/agi-ai/tools', { headers });
+                    const data = response.data || {};
+                    const rawTools = data.tools || data.toolsList || [];
+
+                    vm.registeredCommands = rawTools.map(t => {
+                        const cleanName = t.name ? '/' + t.name.replace(/_/g, '-') : '/tool';
+                        const params = [];
+
+                        if (t.inputSchema && t.inputSchema.properties) {
+                            Object.keys(t.inputSchema.properties).forEach(pKey => {
+                                const prop = t.inputSchema.properties[pKey];
+                                params.push({
+                                    name: pKey,
+                                    type: prop.type || 'string',
+                                    description: prop.description || '',
+                                    internal: prop.internal || false
                                 });
-                            }
+                            });
+                        }
 
-                            return {
-                                command: cleanName,
-                                rawName: t.name,
-                                serviceName: t.serviceName, // 🎯 Dynamic service identifier from backend
-                                description: t.description || t.title || 'MCP Tool',
-                                params: params
-                            };
-                        });
-                    },
-                    error: function (err) {
-                        console.warn("⚠️ Could not load dynamic MCP tools from server:", err);
-                    }
+                        return {
+                            command: cleanName,
+                            rawName: t.name,
+                            serviceName: t.serviceName,
+                            description: t.description || t.title || 'MCP Tool',
+                            params: params
+                        };
+                    });
+                } catch (err) {
+                    console.warn("⚠️ Could not load dynamic MCP tools from server:", err);
+                }
+            },
+
+            // 🎯 PHASE 1.2: Fetch RAG context payload for active artifact (Tab 3 Inspector)
+            async fetchActiveRagContext(artifactUri) {
+                if (!artifactUri) {
+                    this.activeRagContextJson = 'No active artifact location specified.';
+                    return;
+                }
+                var vm = this;
+                const headers = { 'moquiSessionToken': window.AGI_SERVER_CSRF_TOKEN || "" };
+
+                try {
+                    const response = await axios.get('/rest/s1/agi-ai/getRawXml', {
+                        params: { artifactUri: artifactUri },
+                        headers: headers
+                    });
+
+                    const payload = {
+                        artifactUri: artifactUri,
+                        targetComponent: vm.targetComponent,
+                        rawXmlContent: response.data || 'Empty XML File'
+                    };
+                    vm.activeRagContextJson = JSON.stringify(payload, null, 2);
+                } catch (err) {
+                    vm.activeRagContextJson = JSON.stringify({
+                        artifactUri: artifactUri,
+                        status: 'error',
+                        message: 'Could not fetch raw XML AST context for this artifact.'
+                    }, null, 2);
+                }
+            },
+
+            // 🎯 PHASE 1.2: Post-Execution Telemetry Synchronizer
+            processExecutionTelemetry(executedCommandName, promptText, resultUri) {
+                var vm = this;
+                const newUri = resultUri || vm.activeArtifactLocation;
+
+                // 1. Update Active Location and re-fetch Tab 3 Context Payload
+                if (newUri) {
+                    vm.activeArtifactLocation = newUri;
+                    vm.fetchActiveRagContext(newUri);
+                }
+
+                // 2. Log entry to Tab 4 Prompt History
+                vm.promptHistory.unshift({
+                    timestamp: new Date().toLocaleTimeString(),
+                    command: executedCommandName || 'AI Agent',
+                    text: promptText,
+                    resultUri: newUri || ''
                 });
+
+                // 3. Force-reload Tab 2 Blueprint Intent Tree
+                vm.blueprintTreeKey++;
+
+                // 4. Broadcast event across contextBus to open file in workspace canvas
+                if (newUri && vm.contextBus) {
+                    vm.contextBus.postMessage({
+                        event: 'reload-blueprint-tree',
+                        artifactUri: newUri
+                    });
+                    vm.contextBus.postMessage({
+                        event: 'open-screen-artifact',
+                        artifactUri: newUri
+                    });
+                }
+
+                vm.userPrompt = '';
+                vm.clearSelectedCommand();
             },
 
             onPromptInput(val) {
@@ -270,7 +348,6 @@
                     });
                 }
 
-                // 🎯 Automatically bind contextual defaults in background
                 if (this.commandParamValues.hasOwnProperty('targetComponent')) {
                     this.commandParamValues['targetComponent'] = this.targetComponent || 'nursinghome';
                 }
@@ -282,56 +359,91 @@
                 this.commandParamValues = {};
             },
 
-            handleExecute() {
+            async handleExecute() {
                 if (!this.userPrompt.trim()) return;
 
                 this.isExecuting = true;
                 var vm = this;
+                const headers = {
+                    'moquiSessionToken': window.AGI_SERVER_CSRF_TOKEN || "",
+                    'Content-Type': 'application/json'
+                };
 
-                // 🎯 DYNAMIC DISPATCH: Generic service call based on schema-provided serviceName
+                const executedPromptText = vm.userPrompt;
+
+                // 🎯 1. DIRECT SLASH COMMAND DISPATCH
                 if (this.selectedCommand && this.selectedCommand.serviceName) {
-                    $.ajax({
-                        type: 'POST',
-                        url: '/rest/s1/agi-ai/mcp/run', // Generic REST proxy for dynamic MCP services
-                        data: JSON.stringify({
+                    try {
+                        const response = await axios.post('/rest/s1/agi-ai/mcp/run', {
                             serviceName: vm.selectedCommand.serviceName,
                             parameters: vm.commandParamValues
-                        }),
-                        contentType: 'application/json',
-                        dataType: 'json',
-                        headers: { 'moquiSessionToken': window.AGI_SERVER_CSRF_TOKEN || "" },
-                        success: function (res) {
-                            vm.isExecuting = false;
-                            if (vm.$q) {
-                                vm.$q.notify({
-                                    type: 'positive',
-                                    message: 'Tool executed successfully: ' + (res.artifactUri || res.rootArtifactPath || 'OK')
-                                });
-                            }
-                            vm.promptHistory.unshift({
-                                timestamp: new Date().toLocaleTimeString(),
-                                command: vm.selectedCommand.command,
-                                text: vm.userPrompt
-                            });
-                            vm.userPrompt = '';
-                            vm.clearSelectedCommand();
+                        }, { headers });
 
-                            if (res.artifactUri && vm.contextBus) {
-                                vm.contextBus.postMessage({
-                                    event: 'open-screen-artifact',
-                                    artifactUri: res.artifactUri
-                                });
-                            }
-                        },
-                        error: function (err) {
-                            vm.isExecuting = false;
-                            if (vm.$q) vm.$q.notify({ type: 'negative', message: 'Failed to execute tool service.' });
+                        vm.isExecuting = false;
+                        const res = response.data || {};
+
+                        if (vm.$q) {
+                            vm.$q.notify({
+                                type: 'positive',
+                                message: 'Tool executed successfully: ' + (res.artifactUri || 'OK')
+                            });
                         }
-                    });
+
+                        // 🎯 Run Phase 1.2 Telemetry Synchronization
+                        vm.processExecutionTelemetry(vm.selectedCommand.command, executedPromptText, res.artifactUri);
+
+                    } catch (err) {
+                        vm.isExecuting = false;
+                        const errorMsg = err.response?.data?.errors || err.message || 'Failed to execute tool service.';
+                        if (vm.$q) vm.$q.notify({ type: 'negative', message: errorMsg });
+                    }
                     return;
                 }
 
-                // Standard Gemini proxy fallback for natural language prompts...
+                // 🎯 2. NATURAL LANGUAGE FALLBACK: Dispatch to geminiProxy for LLM reasoning
+                const payload = {
+                    userPrompt: vm.userPrompt,
+                    targetComponent: vm.targetComponent || 'nursinghome',
+                    focusCoordinate: vm.activeArtifactLocation || ''
+                };
+
+                try {
+                    const response = await axios.post('/rest/s1/agi-ide/geminiProxy', payload, { headers });
+                    vm.isExecuting = false;
+                    const res = response.data || {};
+
+                    let parsedRes = res;
+                    if (typeof res.completionText === 'string') {
+                        try { parsedRes = JSON.parse(res.completionText); } catch (e) { }
+                    }
+
+                    if (parsedRes.status === "error") {
+                        if (vm.$q) {
+                            vm.$q.notify({
+                                type: 'negative',
+                                message: parsedRes.error || 'Agent execution encountered an error.'
+                            });
+                        }
+                        return;
+                    }
+
+                    if (vm.$q) {
+                        vm.$q.notify({
+                            type: 'positive',
+                            message: parsedRes.message || 'Agent processed prompt successfully.'
+                        });
+                    }
+
+                    const newUri = parsedRes.createdArtifactUri || res.createdArtifactUri;
+
+                    // 🎯 Run Phase 1.2 Telemetry Synchronization
+                    vm.processExecutionTelemetry('AI Agent', executedPromptText, newUri);
+
+                } catch (err) {
+                    vm.isExecuting = false;
+                    const errorMsg = err.response?.data?.errors || err.message || 'Agent execution failed.';
+                    if (vm.$q) vm.$q.notify({ type: 'negative', message: errorMsg });
+                }
             },
 
             onDialogClosed() {

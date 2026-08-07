@@ -1,3 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-3.0.xsd">
 
@@ -12,7 +13,7 @@
         </description>
         <in-parameters>
             <parameter name="targetComponent" type="String" default-value="nursinghome" internal="true"/>
-            <parameter name="screenPath" type="String" required="true"/> <!-- e.g. "patient/PatientMgmt" or "PatientMgmt" -->
+            <parameter name="screenPath" type="String" required="true"/> <!-- e.g. "nursinghome/ManagePatients" -->
             <parameter name="title" type="String"/>
             <parameter name="editorType" type="String" default-value="AgiScreenEditor"/> <!-- AgiScreenEditor or AgiComponentEditor -->
             <parameter name="parentWorkEffortId" type="String" internal="true"/>
@@ -25,8 +26,6 @@
         </out-parameters>
         <actions>
             <script><![CDATA[
-                // 1. Normalize and resolve paths
-
                 String compName = targetComponent.trim().toLowerCase().replaceAll("[^a-z0-9-]", "")
                 String relPath = screenPath.trim()
                 if (relPath.startsWith("component://")) {
@@ -39,25 +38,14 @@
                 String fullArtifactUri = "component://${compName}/screen/${relPath}.xml"
                 String physicalFilePath = "runtime/component/${compName}/screen/${relPath}.xml"
 
-                def existingArtifact = ec.entity.find("org.moqui.ai.AgiArtifact")
-                        .condition("artifactPath", fullArtifactUri)
-                        .one()
-                
-                if (existingArtifact != null) {
-                    ec.message.addError("Artifact record already exists in database for path: ${fullArtifactUri}")
-                    return
-                }
-
                 File targetFile = new File(physicalFilePath)
                 if (targetFile.exists()) {
                     ec.message.addError("Screen file already exists at: ${physicalFilePath}")
                     return
                 }
 
-                // 2. Ensure parent directories exist
                 targetFile.getParentFile().mkdirs()
 
-                // Determine editor mode and companion assets
                 String targetEditor = (editorType && editorType.trim().length() > 0) ? editorType.trim() : "AgiScreenEditor"
                 String displayTitle = title ?: relPath.substring(relPath.lastIndexOf('/') + 1)
                 String rootContainerId = relPath.replaceAll("[^a-zA-Z0-9_]", "_") + "_root"
@@ -66,7 +54,6 @@
                 String qvtAssetPath = null
                 String qvtPhysicalPath = null
 
-                // 3. Handle AgiComponentEditor Companion Asset Creation
                 if ("AgiComponentEditor".equals(targetEditor)) {
                     int lastSlashIdx = relPath.lastIndexOf('/')
                     String dirPrefix = (lastSlashIdx != -1) ? relPath.substring(0, lastSlashIdx + 1) : ""
@@ -102,7 +89,6 @@
                     ec.logger.info("📄 [MCP /create-screen] Created companion QVT asset at ${qvtPhysicalPath}")
                 }
 
-                // 4. Generate XML Screen Shell
                 String scriptIncludeTag = qvtAssetPath ? "\n    <script location=\"${qvtAssetPath}\"/>\n" : ""
 
                 String xmlContent = """<?xml version="1.0" encoding="UTF-8"?>
@@ -121,7 +107,6 @@ ${scriptIncludeTag}
                 targetFile.text = xmlContent
                 ec.logger.info("📄 [MCP /create-screen] Created XML screen shell at ${physicalFilePath} (Editor: ${targetEditor})")
 
-                // 5. Auto-Register or Reuse AgiArtifact record
                 def enumCheck = ec.entity.find("moqui.basic.Enumeration").condition("enumId", "AatXmlScreen").one()
                 String typeEnumId = enumCheck ? "AatXmlScreen" : null
 
@@ -129,7 +114,7 @@ ${scriptIncludeTag}
                         .condition("artifactPath", fullArtifactUri)
                         .one()
 
-                if (artifactVal == null) {
+                if (!artifactVal) {
                     artifactVal = ec.entity.makeValue("org.moqui.ai.AgiArtifact")
                     artifactVal.set("artifactPath", fullArtifactUri)
                     artifactVal.set("artifactTypeEnumId", typeEnumId)
@@ -139,11 +124,8 @@ ${scriptIncludeTag}
                     artifactVal.set("completionPercentage", 0.0)
                     artifactVal.setSequencedIdPrimary()
                     artifactVal.create()
-                } else {
-                    ec.logger.info("ℹ️ Re-using existing AgiArtifact record [${artifactVal.agiArtifactId}] for path: ${fullArtifactUri}")
                 }
 
-                // 6. Sanitize parentWorkEffortId and create associated WetIntent WorkEffort node
                 String cleanParentId = (parentWorkEffortId != null && parentWorkEffortId.trim().length() > 0) 
                     ? parentWorkEffortId.trim() 
                     : null
@@ -161,6 +143,238 @@ ${scriptIncludeTag}
                 context.qvtAssetUri = qvtAssetPath
                 context.agiArtifactId = artifactVal.agiArtifactId
                 context.workEffortId = weResult.workEffortId
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- ===================================================================== -->
+    <!-- MOVE / REFACTOR ARTIFACT MCP TOOL SERVICE                             -->
+    <!-- ===================================================================== -->
+    <service verb="move" noun="Artifact" type="inline">
+        <description>
+            MCP Tool: Relocates or renames an existing screen file on disk and updates all 
+            AgiArtifact, WorkspaceBuffer, and WorkEffort entity references in the database.
+        </description>
+        <in-parameters>
+            <parameter name="sourceArtifactUri" type="String" required="true"/>
+            <parameter name="targetArtifactUri" type="String" required="true"/>
+            <parameter name="targetComponent" type="String" default-value="nursinghome" internal="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="artifactUri" type="String" required="true"/>
+            <parameter name="agiArtifactId" type="String"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                String compName = targetComponent.trim().toLowerCase().replaceAll("[^a-z0-9-]", "")
+
+                // 1. Path Normalizer Helper
+                def normalizeUri = { String rawUri ->
+                    String cleaned = rawUri.trim()
+                    if (!cleaned.endsWith(".xml")) cleaned += ".xml"
+                    if (cleaned.startsWith("component://")) return cleaned
+
+                    if (cleaned.startsWith("screen/")) {
+                        return "component://${compName}/${cleaned}"
+                    } else {
+                        // Keep full path relative to screen directory
+                        return "component://${compName}/screen/${cleaned}"
+                    }
+                }
+
+                String srcUri = normalizeUri(sourceArtifactUri)
+                String tgtUri = normalizeUri(targetArtifactUri)
+
+                String srcPhysical = "runtime/component/" + srcUri.replace("component://", "")
+                String tgtPhysical = "runtime/component/" + tgtUri.replace("component://", "")
+
+                ec.logger.info("🚚 [MCP /move-artifact] Resolving srcPhysical: ${srcPhysical} -> tgtPhysical: ${tgtPhysical}")
+
+                File srcFile = new File(srcPhysical)
+                if (!srcFile.exists()) {
+                    ec.message.addError("Source file does not exist on disk: ${srcPhysical}")
+                    return
+                }
+
+                File tgtFile = new File(tgtPhysical)
+                tgtFile.getParentFile().mkdirs()
+
+                // 2. Move physical XML file
+                boolean moved = srcFile.renameTo(tgtFile)
+                if (!moved) {
+                    tgtFile.text = srcFile.text
+                    srcFile.delete()
+                }
+                ec.logger.info("🚚 [MCP /move-artifact] Successfully relocated file on disk to: ${tgtPhysical}")
+
+                // 3. Move companion QVT asset if present
+                String srcQvtPhysical = srcPhysical.replace(".xml", ".qvt.js")
+                int lastSlashIdx = srcQvtPhysical.lastIndexOf('/')
+                if (lastSlashIdx != -1) {
+                    String srcQvtDir = srcQvtPhysical.substring(0, lastSlashIdx)
+                    String fileName = srcQvtPhysical.substring(lastSlashIdx + 1)
+                    File srcQvtFile = new File("${srcQvtDir}/assets/${fileName}")
+
+                    if (srcQvtFile.exists()) {
+                        String tgtQvtPhysical = tgtPhysical.replace(".xml", ".qvt.js")
+                        int tgtSlashIdx = tgtQvtPhysical.lastIndexOf('/')
+                        String tgtQvtDir = tgtQvtPhysical.substring(0, tgtSlashIdx)
+                        File tgtQvtFile = new File("${tgtQvtDir}/assets/${fileName}")
+                        tgtQvtFile.getParentFile().mkdirs()
+
+                        srcQvtFile.renameTo(tgtQvtFile)
+                        ec.logger.info("🚚 [MCP /move-artifact] Relocated companion QVT asset to: ${tgtQvtFile.path}")
+                    }
+                }
+
+                // 4. Update AgiArtifact in PostgreSQL
+                def art = ec.entity.find("org.moqui.ai.AgiArtifact").condition("artifactPath", srcUri).one()
+                if (art) {
+                    art.artifactPath = tgtUri
+                    art.update()
+                    context.agiArtifactId = art.agiArtifactId
+                }
+
+                // 5. Update WorkspaceBuffer references
+                def buffers = ec.entity.find("org.moqui.ai.WorkspaceBuffer").condition("artifactUri", srcUri).list()
+                buffers.each { buf ->
+                    buf.artifactUri = tgtUri
+                    buf.update()
+                }
+
+                // 6. Update WorkEffort source references
+                def workEfforts = ec.entity.find("mantle.work.effort.WorkEffort").condition("sourceReferenceId", srcUri).list()
+                workEfforts.each { we ->
+                    we.sourceReferenceId = tgtUri
+                    we.update()
+                }
+
+                context.artifactUri = tgtUri
+            ]]></script>
+        </actions>
+    </service>
+
+<!-- ===================================================================== -->
+    <!-- ATTACH QVT ASSET MCP TOOL SERVICE                                     -->
+    <!-- ===================================================================== -->
+    <service verb="attach" noun="QvtAsset" type="inline">
+        <description>
+            MCP Tool: Attaches a companion Vue/QVT component script to an existing XML screen,
+            scaffolds the .qvt.js file, injects the script tag, and converts editor to AgiComponentEditor.
+        </description>
+        <in-parameters>
+            <parameter name="artifactUri"/> <!-- e.g. "component://nursinghome/screen/nursinghome/ManagePatients.xml" -->
+            <parameter name="screenPath"/> <!-- Alternative alias e.g. "nursinghome/ManagePatients" -->
+            <parameter name="targetComponent" type="String" default-value="nursinghome" internal="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="qvtAssetUri" type="String" required="true"/>
+            <parameter name="artifactUri" type="String" required="true"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                String compName = targetComponent.trim().toLowerCase().replaceAll("[^a-z0-9-]", "")
+                String rawUri = artifactUri ?: screenPath
+
+                if (!rawUri || rawUri.trim().isEmpty()) {
+                    ec.message.addError("Either artifactUri or screenPath must be provided to attach a QVT asset.")
+                    return
+                }
+
+                String cleaned = rawUri.trim()
+                if (!cleaned.endsWith(".xml")) cleaned += ".xml"
+
+                String srcUri
+                if (cleaned.startsWith("component://")) {
+                    srcUri = cleaned
+                } else if (cleaned.startsWith("screen/")) {
+                    srcUri = "component://${compName}/${cleaned}"
+                } else {
+                    srcUri = "component://${compName}/screen/${cleaned}"
+                }
+
+                String relPath = srcUri.replace("component://", "")
+                String physicalPath = "runtime/component/" + relPath
+
+                File xmlFile = new File(physicalPath)
+                if (!xmlFile.exists()) {
+                    ec.message.addError("Screen XML file does not exist on disk: ${physicalPath}")
+                    return
+                }
+
+                String cleanCompName = xmlFile.name.replace(".xml", "")
+                int lastSlashIdx = physicalPath.lastIndexOf('/')
+                String dirPath = (lastSlashIdx != -1) ? physicalPath.substring(0, lastSlashIdx) : ""
+
+                String qvtPhysical = "${dirPath}/assets/${cleanCompName}.qvt.js"
+                String qvtUri = srcUri.substring(0, srcUri.lastIndexOf('/')) + "/assets/${cleanCompName}.qvt.js"
+
+                File qvtFile = new File(qvtPhysical)
+                if (!qvtFile.exists()) {
+                    qvtFile.getParentFile().mkdirs()
+                    String qvtContent = """(function () {
+    const ${cleanCompName} = {
+        name: '${cleanCompName}',
+        template: `
+            <div class="q-pa-md bg-slate-900 text-white rounded-borders">
+                <div class="text-h6 text-primary">${cleanCompName} Component</div>
+                <div class="text-caption text-grey-4">Custom Component Viewport</div>
+            </div>
+        `,
+        data() {
+            return {
+                title: '${cleanCompName}'
+            };
+        }
+    };
+
+    window.${cleanCompName} = ${cleanCompName};
+    if (!window.AgiComponents) window.AgiComponents = {};
+    window.AgiComponents['${cleanCompName}'] = ${cleanCompName};
+})();
+"""
+                    qvtFile.text = qvtContent
+                    ec.logger.info("📄 [MCP /attach-qvt-asset] Created companion QVT file at ${qvtPhysical}")
+                }
+
+                // Update XML header to set editor="AgiComponentEditor" and inject <script> tag
+                String xmlText = xmlFile.text
+                if (!xmlText.contains("AgiComponentEditor")) {
+                    xmlText = xmlText.replace("editor=\"AgiScreenEditor\"", "editor=\"AgiComponentEditor\"")
+                    if (!xmlText.contains("editor=")) {
+                        xmlText = xmlText.replace("<screen ", "<screen editor=\"AgiComponentEditor\" ")
+                    }
+                }
+
+                String scriptTag = "<script location=\"${qvtUri}\"/>"
+                if (!xmlText.contains(scriptTag)) {
+                    xmlText = xmlText.replace("require-authentication=\"true\">", "require-authentication=\"true\">\n    " + scriptTag)
+                }
+
+                // Existing script file creation and XML tag injection...
+                xmlFile.text = xmlText
+                ec.logger.info("✏️ [MCP /attach-qvt-asset] Updated ${physicalPath} to include ${scriptTag}")
+
+                // 🎯 PHASING 1: Find parent AgiArtifact and attach child WorkEffort intent node
+                def art = ec.entity.find("org.moqui.ai.AgiArtifact").condition("artifactPath", srcUri).one()
+                if (art) {
+                    // Find root WorkEffort for this artifact
+                    def parentWe = ec.entity.find("mantle.work.effort.WorkEffort")
+                            .condition("agiArtifactId", art.agiArtifactId)
+                            .condition("workEffortTypeEnumId", "WetIntent")
+                            .one()
+
+                    ec.service.sync().name("org.moqui.ide.BlueprintServices.create#WorkEffortNode").parameters([
+                        workEffortName: "Attached QVT Asset: " + cleanCompName,
+                        parentWorkEffortId: parentWe?.workEffortId,
+                        agiArtifactId: art.agiArtifactId,
+                        sourceReferenceId: qvtUri,
+                        workEffortTypeEnumId: "WetIntent"
+                    ]).call()
+                }
+
+                context.qvtAssetUri = qvtUri
+                context.artifactUri = srcUri
             ]]></script>
         </actions>
     </service>

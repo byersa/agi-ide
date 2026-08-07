@@ -1,300 +1,247 @@
 package org.moqui.ai
 
-import org.moqui.adk.AdkManager
 import groovy.json.JsonBuilder
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
-import org.moqui.impl.entity.EntityDataLoaderImpl
-import java.util.concurrent.ConcurrentHashMap
 
-if (context.scriptFlags == null) {
-    context.scriptFlags = [:]
-}
-
-String userPrompt = context.userPrompt
-// Map the canvas target coordinate smoothly to our tool input signature
-String targetNodeId = context.targetMariaId ?: context.focusCoordinate ?: "root"
-String artifactUri = context.focusCoordinate ?: context.activeArtifactLocation ?: ""
-
-if (!artifactUri || artifactUri.trim() == "") {
-    // Collect incoming key signatures to see what the frontend palette actually transmitted
-    def incomingKeys = context.keySet()
-    ec.logger.error("❌ [CONTEXT FAULT] executeAdkProxyLoop failed to extract an operational layout file path.")
-    ec.logger.error("👉 Available parameters passed to script thread context: ${incomingKeys}")
-    ec.logger.error("👉 userPrompt: '${userPrompt}', focusCoordinate: '${context.focusCoordinate}'")
-    
-    // Instead of hiding the issue with SandboxForm, return a descriptive error map back to the UI palette
-    context.completionText = JsonOutput.toJson([
-        error: "CONTEXT_ERROR",
-        message: "The AGI palette lost track of the active file pathway context. Please select an element on the canvas workspace and try again."
-    ])
-    return // Halt execution cleanly right here
-}
+if (context.scriptFlags == null) context.scriptFlags = [:]
 
 def ec = context.ec
-def userId = ec.user.getUserId()
-ec.logger.info("In executeAdkProxyLoop, userId: " + userId)
+String userPrompt = context.userPrompt
+String targetComponent = context.targetComponent ?: "nursinghome"
+String artifactUri = context.focusCoordinate ?: context.activeArtifactLocation ?: ""
+String targetNodeId = context.targetMariaId ?: context.focusCoordinate ?: "root"
+String userId = ec.user.getUserId() ?: "system_ide_user"
 
-// 🎯 CENTRALIZED STATE HYDRATION: Pull from the server-side database cache
-Map getBufferResult = ec.service.sync()
-    .name("org.moqui.ai.AgiWorkspaceServices.get#WorkspaceBuffer")
-    .parameter("artifactUri", artifactUri)
-    .parameter("userId", userId)
-    .call()
+// 1. FETCH DYNAMIC MCP TOOLS AND CONVERT TO GEMINI FUNCTION DECLARATIONS
+Map toolsResult = ec.service.sync().name("org.moqui.ai.AgiMcpBridgeServices.list#Tools").call()
+List rawTools = toolsResult.tools ?: toolsResult.toolsList ?: []
 
-String activeLayoutBufferId = getBufferResult.workspaceBufferId
-String currentMetaJsonStr = getBufferResult.metaJsonBuffer
+// Inside executeAdkProxyLoop.groovy (Section 1)
+List functionDeclarations = []
+rawTools.each { tool ->
+    Map properties = [:]
+    if (tool.inputSchema?.properties) {
+        tool.inputSchema.properties.each { pKey, pVal ->
+            // Skip internal variables if flagged
+            if (pVal.internal == true) return
 
-// Push these identifiers into the thread context so tools (like add#FormField) can mutate the real row buffer
-ec.context.put("activeLayoutBufferId", activeLayoutBufferId)
-ec.context.put("activeLayoutBuffer", currentMetaJsonStr)
-ec.logger.info("In executeAdkProxyLoop, activeLayoutBufferId : " + activeLayoutBufferId )
-ec.logger.info("In executeAdkProxyLoop, currentMetaJsonStr: " + currentMetaJsonStr)
-
-// Parse the text string into a native map to construct the system prompt downstream
-Map activeTree = new JsonSlurper().parseText(currentMetaJsonStr)
-
-// =========================================================================
-// REAL NATIVE IDEMPOTENCY BOOTSTRAPPER GUARD
-// =========================================================================
-var existingUser = ec.entity.find("moqui.security.UserAccount").condition("userId", "SystemSupport").one()
-if (existingUser == null || !existingUser.currentPassword?.startsWith("\$")) {
-    ec.logger.info("⏳ SystemSupport account missing or unhashed. Running surgical setup load...")
-    
-    String filePath = "runtime/component/agi-ai/data/AgiMcpSecurityData.xml"
-    File xmlFile = new File(filePath)
-    
-    if (xmlFile.exists()) {
-        EntityDataLoaderImpl loader = (EntityDataLoaderImpl) ec.entity.makeDataLoader()
-        loader.xmlText(xmlFile.text)
-        loader.dataTypes(new HashSet(["setup"]))
-        long loaded = loader.load()
-        ec.logger.info("🎯 Setup complete. Loaded ${loaded} security records cleanly.")
-    } else {
-        ec.logger.error("❌ Critical: Missing setup file at ${filePath}")
+            properties[pKey] = [
+                type: (pVal.type ?: "string").toUpperCase(),
+                description: pVal.description ?: ""
+            ]
+        }
     }
+
+    // Only include required parameters that exist in the sanitized properties map
+    List rawRequired = tool.inputSchema?.required ?: []
+    List validRequired = rawRequired.findAll { properties.containsKey(it) }
+
+    Map parametersMap = [
+        type: "OBJECT",
+        properties: properties
+    ]
+    if (validRequired) {
+        parametersMap.required = validRequired
+    }
+
+    String geminiName = tool.name ?: tool.command?.replace("/", "")?.replace("-", "_")
+
+    functionDeclarations.add([
+        name: geminiName,
+        description: tool.description ?: "",
+        parameters: parametersMap
+    ])
 }
 
-String activeUserId = ec.user.getUserId() ?: "system_ide_user"
+// 2. CONSTRUCT SYSTEM INSTRUCTIONS
+String systemInstruction = """
+You are the AI Orchestrator for the Moqui AI IDE System.
+Your goal is to scaffold screens, refactor assets, or update UI components for the target component '${targetComponent}'.
 
-if (!AdkManager.isInitialized()) {
-    ec.logger.info("⚠️ AdkManager registry is empty. Triggering native lazyInit...")
-    AdkManager.initSessionService(ec.factory)
-    AdkManager.lazyInit(ec.factory)
-}
-
-// 🎯 REFINED: System payload converted to support native function calls
-String contextPayload = """
-[SYSTEM DIRECTIVE]: 
-You are the AI Orchestrator for the "Moqui AI IDE System".
-You modify visual UI layouts by executing the dynamic tools mounted in your active session context.
-
-CRITICAL DOMAIN RULES:
-- HIPAA Enforcement: Any field storing PHI or medical data MUST have encrypt="true".
-- Audit Log: Any sensitive layout container must have enable-audit-log="true".
-
-When the user requests structural modifications (such as adding input assets), select the 
-most appropriate tool from your manifest and execute it. Do not return raw text blocks 
-describing the change; use your tool execution pathways.
-
-CRITICAL TOOL RULES:
-- When calling add#FormField, you MUST provide an explicit machine-readable field 'name' 
-  (e.g., 'med_hist_39') in addition to the human-readable 'label' (e.g., 'Medical History 39').
-- Never leave 'name' blank or null.
-
-INTENT COMPILATION INSTRUCTIONS:
-If the user's prompt starts with "COMPILATION INTENT REQUEST:", analyze the provided plain-text intent.
-Your job is to parse it, map it to our AGI Schema standard, and update the target node's attributes 
-using the correct tool execution pathway (e.g., updating 'v-if', 'v-data', or 'class' properties).
-
-[ACTIVE CANVAS STATE]:
-${new JsonBuilder(activeTree).toPrettyString()}
-
-[ACTIVE FOCUS TARGET NODE ID]: 
-${targetNodeId}
-
-[USER REQUEST]: 
-${userPrompt}
+CRITICAL RULES & CONVENTIONS:
+- Top-level domain screens belong under screenPath '${targetComponent}/<ScreenName>' (e.g. '${targetComponent}/ManagePatients').
+- When asked to create or scaffold a screen, call 'create_screen'.
+- When asked to move or rename a screen, call 'move_artifact'. Pass 'sourceArtifactUri' and 'targetArtifactUri'.
+- When asked to add or attach a custom Vue/QVT component script to a screen, call 'attach_qvt_asset'.
+- Target component is '${targetComponent}'.
 """
 
-List<Map> conversationEvents = []
+String apiKey = System.getenv("GEMINI_API_KEY") ?: System.getProperty("GEMINI_API_KEY")
+if (!apiKey) {
+    context.completionText = JsonOutput.toJson([
+        status: "error",
+        error: "GEMINI_API_KEY is not configured in environment or system properties."
+    ])
+    return
+}
+
+// 3. CONSTRUCT INITIAL CONVERSATION HISTORY
+List contents = [
+    [ role: "user", parts: [[text: userPrompt]] ]
+]
+
+int currentTurn = 0
+int MAX_TURNS = 3
+String finalArtifactUri = null
+String finalMessage = ""
+boolean executionSuccess = false
 
 try {
-    String incomingSessionToken = context.moquiSessionToken ?: java.util.UUID.randomUUID().toString()
-    String browserTokenKey = incomingSessionToken
+    while (currentTurn < MAX_TURNS && !executionSuccess) {
+        currentTurn++
+        ec.logger.info("📡 [AGI PROXY LOOP] Starting Turn ${currentTurn} of ${MAX_TURNS}...")
 
-    var servletContext = ec.web?.servletContext
-    var activeSessionCache = servletContext?.getAttribute("AGI_ACTIVE_SESSIONS")
-    if (activeSessionCache == null) {
-        activeSessionCache = new ConcurrentHashMap<String, String>()
-        servletContext?.setAttribute("AGI_ACTIVE_SESSIONS", activeSessionCache)
-    }
-
-    String verifiedSessionId = activeSessionCache.get(browserTokenKey)
-
-    if (verifiedSessionId == null) {
-        ec.logger.info("🧠 [HARNESS] Thread Session Warm-Up: Generating fresh ADK context for Token: ${browserTokenKey}")
-        
-        Map initialState = [
-            userId          : activeUserId,
-            username        : ec.user.getUsername() ?: "Guest",
-            userFullName    : ec.user.getUsername() ?: "System User",
-            organizationName: "Automation Groups International",
-            companyPseudoId : "NHMS_IDE",
-            tenantId        : "DEFAULT",
-            timeZone        : ec.user.getTimeZone()?.getID() ?: "UTC",
-            locale          : ec.user.getLocale()?.toString() ?: "en_US",
-            screenCatalog   : "[]"
+        Map geminiPayload = [
+            system_instruction: [ parts: [[text: systemInstruction]] ],
+            contents: contents
         ]
+
+        if (functionDeclarations.size() > 0) {
+            geminiPayload.tools = [ [ function_declarations: functionDeclarations ] ]
+        }
+
+        String endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}"
         
-        Map adkSessionWrapper = AdkManager.createSession(activeUserId, initialState)
-        verifiedSessionId = adkSessionWrapper.id as String
-        activeSessionCache.put(browserTokenKey, verifiedSessionId)
-
-        ec.logger.info("🎯 [HARNESS] Token [${browserTokenKey}] securely mapped to Native ADK Session ID: [${verifiedSessionId}]")
-    } else {
-        ec.logger.info("🔄 [HARNESS] Continuous Turn: Re-attaching to existing native session [${verifiedSessionId}] via token [${browserTokenKey}]")
-    }
-
-    // Inside executeAdkProxyLoop.groovy, right before AdkManager.runAgent(...)
-    def runner = org.moqui.adk.AdkManager.runnerForSession(verifiedSessionId)
-    def sessionService = runner.sessionService()
-    def adkSession = sessionService.getSession("moqui-adk", activeUserId, verifiedSessionId, java.util.Optional.empty()).blockingGet()
-
-    if (adkSession == null) {
-        throw new IllegalStateException("ADK Session could not be verified for ID: ${verifiedSessionId}")
-    }
-
-    // 🎯 Save the buffers directly into the ADK Session State!
-    adkSession.state().put("activeLayoutBufferId", activeLayoutBufferId)
-    adkSession.state().put("activeLayoutBuffer", currentMetaJsonStr)
-
-    ec.logger.info("📡 adkSession.state, activeLayoutBufferId: ${adkSession.state().get('activeLayoutBufferId')}")
-    ec.logger.info("📡 adkSession.state, activeLayoutBuffer: ${adkSession.state().get('activeLayoutBuffer')}")
-    ec.logger.info("📡 Dispatching core prompt to Gemini via verified session: ${verifiedSessionId}")
-    ec.message.clearAll()
-    
-    ec.context.put("sessionId", verifiedSessionId)
-    context.sessionId = verifiedSessionId
-
-    // AI call happens here
-    conversationEvents = AdkManager.runAgent(activeUserId, verifiedSessionId, contextPayload)
-    
-    if (ec.message.hasError()) {
-        String validationErrors = ec.message.getErrorsString()
-        ec.logger.warn("⚠️ [SANDBOX CRITIQUE] Validation failed during tool run: ${validationErrors}")
-        ec.message.clearAll()
+        URL url = new URL(endpointUrl)
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection()
+        conn.setRequestMethod("POST")
+        conn.setRequestProperty("Content-Type", "application/json")
+        conn.setDoOutput(true)
         
-        String correctionCritiquePayload = """
-        [SYSTEM EXCEPTION INTERCEPT]: 
-        Your last tool execution failed rigid enterprise data validation matrices.
-        
-        CRITICAL ERROR(S):
-        ${validationErrors}
-        
-        REMEDIATION INSTRUCTION:
-        Review your tool arguments immediately. You must adjust your inputs to ensure that any 
-        sensitive fields include encrypt="true" and are wrapped inside an audited container 
-        (enable-audit-log="true") to satisfy our domain rules. Re-execute the tool call with corrected arguments.
-        """.stripIndent()
-        
-        ec.logger.info("🔄 [SANDBOX HEALING] Re-prompting Gemini with explicit failure parameters...")
-        conversationEvents = AdkManager.runAgent(activeUserId, verifiedSessionId, correctionCritiquePayload)
-    }
+        conn.outputStream.withWriter("UTF-8") { writer ->
+            writer.write(JsonOutput.toJson(geminiPayload))
+        }
 
-String extractedTextAnswer = ""
-    boolean wasToolCall = false
+        int responseCode = conn.getResponseCode()
+        String rawResponseBody = (responseCode == 200 ? conn.inputStream : conn.errorStream)?.text ?: ""
 
-    if (conversationEvents) {
-        // 🎯 1. ADK TOOL CALL DETECTION
-        boolean hasMultiTurnEvents = conversationEvents.size() > 1
-        boolean hasToolPartSignature = conversationEvents.any { event ->
-            try {
-                if (event.content?.parts) {
-                    return event.content.parts.any { part ->
-                        (part instanceof Map && part.isEmpty()) ||
-                        (part.functionCall != null) || (part.functionResponse != null)
-                    }
+        if (responseCode != 200) {
+            ec.logger.error("❌ Gemini API Call Failed (${responseCode}): ${rawResponseBody}")
+            context.completionText = JsonOutput.toJson([
+                status: "error",
+                error: "Gemini API HTTP ${responseCode}: ${rawResponseBody}"
+            ])
+            return
+        }
+
+        Map apiResponse = new JsonSlurper().parseText(rawResponseBody)
+        def candidateContent = apiResponse?.candidates?[0]?.content
+        List parts = candidateContent?.parts ?: []
+
+        // Append model response to conversation history for multi-turn context
+        if (candidateContent) {
+            contents.add(candidateContent)
+        }
+
+        List functionCalls = parts.findAll { it.functionCall != null }
+
+        if (functionCalls.size() > 0) {
+            List functionResponseParts = []
+            boolean turnHadErrors = false
+
+            for (def part in functionCalls) {
+                String calledName = part.functionCall.name
+                Map toolArgs = part.functionCall.args ?: [:]
+
+                ec.logger.info("🚀 [AGENT TOOL EXECUTION - Turn ${currentTurn}] Gemini called [${calledName}] with args: ${toolArgs}")
+
+                def matchedTool = rawTools.find { t ->
+                    t.name == calledName || 
+                    (t.command && t.command.replace("/", "").replace("-", "_") == calledName)
                 }
-            } catch (Exception ignore) {}
-            return false
-        }
 
-        wasToolCall = hasMultiTurnEvents || hasToolPartSignature
-
-        // 🎯 2. EXTRACT FINAL TEXT RESPONSE
-        def targetEvent = conversationEvents.reverse().find { event ->
-            try {
-                if (event.content?.parts) {
-                    return event.content.parts.any { part -> 
-                        (part.text && part.text.trim() != "") || 
-                        (part instanceof Map && part.text && part.text.trim() != "") 
-                    }
+                if (!matchedTool || !matchedTool.serviceName) {
+                    ec.logger.error("❌ Could not resolve dynamic serviceName for tool: ${calledName}")
+                    turnHadErrors = true
+                    functionResponseParts.add([
+                        functionResponse: [
+                            name: calledName,
+                            response: [ error: "Service not found for tool name ${calledName}" ]
+                        ]
+                    ])
+                    continue
                 }
-            } catch (Exception ignore) {}
-            return false
-        }
 
-        if (targetEvent) {
-            try {
-                def textPart = targetEvent.content.parts.find { it.text || (it instanceof Map && it.text) }
-                if (textPart) extractedTextAnswer = textPart.text ?: ""
-            } catch (Exception ignore) {}
-        }
-    }
+                String serviceName = matchedTool.serviceName
+                if (!toolArgs.targetComponent) toolArgs.targetComponent = targetComponent
 
-    ec.logger.info("📡 [AGI PROXY] evaluated wasToolCall: ${wasToolCall}, extractedTextAnswer: ${extractedTextAnswer}")
+                // Execute Moqui Tool Service
+                Map toolResult = ec.service.sync().name(serviceName).parameters(toolArgs).call()
 
-    // =========================================================================
-    // 🎯 SINGLE, UNIFIED REST RETURN PAYLOAD
-    // Parse metaJsonBuffer back to a native Map/List before JsonOutput to avoid double escaping!
-    // =========================================================================
-    // Clear validation messages so Moqui doesn't mark the transaction rollback-only
-    if (ec.message.hasError()) {
-        ec.logger.warn("⚠️ Clearing error messages prior to response return: ${ec.message.getErrorsString()}")
-        ec.message.clearAll()
-    }
+                // 🎯 SELF-HEALING INTERCEPT: Check if Moqui recorded validation/execution errors
+                if (ec.message.hasError()) {
+                    String serviceErrors = ec.message.getErrorsString()
+                    ec.message.clearAll() // Clear transaction errors so thread stays healthy
+                    turnHadErrors = true
 
-    // =========================================================================
-    if (wasToolCall) {
-        // 1. Read directly from ADK session memory
-        String updatedJsonStr = adkSession.state().get("activeLayoutBuffer") as String
+                    ec.logger.warn("⚠️ [TOOL ERROR - Turn ${currentTurn}] ${serviceName} failed validation: ${serviceErrors}")
 
-        // 2. Fallback: Query live database record
-        if (!updatedJsonStr || updatedJsonStr.trim() == "" || !updatedJsonStr.contains("med_hist")) {
-            def bufferList = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
-                                           .condition("artifactUri", artifactUri)
-                                           .condition("userId", userId)
-                                           .orderBy("-lastUpdatedStamp")
-                                           .useCache(false)
-                                           .list()
-            def bufferRow = bufferList ? bufferList[0] : null
-            if (bufferRow?.metaJsonBuffer) {
-                updatedJsonStr = bufferRow.metaJsonBuffer
+                    // Send error feedback back to Gemini in functionResponse
+                    functionResponseParts.add([
+                        functionResponse: [
+                            name: calledName,
+                            response: [ 
+                                status: "error",
+                                validationError: serviceErrors,
+                                message: "Tool execution failed. Please review the parameter requirements and re-issue the tool call with corrected parameters."
+                            ]
+                        ]
+                    ])
+                } else {
+                    if (toolResult?.artifactUri) finalArtifactUri = toolResult.artifactUri
+                    ec.logger.info("✅ [TOOL SUCCESS - Turn ${currentTurn}] Executed ${serviceName}")
+
+                    functionResponseParts.add([
+                        functionResponse: [
+                            name: calledName,
+                            response: [ 
+                                status: "success",
+                                result: toolResult ?: [:]
+                            ]
+                        ]
+                    ])
+                }
             }
+
+            // Append function responses as a "user" role turn to inform Gemini
+            contents.add([
+                role: "user",
+                parts: functionResponseParts
+            ])
+
+            if (!turnHadErrors) {
+                executionSuccess = true
+                finalMessage = "Successfully executed dynamic tool sequence."
+            } else {
+                ec.logger.info("🔄 [SELF-HEALING RE-PROMPT] Feeding error response back to Gemini for Turn ${currentTurn + 1}...")
+            }
+
+        } else {
+            // Text Response from model
+            finalMessage = parts[0]?.text ?: "Prompt processed with no direct tool calls."
+            executionSuccess = true
         }
+    }
 
-        Object parsedTree = new JsonSlurper().parseText(updatedJsonStr ?: "{}")
-
+    if (executionSuccess) {
         context.completionText = JsonOutput.toJson([
             status: "success",
-            type: "MUTATION_EXECUTED",
-            metaJsonBuffer: parsedTree,
-            message: extractedTextAnswer ?: "Canvas layout successfully updated."
+            type: finalArtifactUri ? "MUTATION_EXECUTED" : "TEXT_RESPONSE",
+            createdArtifactUri: finalArtifactUri,
+            message: finalMessage
         ])
-        ec.logger.info("[AGI PROXY RETURN] Fresh metaJsonBuffer returned successfully.")
     } else {
         context.completionText = JsonOutput.toJson([
-            status: "success",
-            type: "TEXT_RESPONSE",
-            message: extractedTextAnswer ?: "No response generated."
+            status: "error",
+            error: "Agent could not self-correct tool parameters after ${MAX_TURNS} attempts."
         ])
     }
 
 } catch (Exception e) {
-    ec.logger.error("❌ Google ADK Engine proxy execution failed: " + e.getMessage(), e)
+    ec.logger.error("❌ Agent Proxy Loop Execution Failed: " + e.getMessage(), e)
     context.completionText = JsonOutput.toJson([
         status: "error",
-        error: "ADK Loop Exception: ${e.getMessage()}"
+        error: "Agent Exception: ${e.getMessage()}"
     ])
 }
