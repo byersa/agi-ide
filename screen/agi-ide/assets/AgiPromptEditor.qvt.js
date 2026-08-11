@@ -46,9 +46,24 @@
                                 @keydown.enter="handleExecute"
                             >
                                 <template v-slot:append>
+                                    <!-- 🎯 STEP 2: Artifact Palette Toggle Button -->
+                                    <q-btn flat round icon="manage_search" color="cyan-4" @click="showPalette = !showPalette">
+                                        <q-tooltip class="bg-slate-900 text-caption">Browse & Focus Artifacts</q-tooltip>
+                                    </q-btn>
                                     <q-btn flat round icon="send" color="primary" @click="handleExecute" :loading="isExecuting" />
                                 </template>
                             </q-input>
+
+                            <!-- 🎯 STEP 2: Slide-down Inline Artifact Palette Drawer -->
+                            <q-slide-transition>
+                                <div v-if="showPalette" class="q-mb-sm rounded-borders border-dark q-pa-xs" style="border: 1px solid #334155;">
+                                    <div class="row items-center justify-between q-px-xs q-mb-xs">
+                                        <span class="text-caption text-weight-bold text-cyan-4 font-mono">SELECT FOCUS ARTIFACT</span>
+                                        <q-btn flat dense icon="close" size="xs" color="grey-5" @click="showPalette = false" />
+                                    </div>
+                                    <agi-artifact-palette @artifact-selected="onArtifactSelectedFromPalette" />
+                                </div>
+                            </q-slide-transition>
 
                             <!-- Selected Tool Parameter Form (Dynamically built from MCP Schema) -->
                             <q-slide-transition>
@@ -182,9 +197,10 @@
                 targetComponent: 'nursinghome',
                 activeArtifactLocation: '',
                 targetArtifactId: '',
-                blueprintTreeKey: 1, // Key forcing discussion-tree reload
+                blueprintTreeKey: 1,
                 isExecuting: false,
                 showCommandList: false,
+                showPalette: false, // 🎯 STEP 2: Controls inline palette drawer visibility
                 selectedCommand: null,
                 commandParamValues: {},
                 activeRagContextJson: '',
@@ -226,6 +242,25 @@
             if (this.contextBus) this.contextBus.close();
         },
         methods: {
+            // 🎯 STEP 2: Event Handler for Artifact Selection from Inline Palette
+            onArtifactSelectedFromPalette(item) {
+                this.activeArtifactLocation = item.value;
+                this.fetchActiveRagContext(item.value);
+                this.showPalette = false;
+
+                if (this.selectedCommand) {
+                    if (this.commandParamValues.hasOwnProperty('artifactUri')) {
+                        this.commandParamValues['artifactUri'] = item.value;
+                    } else if (this.commandParamValues.hasOwnProperty('sourceArtifactUri')) {
+                        this.commandParamValues['sourceArtifactUri'] = item.value;
+                    } else if (this.commandParamValues.hasOwnProperty('screenPath')) {
+                        this.commandParamValues['screenPath'] = item.screenPath;
+                    }
+                } else {
+                    this.userPrompt += (this.userPrompt.length > 0 ? ' ' : '') + item.value;
+                }
+            },
+
             async fetchDynamicTools() {
                 var vm = this;
                 const headers = { 'moquiSessionToken': window.AGI_SERVER_CSRF_TOKEN || "" };
@@ -264,7 +299,6 @@
                 }
             },
 
-            // 🎯 PHASE 1.2: Fetch RAG context payload for active artifact (Tab 3 Inspector)
             async fetchActiveRagContext(artifactUri) {
                 if (!artifactUri) {
                     this.activeRagContextJson = 'No active artifact location specified.';
@@ -274,7 +308,7 @@
                 const headers = { 'moquiSessionToken': window.AGI_SERVER_CSRF_TOKEN || "" };
 
                 try {
-                    const response = await axios.get('/rest/s1/agi-ai/getRawXml', {
+                    const response = await axios.get('/rest/s1/agi-ide/getRawXml', {
                         params: { artifactUri: artifactUri },
                         headers: headers
                     });
@@ -294,18 +328,15 @@
                 }
             },
 
-            // 🎯 PHASE 1.2: Post-Execution Telemetry Synchronizer
             processExecutionTelemetry(executedCommandName, promptText, resultUri) {
                 var vm = this;
                 const newUri = resultUri || vm.activeArtifactLocation;
 
-                // 1. Update Active Location and re-fetch Tab 3 Context Payload
                 if (newUri) {
                     vm.activeArtifactLocation = newUri;
                     vm.fetchActiveRagContext(newUri);
                 }
 
-                // 2. Log entry to Tab 4 Prompt History
                 vm.promptHistory.unshift({
                     timestamp: new Date().toLocaleTimeString(),
                     command: executedCommandName || 'AI Agent',
@@ -313,10 +344,8 @@
                     resultUri: newUri || ''
                 });
 
-                // 3. Force-reload Tab 2 Blueprint Intent Tree
                 vm.blueprintTreeKey++;
 
-                // 4. Broadcast event across contextBus to open file in workspace canvas
                 if (newUri && vm.contextBus) {
                     vm.contextBus.postMessage({
                         event: 'reload-blueprint-tree',
@@ -371,7 +400,6 @@
 
                 const executedPromptText = vm.userPrompt;
 
-                // 🎯 1. DIRECT SLASH COMMAND DISPATCH
                 if (this.selectedCommand && this.selectedCommand.serviceName) {
                     try {
                         const response = await axios.post('/rest/s1/agi-ai/mcp/run', {
@@ -389,7 +417,6 @@
                             });
                         }
 
-                        // 🎯 Run Phase 1.2 Telemetry Synchronization
                         vm.processExecutionTelemetry(vm.selectedCommand.command, executedPromptText, res.artifactUri);
 
                     } catch (err) {
@@ -400,11 +427,19 @@
                     return;
                 }
 
-                // 🎯 2. NATURAL LANGUAGE FALLBACK: Dispatch to geminiProxy for LLM reasoning
                 const payload = {
                     userPrompt: vm.userPrompt,
                     targetComponent: vm.targetComponent || 'nursinghome',
-                    focusCoordinate: vm.activeArtifactLocation || ''
+                    focusCoordinate: vm.activeArtifactLocation || '',
+                    // 👈 Pass raw XML AST context so Gemini sees the active screen structure
+                    activeRagContext: vm.activeRagContextJson || '',
+                    // 👈 Pass registered tool schemas so the proxy can enforce exact parameter signatures
+                    availableToolSchemas: vm.registeredCommands.map(cmd => ({
+                        command: cmd.command,
+                        serviceName: cmd.serviceName,
+                        description: cmd.description,
+                        params: cmd.params
+                    }))
                 };
 
                 try {
@@ -427,6 +462,18 @@
                         return;
                     }
 
+                    const newUri = parsedRes.createdArtifactUri || res.createdArtifactUri;
+                    const updatedXml = parsedRes.rawXmlContent || '';
+
+                    // 🎯 STEP 2 BROADCAST: Notify Workspace, Canvas, and Screen Editors of instant mutation
+                    if (newUri && vm.contextBus) {
+                        vm.contextBus.postMessage({
+                            event: 'artifact-state-mutated',
+                            artifactUri: newUri,
+                            rawXmlText: updatedXml
+                        });
+                    }
+
                     if (vm.$q) {
                         vm.$q.notify({
                             type: 'positive',
@@ -434,9 +481,6 @@
                         });
                     }
 
-                    const newUri = parsedRes.createdArtifactUri || res.createdArtifactUri;
-
-                    // 🎯 Run Phase 1.2 Telemetry Synchronization
                     vm.processExecutionTelemetry('AI Agent', executedPromptText, newUri);
 
                 } catch (err) {
@@ -448,6 +492,7 @@
 
             onDialogClosed() {
                 this.userPrompt = '';
+                this.showPalette = false;
                 this.clearSelectedCommand();
             }
         }

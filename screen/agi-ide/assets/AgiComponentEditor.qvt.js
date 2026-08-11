@@ -1,50 +1,57 @@
 (function () {
     const AgiComponentEditor = {
         name: 'AgiComponentEditor',
-        mixins: [window.AgiEditorShareMixin].filter(m => m !== undefined),
         template: `
-            <!-- Root Code Editor Container -->
-            <div :class="['component-editor-container fit column no-wrap q-pa-sm', activeHighlightedMariaId ? 'glow-active' : '']" style="height: 100%;">
+            <div class="component-editor-container fit column no-wrap q-pa-sm" style="height: 100%;">
                 
-                <!-- Toolbar Header (Direct Vue translation of the XML containers) -->
+                <!-- Toolbar Header -->
                 <div class="q-mb-sm row items-center justify-between">
                     <div class="row items-center q-gutter-x-sm">
-                        <!-- Text Label Header -->
-                        <span class="text-subtitle2 text-grey-8">XML Component Editor</span>
+                        <q-icon name="javascript" color="warning" size="xs" />
+                        <span class="text-subtitle2 text-grey-8">Companion QVT JavaScript Editor</span>
                         
-                        <!-- Save Button mapped to dynamic save function -->
                         <q-btn 
+                            v-if="qvtAssetExists"
                             icon="save" 
-                            label="Save Changes" 
+                            label="Save Script" 
                             dense 
                             flat 
-                            @click="executeBufferSave" 
+                            color="primary"
+                            @click="saveQvtScript" 
+                        />
+                        <q-btn 
+                            v-else
+                            icon="add_code" 
+                            label="Scaffold .qvt.js Companion" 
+                            dense 
+                            flat 
+                            color="warning"
+                            @click="scaffoldQvtAsset" 
                         />
                     </div>
 
-                    <!-- Active Selection Focus Chip -->
-                    <q-chip 
-                        v-if="activeHighlightedMariaId" 
-                        color="primary" 
-                        text-color="white" 
-                        icon="gps_fixed" 
-                        dense 
-                        size="sm" 
-                        @click="clearHighlight" 
-                        clickable
-                    >
-                        Synced: {{ activeHighlightedMariaId.split('#')[1] || activeHighlightedMariaId }}
-                    </q-chip>
+                    <span class="text-caption font-mono text-grey-6">{{ targetQvtUri }}</span>
                 </div>
 
-                <!-- Text Area Editor Window Container -->
+                <!-- Text Area JavaScript Code Editor Window -->
                 <div class="col col-stretch relative-position">
                     <textarea 
-                        ref="xmlTextArea"
-                        class="xml-textarea fit"
-                        :value="rawXmlSource"
-                        @input="onTextareaInput"
+                        v-if="qvtAssetExists"
+                        ref="codeTextArea"
+                        class="xml-textarea fit font-mono text-caption"
+                        style="background-color: #020617; color: #f8fafc; border: 1px solid #334155; padding: 8px;"
+                        v-model="rawJsSource"
+                        placeholder="// Write Vue/QVT Component JavaScript here..."
                     ></textarea>
+                    
+                    <div v-else class="fit column justify-center items-center bg-slate-950 text-grey-5 rounded-borders text-center q-pa-md">
+                        <q-icon name="code_off" size="48px" color="warning" class="q-mb-sm" />
+                        <div class="text-subtitle1 text-weight-bold">No Companion QVT Script Attached</div>
+                        <p class="text-caption text-grey-4 max-w-sm q-mt-xs">
+                            This screen does not have a companion <code>{{ getQvtFileName() }}</code> asset yet.<br/>
+                            Click "Scaffold .qvt.js Companion" above or run <code>/attach-qvt-asset</code> in the AI Prompt Editor.
+                        </p>
+                    </div>
                 </div>
 
             </div>
@@ -53,221 +60,116 @@
             screenPath: {
                 type: String,
                 required: true
-            },
-            node: {
-                type: Object,
-                required: false,
-                default: () => ({ attributes: {}, children: [] })
-            },
-            layoutTree: {
-                type: [Object, Array],
-                default: () => []
-            }
-        },
-        computed: {
-            artifactLocation() {
-                return this.screenPath;
             }
         },
         data() {
             return {
-                rawXmlSource: '',
-                contextBus: null,
-                activeHighlightedMariaId: '',
-                localBlueprintTree: { id: "root", tagName: "form", children: [] }
+                rawJsSource: '',
+                qvtAssetExists: false,
+                targetQvtUri: '',
+                contextBus: null
             };
         },
         watch: {
-            layoutTree: {
-                handler(newTree) {
-                    if (newTree) {
-                        console.info(` Editor [${this.$options.name}] deeply sync'd localBlueprintTree to new workspace layout state.`);
-                        this.localBlueprintTree = JSON.parse(JSON.stringify(newTree));
-
-                        // 🎯 RE-FETCH RAW XML TEXT ON MUTATION
-                        const vm = this;
-                        const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
-                        const axiosConfig = ideStore ? ideStore.getAxiosConfig : {};
-                        axios.get('/agi-ide/getRawXml?screenPath=' + encodeURIComponent(this.screenPath), axiosConfig)
-                            .then(function (response) {
-                                vm.rawXmlSource = response.data || '';
-                            });
-                    }
+            screenPath: {
+                handler(newPath) {
+                    if (newPath) this.resolveAndFetchQvtScript(newPath);
                 },
-                immediate: true,
-                deep: true
+                immediate: true
             }
         },
         mounted() {
-            // 1. Initialize the shared context bus channel
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
-
-            // 2. Attach message handler for workspace events
             this.contextBus.onmessage = (msg) => {
-                if (!msg.data) return;
-
-                // A. Handle selection highlighting from canvas
-                if (msg.data.event === 'element-selected-by-id') {
-                    const selectedId = msg.data.mariaId; // e.g., "SampleForm#username"
-                    this.highlightAndScrollToSourceElement(selectedId);
-                }
-
-                // B. Handle mutation notification: Pull single source of truth from agiIdeStore
-                if (msg.data.event === 'artifact-state-mutated') {
-                    const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
-                    if (ideStore) {
-                        const latestTree = ideStore.getActiveBlueprint;
-                        if (latestTree) {
-                            console.info(`🎨 [AgiComponentEditor] Reacting to artifact-state-mutated event. Syncing with agiIdeStore.`);
-                            this.localBlueprintTree = JSON.parse(JSON.stringify(latestTree));
-                        }
-                    }
-
-                    // Re-fetch raw XML definition from server buffer
-                    const vm = this;
-                    const ideStoreRef = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
-                    const axiosConfig = ideStoreRef ? ideStoreRef.getAxiosConfig : {};
-                    axios.get('/agi-ide/getRawXml?screenPath=' + encodeURIComponent(this.screenPath), axiosConfig)
-                        .then(function (response) {
-                            vm.rawXmlSource = response.data || '';
-                        })
-                        .catch(function (err) {
-                            console.warn("Failed re-fetching updated component XML:", err);
-                        });
+                if (msg.data && msg.data.event === 'reload-qvt-script') {
+                    this.resolveAndFetchQvtScript(this.screenPath);
                 }
             };
-
-            // 3. Initial fetch of raw XML component text definition
-            const vm = this;
-            const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
-            const axiosConfig = ideStore ? ideStore.getAxiosConfig : {};
-            axios.get('/agi-ide/getRawXml?screenPath=' + encodeURIComponent(this.screenPath), axiosConfig)
-                .then(function (response) {
-                    vm.rawXmlSource = response.data || '';
-                })
-                .catch(function (err) {
-                    console.warn("Failed fetching component XML, loading fallback blueprint code structure", err);
-                    vm.rawXmlSource = `<?xml version="1.0" encoding="UTF-8"?>
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" require-authentication="true">
-    <widgets>
-        <container id="main-layout">
-            <form-single name="SampleForm">
-                <field name="username">
-                    <default-field><text-line/></default-field>
-                </field>
-                <field name="email">
-                    <default-field><text-line/></default-field>
-                </field>
-            </form-single>
-            <link url="submit" text="Submit Action Link" id="submit-btn"/>
-            <label text="System Footer Notice"/>
-        </container>
-    </widgets>
-</screen>`;
-                });
         },
         beforeUnmount() {
-            if (this.contextBus) {
-                this.contextBus.close();
-            }
+            if (this.contextBus) this.contextBus.close();
         },
         methods: {
-            executeBufferSave() {
-                console.info(`💾 Editor [${this.$options.name}] triggering upstream workspace buffer save request.`);
-                // Emit the custom event. Pass the current layout tree state as the payload.
-                this.$emit('trigger-save', this.localBlueprintTree || this.layoutTree);
+            getQvtFileName() {
+                if (!this.screenPath) return '';
+                const lastSlash = this.screenPath.lastIndexOf('/');
+                const name = this.screenPath.substring(lastSlash + 1).replace('.xml', '').replace('.qvt.js', '');
+                return `${name}.qvt.js`;
             },
-            onTextareaInput(event) {
-                this.rawXmlSource = event.target.value;
-                // Broadcast changes to update layout preview
-                this.contextBus.postMessage({
-                    event: 'xml-source-mutated',
-                    rawXmlText: this.rawXmlSource
+
+            resolveAndFetchQvtScript(path) {
+                var vm = this;
+                let qvtUri = path;
+
+                // If path is ManagePatients.xml -> derive component://.../assets/ManagePatients.qvt.js
+                if (path.endsWith('.xml')) {
+                    const lastSlash = path.lastIndexOf('/');
+                    const dir = path.substring(0, lastSlash);
+                    const name = path.substring(lastSlash + 1).replace('.xml', '');
+                    qvtUri = `${dir}/assets/${name}.qvt.js`;
+                }
+
+                vm.targetQvtUri = qvtUri;
+                const headers = { 'moquiSessionToken': window.AGI_SERVER_CSRF_TOKEN || "" };
+
+                // Fetch raw script text from server
+                axios.get('/rest/s1/agi-ide/getRawXml', {
+                    params: { artifactUri: qvtUri },
+                    headers: headers
+                }).then(response => {
+                    // Extract raw text from the REST out-parameter payload
+                    const content = response.data?.rawXmlContent || response.data || '';
+                    if (content && typeof content === 'string' && !content.includes('404')) {
+                        vm.rawJsSource = content;
+                        vm.qvtAssetExists = true;
+                    } else {
+                        vm.qvtAssetExists = false;
+                        vm.rawJsSource = '';
+                    }
+                }).catch(() => {
+                    vm.qvtAssetExists = false;
+                    vm.rawJsSource = '';
                 });
             },
-            highlightCodeLineByMariaId(mariaId) {
-                const elementToken = mariaId.includes('#') ? mariaId.split('#')[1] : mariaId;
-                if (!elementToken) return;
 
-                let index = this.rawXmlSource.indexOf('id="' + elementToken + '"');
-                if (index === -1) {
-                    index = this.rawXmlSource.indexOf('name="' + elementToken + '"');
-                }
+            async scaffoldQvtAsset() {
+                var vm = this;
+                const headers = {
+                    'moquiSessionToken': window.AGI_SERVER_CSRF_TOKEN || "",
+                    'Content-Type': 'application/json'
+                };
 
-                let matchIndex = -1;
-                if (index === -1 && (elementToken.startsWith('link-') || elementToken.startsWith('label-'))) {
-                    const parts = elementToken.split('-');
-                    const tagType = parts[0];
-                    const targetOccur = parseInt(parts[1], 10);
+                try {
+                    await axios.post('/rest/s1/agi-ai/mcp/run', {
+                        serviceName: 'org.moqui.ai.mcp.MCPScreenServices.attach#QvtAsset',
+                        parameters: { screenPath: vm.screenPath, targetComponent: 'nursinghome' }
+                    }, { headers });
 
-                    const regex = new RegExp('<' + tagType + '\\b', 'g');
-                    let match;
-                    let count = 0;
-                    while ((match = regex.exec(this.rawXmlSource)) !== null) {
-                        if (count === targetOccur) {
-                            matchIndex = match.index;
-                            break;
-                        }
-                        count++;
-                    }
-                }
-
-                const targetIdx = index !== -1 ? index : matchIndex;
-                if (targetIdx !== -1) {
-                    this.activeHighlightedMariaId = mariaId;
-                    const textarea = this.$refs.xmlTextArea;
-                    if (textarea) {
-                        textarea.focus();
-                        textarea.setSelectionRange(targetIdx, targetIdx + elementToken.length + 8);
-
-                        const textBefore = this.rawXmlSource.substring(0, targetIdx);
-                        const lineCount = (textBefore.match(/\n/g) || []).length;
-                        textarea.scrollTop = lineCount * 18;
-                    }
+                    if (vm.$q) vm.$q.notify({ type: 'positive', message: 'Scaffolded companion QVT asset!' });
+                    vm.resolveAndFetchQvtScript(vm.screenPath);
+                } catch (err) {
+                    if (vm.$q) vm.$q.notify({ type: 'negative', message: 'Failed to scaffold QVT asset.' });
                 }
             },
-            clearHighlight() {
-                this.activeHighlightedMariaId = '';
-            },
-            highlightAndScrollToSourceElement(mariaId) {
-                if (!mariaId) return;
 
-                // 1. Extract the raw name/id after the '#' divider token safely
-                // Works for "SampleForm#admission_hull" or "path/to/file.xml#fullName"
-                const elementId = mariaId.split('#')[1];
-                if (!elementId) return;
+            async saveQvtScript() {
+                var vm = this;
+                const headers = {
+                    'moquiSessionToken': window.AGI_SERVER_CSRF_TOKEN || "",
+                    'Content-Type': 'application/json'
+                };
 
-                // 2. Target your local text wrapper layout container
-                const textarea = this.$el.querySelector('textarea') || document.querySelector('.xml-textarea');
-                if (!textarea) return;
+                try {
+                    await axios.post('/rest/s1/agi-ai/saveScreenXml', {
+                        artifactUri: vm.targetQvtUri,
+                        rawXmlText: vm.rawJsSource
+                    }, { headers });
 
-                const textContent = textarea.value;
-
-                // 3. DEFENSIVE PATTERN MATCH: Scan for name="id" OR id="id" inside the XML layout markup
-                let targetString = `name="${elementId}"`;
-                let index = textContent.indexOf(targetString);
-
-                if (index === -1) {
-                    targetString = `id="${elementId}"`;
-                    index = textContent.indexOf(targetString);
+                    if (vm.$q) vm.$q.notify({ type: 'positive', message: 'Saved QVT JavaScript source to disk!' });
+                } catch (err) {
+                    if (vm.$q) vm.$q.notify({ type: 'negative', message: 'Failed to save QVT script.' });
                 }
-
-                // 4. If located inside the text buffer, execute the viewport jump
-                if (index !== -1) {
-                    textarea.focus();
-
-                    // Highlight the target text block markers
-                    textarea.setSelectionRange(index, index + targetString.length);
-
-                    // Compute exact line heights scroll coordinates programmatically
-                    const linesUpToMatch = textContent.substring(0, index).split('\n').length;
-                    const baselineLineHeight = 20; // Adjust slightly to match your panel CSS
-
-                    // Center the found line inside the panel viewport area
-                    textarea.scrollTop = (linesUpToMatch - 4) * baselineLineHeight;
-                    console.info(`🎯 Text editor synchronized cursor to line ${linesUpToMatch} for element: ${elementId}`);
-                }
-            },
+            }
         }
     };
 
@@ -275,17 +177,12 @@
     if (!window.AgiComponents) window.AgiComponents = {};
     window.AgiComponents['agi-component-editor'] = AgiComponentEditor;
 
-    // 🎯 Self-Registration Block
-    const registerAgiComponentEditor = () => {
+    const registerComp = () => {
         if (window.moqui && window.moqui.webrootVueApp) {
-            if (!window.moqui.webrootVueApp.component('agi-component-editor')) {
-                window.moqui.webrootVueApp.component('agi-component-editor', AgiComponentEditor);
-                console.info("🚀 [AGI] Registered 'agi-component-editor' successfully.");
-            }
+            window.moqui.webrootVueApp.component('agi-component-editor', AgiComponentEditor);
         } else {
-            setTimeout(registerAgiComponentEditor, 50);
+            setTimeout(registerComp, 50);
         }
     };
-
-    registerAgiComponentEditor();
+    registerComp();
 })();

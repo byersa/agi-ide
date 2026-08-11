@@ -1,6 +1,5 @@
 package org.moqui.ai
 
-import groovy.json.JsonBuilder
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 
@@ -17,13 +16,11 @@ String userId = ec.user.getUserId() ?: "system_ide_user"
 Map toolsResult = ec.service.sync().name("org.moqui.ai.AgiMcpBridgeServices.list#Tools").call()
 List rawTools = toolsResult.tools ?: toolsResult.toolsList ?: []
 
-// Inside executeAdkProxyLoop.groovy (Section 1)
 List functionDeclarations = []
 rawTools.each { tool ->
     Map properties = [:]
     if (tool.inputSchema?.properties) {
         tool.inputSchema.properties.each { pKey, pVal ->
-            // Skip internal variables if flagged
             if (pVal.internal == true) return
 
             properties[pKey] = [
@@ -33,7 +30,6 @@ rawTools.each { tool ->
         }
     }
 
-    // Only include required parameters that exist in the sanitized properties map
     List rawRequired = tool.inputSchema?.required ?: []
     List validRequired = rawRequired.findAll { properties.containsKey(it) }
 
@@ -64,6 +60,7 @@ CRITICAL RULES & CONVENTIONS:
 - When asked to create or scaffold a screen, call 'create_screen'.
 - When asked to move or rename a screen, call 'move_artifact'. Pass 'sourceArtifactUri' and 'targetArtifactUri'.
 - When asked to add or attach a custom Vue/QVT component script to a screen, call 'attach_qvt_asset'.
+- When binding subscreens, pass 'artifactUri', 'subscreenName', and 'subscreenLocation'.
 - Target component is '${targetComponent}'.
 """
 
@@ -129,7 +126,6 @@ try {
         def candidateContent = apiResponse?.candidates?[0]?.content
         List parts = candidateContent?.parts ?: []
 
-        // Append model response to conversation history for multi-turn context
         if (candidateContent) {
             contents.add(candidateContent)
         }
@@ -144,7 +140,7 @@ try {
                 String calledName = part.functionCall.name
                 Map toolArgs = part.functionCall.args ?: [:]
 
-                ec.logger.info("🚀 [AGENT TOOL EXECUTION - Turn ${currentTurn}] Gemini called [${calledName}] with args: ${toolArgs}")
+                ec.logger.info("🚀 [AGENT TOOL EXECUTION - Turn ${currentTurn}] Gemini called [${calledName}] with raw args: ${toolArgs}")
 
                 def matchedTool = rawTools.find { t ->
                     t.name == calledName || 
@@ -166,25 +162,73 @@ try {
                 String serviceName = matchedTool.serviceName
                 if (!toolArgs.targetComponent) toolArgs.targetComponent = targetComponent
 
-                // Execute Moqui Tool Service
-                Map toolResult = ec.service.sync().name(serviceName).parameters(toolArgs).call()
+                // =====================================================================
+                // 🎯 HARNESS PARAMETER NORMALIZATION (Translates LLM aliases)
+                // =====================================================================
+                // 1. Normalize Parent Screen URI
+                if (!toolArgs.artifactUri) {
+                    if (toolArgs.targetScreenUri) toolArgs.artifactUri = toolArgs.targetScreenUri
+                    else if (toolArgs.screenPath) {
+                        String sp = toolArgs.screenPath.toString().trim()
+                        toolArgs.artifactUri = sp.startsWith("component://") ? sp : "component://${targetComponent}/screen/${sp.endsWith('.xml') ? sp : sp + '.xml'}"
+                    } else if (artifactUri) {
+                        toolArgs.artifactUri = artifactUri
+                    }
+                }
 
-                // 🎯 SELF-HEALING INTERCEPT: Check if Moqui recorded validation/execution errors
-                if (ec.message.hasError()) {
+                // 2. Normalize Subscreen Location & Name if passed as raw paths
+                if (calledName == "bind_subscreen") {
+                    if (!toolArgs.subscreenName && toolArgs.subscreenLocation) {
+                        String loc = toolArgs.subscreenLocation.toString()
+                        toolArgs.subscreenName = loc.substring(loc.lastIndexOf('/') + 1).replace(".xml", "")
+                    }
+                    if (toolArgs.subscreenLocation && !toolArgs.subscreenLocation.toString().startsWith("component://")) {
+                        String sl = toolArgs.subscreenLocation.toString().trim()
+                        toolArgs.subscreenLocation = "component://${targetComponent}/screen/${targetComponent}/${sl.endsWith('.xml') ? sl : sl + '.xml'}"
+                    }
+                    if (toolArgs.defaultSubscreen && !toolArgs.isDefault) {
+                        String defSub = toolArgs.defaultSubscreen.toString()
+                        if (toolArgs.subscreenName && defSub.contains(toolArgs.subscreenName.toString())) {
+                            toolArgs.isDefault = true
+                        }
+                    }
+                }
+
+                ec.logger.info("🔧 [HARNESS NORMALIZED ARGS] Calling ${serviceName} with: ${toolArgs}")
+
+                // =====================================================================
+                // 🎯 ISOLATED TRANSACTION EXECUTION (Prevents Poisoning Multi-Turn Loop)
+                // =====================================================================
+                Map toolResult = [:]
+                boolean executionFailed = false
+
+                try {
+                    ec.transaction.runRequireNew(0, "Executing isolated agent tool ${calledName}", {
+                        toolResult = ec.service.sync().name(serviceName).parameters(toolArgs).call()
+                        if (ec.message.hasError()) {
+                            executionFailed = true
+                        }
+                    })
+                } catch (Exception ex) {
+                    executionFailed = true
+                    ec.logger.warn("⚠️ Exception during isolated tool execution: ${ex.message}")
+                }
+
+                // Check error status and prepare feedback turn
+                if (executionFailed || ec.message.hasError()) {
                     String serviceErrors = ec.message.getErrorsString()
-                    ec.message.clearAll() // Clear transaction errors so thread stays healthy
+                    ec.message.clearAll()
                     turnHadErrors = true
 
-                    ec.logger.warn("⚠️ [TOOL ERROR - Turn ${currentTurn}] ${serviceName} failed validation: ${serviceErrors}")
+                    ec.logger.warn("⚠️ [TOOL ERROR - Turn ${currentTurn}] ${serviceName} failed: ${serviceErrors}")
 
-                    // Send error feedback back to Gemini in functionResponse
                     functionResponseParts.add([
                         functionResponse: [
                             name: calledName,
                             response: [ 
                                 status: "error",
                                 validationError: serviceErrors,
-                                message: "Tool execution failed. Please review the parameter requirements and re-issue the tool call with corrected parameters."
+                                message: "Tool execution failed. Please pass required parameters strictly as defined in the schema."
                             ]
                         ]
                     ])
@@ -204,7 +248,6 @@ try {
                 }
             }
 
-            // Append function responses as a "user" role turn to inform Gemini
             contents.add([
                 role: "user",
                 parts: functionResponseParts
@@ -218,17 +261,26 @@ try {
             }
 
         } else {
-            // Text Response from model
             finalMessage = parts[0]?.text ?: "Prompt processed with no direct tool calls."
             executionSuccess = true
         }
     }
 
     if (executionSuccess) {
+        // Fetch updated raw XML or AST for client auto-sync
+        String updatedRawXml = ""
+        if (finalArtifactUri) {
+            try {
+                def resRef = ec.resource.getLocationReference(finalArtifactUri)
+                if (resRef && resRef.exists) updatedRawXml = resRef.getText()
+            } catch (Exception ignored) {}
+        }
+
         context.completionText = JsonOutput.toJson([
             status: "success",
             type: finalArtifactUri ? "MUTATION_EXECUTED" : "TEXT_RESPONSE",
             createdArtifactUri: finalArtifactUri,
+            rawXmlContent: updatedRawXml,
             message: finalMessage
         ])
     } else {

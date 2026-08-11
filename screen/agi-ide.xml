@@ -8,46 +8,6 @@
     <!-- 🎯 Keep only the explicit text/qmeta compiler macro active -->
     <macro-template type="html" location="component://agi-ai/template/screen-macro/DefaultScreenMacros.qmeta.ftl"/>
 
-    <transition name="getRawXml" read-only="true">
-        <actions>
-            <script><![CDATA[
-                def rawPath = screenPath ?: "AgiWorkspace"
-                def componentName = "agi-ide"
-                def fileName = rawPath
-
-                if (rawPath.contains("/")) {
-                    def pathParts = rawPath.split("/")
-                    componentName = pathParts[0]
-                    fileName = pathParts[1]
-                } else if (context.componentName) {
-                    componentName = context.componentName
-                }
-
-                def fileLocation = "component://${componentName}/screen/${componentName}/${fileName}.xml"
-                
-                try {
-                    def resourceReference = ec.resource.getLocationReference(fileLocation)
-                    if (!resourceReference || !resourceReference.exists) {
-                        fileLocation = "component://${componentName}/screen/${fileName}.xml"
-                        resourceReference = ec.resource.getLocationReference(fileLocation)
-                    }
-                    
-                    if (resourceReference && resourceReference.exists) {
-                        def rawTextPayload = resourceReference.getText()
-                        ec.web.sendTextResponse(rawTextPayload, "text/xml", null)
-                        ec.logger.info("⚡ Dynamic source-streamer localized asset at: [${fileLocation}]")
-                    } else {
-                        ec.web.sendTextResponse("", "text/xml", null)
-                    }
-                } catch (Exception ex) {
-                    ec.logger.error("Failed to execute flexible dynamic XML resource extraction", ex)
-                    ec.web.sendTextResponse("", "text/xml", null)
-                }
-            ]]></script>
-        </actions>
-        <default-response type="none"/>
-    </transition>
-
     <transition name="getFormMetadata" read-only="true" >
         <actions>
             <set field="activeUserId" from="ec.user.getUserId()" />

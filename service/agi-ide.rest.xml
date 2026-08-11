@@ -109,4 +109,31 @@
             </method>
         </resource>
     </resource>
+    <!-- Artifact Discovery & Palette REST Endpoint -->
+    <resource name="palette">
+        <method type="get" require-authentication="false">
+            <service name="org.moqui.ai.mcp.MCPArtifactServices.get#ArtifactPalette"/>
+        </method>
+    </resource>
+
+
+    <!-- Composite Layout & Navigation MCP Tools -->
+    <resource name="add-container">
+        <method type="post" require-authentication="false">
+            <service name="org.moqui.ai.mcp.MCPScreenServices.add#Container"/>
+        </method>
+    </resource>
+
+    <resource name="bind-subscreen">
+        <method type="post" require-authentication="false">
+            <service name="org.moqui.ai.mcp.MCPScreenServices.bind#Subscreen"/>
+        </method>
+    </resource>
+
+    <resource name="getRawXml">
+        <method type="get" require-authentication="false">
+            <service name="org.moqui.ai.mcp.MCPScreenServices.get#RawXml"/>
+        </method>
+    </resource>
+
 </rest-api>
