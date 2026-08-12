@@ -31,19 +31,22 @@
             <service name="org.moqui.ide.ScreenEditorServices.compile#RawXmlToBlueprint"/>
         </method>
     </resource>
+
     <!-- Secure rest channel hook for automated agent interactions -->
     <resource name="scaffoldComponent">
         <method type="post" require-authentication="false">
             <service name="org.moqui.ide.ScreenEditorServices.create#NewComponentScaffold"/>
         </method>
     </resource>
+
     <resource name="getAllTools">
         <method type="get" require-authentication="false">
             <service name="org.moqui.ide.AgiMcpServices.getAllTools"/>
         </method>
     </resource>
+
     <resource name="geminiProxy">
-        <method type="post" require-authentication="false" >
+        <method type="post" require-authentication="false">
             <service name="org.moqui.ide.AgiMcpServices.executeAdkProxyLoop"/>
         </method>
     </resource>
@@ -94,6 +97,7 @@
             </method>
         </resource>
     </resource>
+
     <resource name="component">
         <resource name="create">
             <method type="post">
@@ -109,13 +113,13 @@
             </method>
         </resource>
     </resource>
+
     <!-- Artifact Discovery & Palette REST Endpoint -->
     <resource name="palette">
         <method type="get" require-authentication="false">
             <service name="org.moqui.ai.mcp.MCPArtifactServices.get#ArtifactPalette"/>
         </method>
     </resource>
-
 
     <!-- Composite Layout & Navigation MCP Tools -->
     <resource name="add-container">
@@ -136,4 +140,35 @@
         </method>
     </resource>
 
+    <resource name="getKnownArtifacts">
+        <method type="get" require-authentication="false">
+            <service name="org.moqui.ide.AgiWorkspaceServices.get#KnownArtifacts"/>
+        </method>
+    </resource>
+
+    <resource name="getWorkspaceBuffer">
+        <method type="get">
+            <service name="org.moqui.ai.AgiWorkspaceServices.get#WorkspaceBuffer"/>
+            <param name="artifactUri" type="String" required="true"/>
+            <param name="userId" type="String"/>
+        </method>
+    </resource>
+    <resource name="storeWorkspaceBuffer">
+        <method type="post">
+            <service name="org.moqui.ai.AgiWorkspaceServices.store#WorkspaceBuffer"/>
+        </method>
+    </resource>
+    <resource name="compileTreeToXml" require-authentication="anonymous-all">
+        <method type="post">
+            <service name="org.moqui.ai.AgiWorkspaceServices.compile#TreeToXml"/>
+            <param name="layoutTree" type="Map" required="false"/>
+        </method>
+    </resource>
+    <resource name="saveScreenXml" require-authentication="anonymous-all">
+        <method type="post">
+            <service name="org.moqui.ai.AgiWorkspaceServices.save#ScreenXml"/>
+            <param name="artifactUri" type="String" required="true"/>
+            <param name="metaJsonBuffer" type="String" required="true"/>
+        </method>
+    </resource>
 </rest-api>

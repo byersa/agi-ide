@@ -52,5 +52,5 @@ The internal workspace scope tracks window geometry choices, panel assignments, 
 
 ### Server Sync & Database Hydration Pipelines
 *   **`hydrateMcpOrchestratorFromDatabase()`**: Performs a `GET` request against `/rest/s1/agi-ide/getAllTools`[cite: 5]. Instantiates safe JavaScript operational runtimes from the `scriptBody` records using factory injection routines, registering executable nodes inside `window.AgiMcpEngine`[cite: 5].
-*   **`hydrateWorkspaceBuffer()`**: Dispatches a `GET` request targeting `/rest/s1/agi-ai/getWorkspaceBuffer` using `screenPath` and `window.AGI_SERVER_USER_ID` coordinates[cite: 5]. Unpacks the raw text payload to seed the unified reactive model[cite: 5].
+*   **`hydrateWorkspaceBuffer()`**: Dispatches a `GET` request targeting `/rest/s1/agi-ide/getWorkspaceBuffer` using `screenPath` and `window.AGI_SERVER_USER_ID` coordinates[cite: 5]. Unpacks the raw text payload to seed the unified reactive model[cite: 5].
 *   **`handleChildEditorSave(updatedLayoutTree)`**: Triggered by events from children editors[cite: 5]. Commits updates locally, verifies token integrity, and transmits a serialized payload string via a `POST` request to `/rest/s1/mcp/storeWorkspaceBuffer`[cite: 5].

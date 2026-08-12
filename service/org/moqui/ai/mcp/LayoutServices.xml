@@ -16,7 +16,7 @@
                 String activeUserId = ec.user.getUserId() ?: "system_ide_user"
                 
                 // Store updated blueprint into WorkspaceBuffer
-                ec.service.sync().name("org.moqui.ai.AgiWorkspaceServices.store#WorkspaceBuffer")
+                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer")
                     .parameters([artifactUri: artifactPath, userId: activeUserId, metaJsonBuffer: metaJsonData])
                     .call()
             ]]></script>
@@ -116,7 +116,7 @@
                     if (targetUri && targetUri.trim() != "") {
                         try {
                             ec.logger.info("📄 [manage#WorkspaceBuffer] No DB buffer found. Parsing physical XML file from disk: '${targetUri}'")
-                            Map parseResult = ec.service.sync().name("org.moqui.ai.AgiWorkspaceServices.parse#XmlToTree")
+                            Map parseResult = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.parse#XmlToTree")
                                 .parameter("artifactUri", targetUri)
                                 .call()
                             if (parseResult?.layoutTree) {
@@ -159,7 +159,7 @@
                     String updatedMetaJson = JsonOutput.toJson(layoutTree)
 
                     // Persist newly populated tree directly to WorkspaceBuffer using service call
-                    ec.service.sync().name("org.moqui.ai.AgiWorkspaceServices.store#WorkspaceBuffer")
+                    ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer")
                         .parameters([
                             workspaceBufferId: bufferId,
                             artifactUri: targetUri,

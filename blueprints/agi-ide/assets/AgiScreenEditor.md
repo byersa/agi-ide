@@ -56,7 +56,7 @@ None specified.
 
 ## ⚙️ BEHAVIORS & BACKEND DATA CONTRACTS
 ### Transitions / API Routes:
-* `/rest/s1/agi-ai/compileTreeToXml` (POST): Compiles the active structured JSON blueprint tree back into formatted XML[cite: 4].
+* `/rest/s1/agi-ide/compileTreeToXml` (POST): Compiles the active structured JSON blueprint tree back into formatted XML[cite: 4].
   * **Payload Schema:** `{ layoutTree: Object }`[cite: 4]
   * **Response Schema:** `{ xmlText: String }`[cite: 4]
 

@@ -130,7 +130,7 @@
                 const headers = {};
                 headers['X-CSRF-Token'] = window.AGI_SERVER_CSRF_TOKEN;
 
-                axios.post('/rest/s1/agi-ai/compileTreeToXml', {
+                axios.post('/rest/s1/agi-ide/compileTreeToXml', {
                     layoutTree: this.localBlueprintTree
                 }, { headers: headers }) // 🎯 Pass the clean, authentic header payload directly
                     .then(function (response) {

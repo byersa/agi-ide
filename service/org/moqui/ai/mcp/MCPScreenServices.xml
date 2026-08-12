@@ -453,19 +453,14 @@ ${scriptIncludeTag}
     </service>
 
     <!-- ===================================================================== -->
-    <!-- BIND SUBSCREEN & NAVIGATION TABS                                      -->
+    <!-- BIND SUBSCREEN TO PARENT SCREEN                                       -->
     <!-- ===================================================================== -->
     <service verb="bind" noun="Subscreen" authenticate="anonymous-all">
-        <description>
-            Mounts one or more child subscreens into a parent screen XML and injects navigation tabs/viewports.
-        </description>
+        <description>Mounts child subscreens into parent XML cleanly without string corruption.</description>
         <in-parameters>
-            <parameter name="artifactUri"><description>Parent screen URI (e.g. component://nursinghome/screen/nursinghome.xml)</description></parameter>
-            <parameter name="targetScreenUri"><description>Alias for artifactUri</description></parameter>
-            <parameter name="screenPath"><description>Alias for artifactUri</description></parameter>
-            <parameter name="subscreenName"/>
+            <parameter name="artifactUri" required="true"/>
+            <parameter name="subscreenName" required="true"/>
             <parameter name="subscreenLocation"/>
-            <parameter name="subscreenList"/>
             <parameter name="menuTitle"/>
             <parameter name="isDefault" type="Boolean" default="false"/>
             <parameter name="defaultSubscreen"/>
@@ -475,72 +470,81 @@ ${scriptIncludeTag}
         </out-parameters>
         <actions>
             <script><![CDATA[
-                String parentUri = artifactUri ?: targetScreenUri ?: screenPath
-                if (!parentUri) {
-                    ec.message.addError("Parent screen URI (artifactUri or targetScreenUri) is required.")
-                    return
-                }
+                import groovy.xml.XmlParser
+                import groovy.xml.XmlUtil
 
-                def resRef = ec.resource.getLocationReference(parentUri)
+                def resRef = ec.resource.getLocationReference(artifactUri)
                 if (!resRef || !resRef.exists) {
-                    ec.message.addError("Target artifact XML file does not exist at ${parentUri}")
+                    ec.message.addError("Parent screen URI (${artifactUri}) does not exist.")
                     return
                 }
 
                 String xmlText = resRef.getText()
+                String name = subscreenName
+                String location = subscreenLocation
                 
-                // 🎯 1. BATCH HANDLING: If Gemini passed subscreenList (e.g. "ERP,PatientManagement,PatientRecords,StaffMeetings")
-                List<Map> itemsToBind = []
-                if (subscreenList) {
-                    List<String> listParts = subscreenList.split(",")
-                    listParts.each { part ->
-                        String name = part.trim()
-                        if (name.contains("/")) name = name.substring(name.lastIndexOf('/') + 1).replace(".xml", "")
-                        String loc = part.trim().startsWith("component://") ? part.trim() : "component://nursinghome/screen/nursinghome/${name}.xml"
-                        boolean isDef = (defaultSubscreen && (defaultSubscreen.contains(name) || defaultSubscreen == name))
-                        itemsToBind.add([name: name, location: loc, isDefault: isDef])
-                    }
-                } else if (subscreenName && subscreenLocation) {
-                    itemsToBind.add([name: subscreenName, location: subscreenLocation, isDefault: isDefault])
+                if (!location) {
+                    String parentDir = artifactUri.substring(0, artifactUri.lastIndexOf('.'))
+                    location = "${parentDir}/${name}.xml"
+                }
+
+                String title = menuTitle ?: name.replaceAll("([a-z])([A-Z])", '$1 $2')
+                boolean setAsDefault = isDefault || (defaultSubscreen && defaultSubscreen.toString().contains(name))
+
+                // Parse XML safely using XmlParser to avoid substring replacements
+                def rootNode = new XmlParser(false, false).parseText(xmlText)
+                def subscreensNode = rootNode.subscreens[0]
+
+                if (!subscreensNode) {
+                    // Create <subscreens> container if it doesn't exist
+                    subscreensNode = rootNode.appendNode('subscreens')
+                }
+
+                if (setAsDefault) {
+                    subscreensNode.attributes()['default-item'] = name
+                }
+
+                // Check if subscreen-item already exists to prevent duplicate entries
+                def existingItem = subscreensNode.'subscreens-item'.find { it.attributes()['name'] == name }
+                if (existingItem) {
+                    existingItem.attributes()['location'] = location
+                    existingItem.attributes()['menu-title'] = title
                 } else {
-                    ec.message.addError("Must provide either (subscreenName + subscreenLocation) OR subscreenList.")
-                    return
+                    subscreensNode.appendNode('subscreens-item', [
+                        name: name,
+                        location: location,
+                        'menu-title': title
+                    ])
                 }
 
-                // 🎯 2. PROCESS INJECTIONS
-                itemsToBind.each { item ->
-                    String titleAttr = item.name.replaceAll("([a-z])([A-Z])", '$1 $2')
-                    String itemXml = "<subscreens-item name=\"${item.name}\" location=\"${item.location}\" menu-title=\"${titleAttr}\"/>"
+                // Ensure <subscreens-tabs> and <subscreens-active> exist in <widgets>
+                def widgetsNode = rootNode.widgets[0]
+                if (!widgetsNode) widgetsNode = rootNode.appendNode('widgets')
 
-                    if (!xmlText.contains("<subscreens")) {
-                        String defaultAttr = item.isDefault ? " default-item=\"${item.name}\"" : ""
-                        String subscreensBlock = "\n    <subscreens${defaultAttr}>\n        ${itemXml}\n    </subscreens>\n"
-                        if (xmlText.contains("<widgets>")) {
-                            xmlText = xmlText.replace("<widgets>", subscreensBlock + "\n    <widgets>")
-                        } else {
-                            xmlText = xmlText.replace("</screen>", subscreensBlock + "</screen>")
-                        }
-                    } else {
-                        if (!xmlText.contains("name=\"${item.name}\"")) {
-                            xmlText = xmlText.replace("</subscreens>", "    ${itemXml}\n    </subscreens>")
-                        }
-                        if (item.isDefault) {
-                            xmlText = xmlText.replace("<subscreens", "<subscreens default-item=\"${item.name}\"")
-                        }
-                    }
+                def rootContainer = widgetsNode.container.find { it.attributes()['id'] == 'nursinghome-root' } ?: widgetsNode
+
+                if (!rootContainer.'subscreens-tabs'[0]) {
+                    rootContainer.appendNode('subscreens-tabs', [id: 'nursinghome-nav-tabs'])
+                }
+                if (!rootContainer.'subscreens-active'[0]) {
+                    rootContainer.appendNode('subscreens-active', [id: 'nursinghome-body-viewport'])
                 }
 
-                // 🎯 3. INJECT VIEWPORTS
-                if (!xmlText.contains("<subscreens-active") && !xmlText.contains("<subscreens-tabs")) {
-                    xmlText = xmlText.replace("</container>", "    <subscreens-tabs id=\"nursinghome-nav-tabs\"/>\n        <subscreens-active id=\"nursinghome-body-viewport\"/>\n    </container>")
-                }
+                // Serialize back to formatted XML
+                String updatedXml = XmlUtil.serialize(rootNode)
+                resRef.putText(updatedXml)
 
-                resRef.putText(xmlText)
-                ec.logger.info("🔗 [MCP /bind-subscreen] Successfully bound ${itemsToBind.size()} subscreen(s) to ${parentUri}")
-                context.artifactUri = parentUri
+                // Sync back to WorkspaceBuffer AST
+                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.parse#XmlToTree")
+                    .parameter("artifactUri", artifactUri)
+                    .call()
+
+                ec.logger.info("🔗 [bind#Subscreen] Bound subscreen [${name}] to [${artifactUri}] safely.")
+                context.artifactUri = artifactUri
             ]]></script>
         </actions>
     </service>
+
     <!-- ===================================================================== -->
     <!-- GET RAW XML / ASSET SOURCE SERVICE                                    -->
     <!-- ===================================================================== -->
@@ -661,7 +665,7 @@ ${scriptIncludeTag}
                 resRef.putText(xmlText)
                 
                 // Sync updated XML back into WorkspaceBuffer AST
-                ec.service.sync().name("org.moqui.ai.AgiWorkspaceServices.parse#XmlToTree")
+                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.parse#XmlToTree")
                     .parameter("artifactUri", artifactUri)
                     .call()
 

@@ -140,7 +140,7 @@
                 };
 
                 try {
-                    await axios.post('/rest/s1/agi-ai/mcp/run', {
+                    await axios.post('/rest/s1/agi-ide/mcp/run', {
                         serviceName: 'org.moqui.ai.mcp.MCPScreenServices.attach#QvtAsset',
                         parameters: { screenPath: vm.screenPath, targetComponent: 'nursinghome' }
                     }, { headers });
@@ -160,7 +160,7 @@
                 };
 
                 try {
-                    await axios.post('/rest/s1/agi-ai/saveScreenXml', {
+                    await axios.post('/rest/s1/agi-ide/saveScreenXml', {
                         artifactUri: vm.targetQvtUri,
                         rawXmlText: vm.rawJsSource
                     }, { headers });

@@ -58,6 +58,7 @@ Your goal is to scaffold screens, refactor assets, or update UI components for t
 CRITICAL RULES & CONVENTIONS:
 - Top-level domain screens belong under screenPath '${targetComponent}/<ScreenName>' (e.g. '${targetComponent}/ManagePatients').
 - When asked to create or scaffold a screen, call 'create_screen'.
+- SUBSCREEN CREATION MANDATE: Whenever you bind subscreens to a parent screen using 'bind_subscreen', you MUST ALSO call 'create_screen' for each subscreen (e.g. screenPath: '${targetComponent}/ERP', screenPath: '${targetComponent}/PatientManagement') so that the physical subscreen XML files exist on disk.
 - When asked to move or rename a screen, call 'move_artifact'. Pass 'sourceArtifactUri' and 'targetArtifactUri'.
 - When asked to add or attach a custom Vue/QVT component script to a screen, call 'attach_qvt_asset'.
 - When binding subscreens, pass 'artifactUri', 'subscreenName', and 'subscreenLocation'.
@@ -176,19 +177,26 @@ try {
                     }
                 }
 
-                // 2. Normalize Subscreen Location & Name if passed as raw paths
+                // 2. Normalize Subscreen Location & Name if passed as raw paths or tab wrapper IDs
                 if (calledName == "bind_subscreen") {
-                    if (!toolArgs.subscreenName && toolArgs.subscreenLocation) {
-                        String loc = toolArgs.subscreenLocation.toString()
-                        toolArgs.subscreenName = loc.substring(loc.lastIndexOf('/') + 1).replace(".xml", "")
+                    String subName = toolArgs.subscreenName ? toolArgs.subscreenName.toString() : ""
+                    String rawLoc = toolArgs.subscreenLocation ? toolArgs.subscreenLocation.toString().trim() : ""
+
+                    if (!subName && rawLoc) {
+                        subName = rawLoc.substring(rawLoc.lastIndexOf('/') + 1).replace(".xml", "")
+                        toolArgs.subscreenName = subName
                     }
-                    if (toolArgs.subscreenLocation && !toolArgs.subscreenLocation.toString().startsWith("component://")) {
-                        String sl = toolArgs.subscreenLocation.toString().trim()
-                        toolArgs.subscreenLocation = "component://${targetComponent}/screen/${targetComponent}/${sl.endsWith('.xml') ? sl : sl + '.xml'}"
+
+                    // Prevent tab container IDs (e.g. 'subscreens-tabs') from overwriting file locations
+                    if (!rawLoc || rawLoc.contains("subscreens-") || !rawLoc.endsWith(".xml")) {
+                        toolArgs.subscreenLocation = "component://${targetComponent}/screen/${targetComponent}/${subName}.xml"
+                    } else if (!rawLoc.startsWith("component://")) {
+                        toolArgs.subscreenLocation = "component://${targetComponent}/screen/${targetComponent}/${rawLoc.endsWith('.xml') ? rawLoc : rawLoc + '.xml'}"
                     }
+
                     if (toolArgs.defaultSubscreen && !toolArgs.isDefault) {
                         String defSub = toolArgs.defaultSubscreen.toString()
-                        if (toolArgs.subscreenName && defSub.contains(toolArgs.subscreenName.toString())) {
+                        if (subName && defSub.contains(subName)) {
                             toolArgs.isDefault = true
                         }
                     }

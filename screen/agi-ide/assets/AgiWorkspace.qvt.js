@@ -637,7 +637,7 @@
 
                 try {
                     if (this.localScreenPath) {
-                        const response = await axios.get(`/rest/s1/agi-ai/getWorkspaceBuffer?artifactUri=${encodeURIComponent(this.localScreenPath)}&userId=${encodeURIComponent(activeUser)}`, axiosConfig);
+                        const response = await axios.get(`/rest/s1/agi-ide/getWorkspaceBuffer?artifactUri=${encodeURIComponent(this.localScreenPath)}&userId=${encodeURIComponent(activeUser)}`, axiosConfig);
                         const data = response.data;
 
                         if (data && data.metaJsonBuffer) {
@@ -673,14 +673,14 @@
                 const jsonStringPayload = JSON.stringify(activeBlueprint);
 
                 try {
-                    await axios.post('/rest/s1/agi-ai/storeWorkspaceBuffer', {
+                    await axios.post('/rest/s1/agi-ide/storeWorkspaceBuffer', {
                         workspaceBufferId: this.activeWorkspaceBuffer.workspaceBufferId,
                         artifactUri: this.localScreenPath,
                         userId: activeUser,
                         metaJsonBuffer: jsonStringPayload
                     }, { headers });
 
-                    const fileSaveResponse = await axios.post('/rest/s1/agi-ai/saveScreenXml', {
+                    const fileSaveResponse = await axios.post('/rest/s1/agi-ide/saveScreenXml', {
                         artifactUri: this.localScreenPath,
                         metaJsonBuffer: jsonStringPayload
                     }, { headers });
