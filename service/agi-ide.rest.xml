@@ -148,25 +148,25 @@
 
     <resource name="getWorkspaceBuffer">
         <method type="get">
-            <service name="org.moqui.ai.AgiWorkspaceServices.get#WorkspaceBuffer"/>
+            <service name="org.moqui.ide.AgiWorkspaceServices.get#WorkspaceBuffer"/>
             <param name="artifactUri" type="String" required="true"/>
             <param name="userId" type="String"/>
         </method>
     </resource>
     <resource name="storeWorkspaceBuffer">
         <method type="post">
-            <service name="org.moqui.ai.AgiWorkspaceServices.store#WorkspaceBuffer"/>
+            <service name="org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer"/>
         </method>
     </resource>
     <resource name="compileTreeToXml" require-authentication="anonymous-all">
         <method type="post">
-            <service name="org.moqui.ai.AgiWorkspaceServices.compile#TreeToXml"/>
+            <service name="org.moqui.ide.AgiWorkspaceServices.compile#TreeToXml"/>
             <param name="layoutTree" type="Map" required="false"/>
         </method>
     </resource>
     <resource name="saveScreenXml" require-authentication="anonymous-all">
         <method type="post">
-            <service name="org.moqui.ai.AgiWorkspaceServices.save#ScreenXml"/>
+            <service name="org.moqui.ide.AgiWorkspaceServices.save#ScreenXml"/>
             <param name="artifactUri" type="String" required="true"/>
             <param name="metaJsonBuffer" type="String" required="true"/>
         </method>

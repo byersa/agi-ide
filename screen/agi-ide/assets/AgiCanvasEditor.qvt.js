@@ -1,5 +1,4 @@
 (function () {
-    // Main Canvas Editor Component Option Object
     const AgiCanvasEditor = {
         name: 'AgiCanvasEditor',
         mixins: [window.AgiEditorShareMixin].filter(m => m !== undefined),
@@ -19,27 +18,49 @@
 
                 <!-- 🎯 NATIVE QMETA BLUEPRINT RENDERER ENGINE -->
                 <div id="canvas-elements-viewport" class="column no-wrap items-stretch full-width">
-                    <m-blueprint-node 
-                        v-if="localBlueprintTree" 
-                        :node="localBlueprintTree" 
-                        :context="{ selectedMariaId: selectedMariaId }"
-                    ></m-blueprint-node>
+                    <template v-if="effectiveTree">
+                        <!-- If root is a "screen" envelope, iterate and render its top-level widget children directly -->
+                        <template v-if="effectiveTree._moquiTag === 'screen' && effectiveTree.children">
+                            <m-blueprint-node 
+                                v-for="(childNode, idx) in effectiveTree.children" 
+                                :key="childNode.mariaId || idx"
+                                :node="childNode" 
+                                :context="{ 
+                                    selectedMariaId: selectedMariaId,
+                                    currentPathList: dynamicSubscreenPath,
+                                    subscreens: effectiveTree.subscreens
+                                }"
+                            ></m-blueprint-node>
+                        </template>
+                
+                        <!-- Fallback for direct container / form nodes -->
+                        <m-blueprint-node 
+                            v-else
+                            :node="effectiveTree" 
+                            :context="{ 
+                                selectedMariaId: selectedMariaId,
+                                currentPathList: dynamicSubscreenPath,
+                                subscreens: effectiveTree.subscreens
+                            }"
+                        ></m-blueprint-node>
+                    </template>
                 </div>
             </div>
         `,
         props: {
-            screenPath: {
-                type: String,
-                required: true
-            },
-            node: {
-                type: Object,
-                required: false,
-                default: () => ({ attributes: {}, children: [] })
-            },
+            screenPath: { type: String, required: true },
+            layoutTree: { type: Object, default: () => null }
+        },
+        watch: {
             layoutTree: {
-                type: Object,
-                default: () => ({ id: "root", tagName: "form", children: [] })
+                handler(newTree) {
+                    if (newTree) {
+                        console.info(`🔄 AgiCanvasEditor [${this.$options.name}] deeply sync'd localBlueprintTree to new workspace layout state.`);
+                        return;
+                    }
+                },
+                immediate: true,
+                deep: true
             }
         },
         data() {
@@ -49,27 +70,51 @@
             };
         },
         computed: {
-            localBlueprintTree() {
-                const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
-                const treeFromStore = ideStore ? ideStore.getActiveBlueprint : null;
+            // 🎯 SINGLE SOURCE OF TRUTH: Directly consume the prop passed by AgiWorkspace
+            effectiveTree() {
+                const tree = this.layoutTree;
+                return this.layoutTree;
+            },
+            dynamicSubscreenPath() {
+                const tree = this.effectiveTree;
+                if (!tree) return [];
 
-                return treeFromStore || this.layoutTree || (this.$attrs && this.$attrs['layout-tree']);
+                const defaultSub = tree.subscreens?.defaultItem;
+                if (defaultSub && defaultSub.length > 0) {
+                    return [defaultSub];
+                }
+
+                const subChildren = tree.subscreens?.children || [];
+                if (subChildren.length > 0 && subChildren[0].name) {
+                    return [subChildren[0].name];
+                }
+
+                return [];
             }
         },
         mounted() {
-            // ContextBus strictly for UI signals (e.g. node focus/highlight)
+            // ContextBus strictly for UI focus/selection signals
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
+            this.contextBus.onmessage = (msg) => {
+                if (msg.data?.event === 'element-selected-by-id') {
+                    this.scrollToNode(msg.data.mariaId);
+                }
+            };
         },
         beforeUnmount() {
             if (this.contextBus) this.contextBus.close();
         },
         methods: {
             executeBufferSave() {
-                this.$emit('trigger-save');
+                this.$emit('trigger-save', this.effectiveTree);
             },
             handleVisualNodeClick(clickedNode) {
                 this.selectedMariaId = clickedNode.mariaId;
-                this.contextBus.postMessage({ event: 'element-selected-by-id', mariaId: clickedNode.mariaId, screen: clickedNode.screen });
+                this.contextBus.postMessage({
+                    event: 'element-selected-by-id',
+                    mariaId: clickedNode.mariaId,
+                    screen: clickedNode.screen
+                });
                 this.scrollToNode(clickedNode.mariaId);
             },
             scrollToNode(mariaId) {

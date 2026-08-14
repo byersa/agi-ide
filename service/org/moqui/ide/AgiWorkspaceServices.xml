@@ -31,6 +31,7 @@
                     .list()
                 
                 def bufferRow = bufferList ? bufferList[0] : null
+                ec.logger.info("📄 [get#WorkspaceBuffer] bufferRow(1): ${bufferRow}")
                 
                 if (!bufferRow) {
                     // Secondary check for system_ide_user or fallback
@@ -40,6 +41,7 @@
                         .useCache(false)
                         .list()
                     bufferRow = fallbackList ? fallbackList[0] : null
+                ec.logger.info("📄 [get#WorkspaceBuffer] bufferRow(2): ${bufferRow}")
                 }
     
                 boolean isStubOrEmpty = false
@@ -63,6 +65,7 @@
                     Map parseResult = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.parse#XmlToTree")
                         .parameter("artifactUri", artifactUri)
                         .call()
+                ec.logger.info("📄 [get#WorkspaceBuffer] parseResult: ${parseResult}")
     
                     if (parseResult?.layoutTree) {
                         String jsonFromDisk = JsonOutput.toJson(parseResult.layoutTree)
@@ -143,13 +146,13 @@
         </actions>
     </service>
 
-    <!-- ===================================================================== -->
+<!-- ===================================================================== -->
     <!-- COMPILE AST TREE TO MOQUI XML                                         -->
     <!-- ===================================================================== -->
     <service verb="compile" noun="TreeToXml" type="inline">
         <description>
             Recursively processes FreeMarker templates (.ftl) by expanding include directives,
-            or converts a layoutTree AST map into standard Moqui screen XML using _moquiTag definitions.
+            or converts a layoutTree AST map (including subscreens) into standard Moqui screen XML.
         </description>
         <in-parameters>
             <parameter name="location" type="String" required="false"/>
@@ -217,13 +220,33 @@
                               .replace("'", "&apos;")
                 }
 
+                // Attribute exclusion block list for save compilation
+                def ignoredAttributes = [
+                    '_moquiTag', 'tagName', 'type', '@type', 'mariaId', 'id', 'attributes', 
+                    'ai-intent', 'children', 'widgets', 'subscreens', 'screen', 'location', 'pathIndex'
+                ]
+
                 // Internal recursive helper to transform layoutTree Map into Moqui XML using _moquiTag
                 def buildXmlNode
                 buildXmlNode = { Map nodeMap ->
                     if (!nodeMap) return ""
 
-                    String tagName = nodeMap._moquiTag ?: (nodeMap.tagName ?: nodeMap.type ?: nodeMap['@type'] ?: "container").toString().replaceAll("^@", "")
+                    String rawTag = nodeMap._moquiTag ?: (nodeMap.tagName ?: nodeMap.type ?: nodeMap['@type'] ?: "container").toString().replaceAll("^@", "")
 
+                    // If the root AST node is "screen" or "widgets", un-wrap and recurse straight to children
+                    if (rawTag == "screen" || rawTag == "widgets") {
+                        StringBuilder rootSb = new StringBuilder()
+                        List rootChildren = []
+                        if (nodeMap.children instanceof List) rootChildren.addAll(nodeMap.children)
+                        if (nodeMap.widgets instanceof List) rootChildren.addAll(nodeMap.widgets)
+
+                        rootChildren.each { Object child ->
+                            if (child instanceof Map) rootSb.append(buildXmlNode((Map) child))
+                        }
+                        return rootSb.toString()
+                    }
+
+                    String tagName = rawTag
                     StringBuilder sb = new StringBuilder("<${tagName}")
                     List childrenList = []
 
@@ -239,15 +262,18 @@
                         if (k == 'children' || k == 'widgets') {
                             if (v instanceof List) childrenList.addAll((List) v)
                             else if (v instanceof Map) childrenList.add((Map) v)
-                        } else if (k != '_moquiTag' && k != 'tagName' && k != 'type' && k != '@type' && k != 'mariaId' && k != 'id' && k != 'attributes' && k != 'ai-intent') {
+                        } else if (!ignoredAttributes.contains(k)) {
                             if (!(v instanceof Map) && !(v instanceof List)) {
-                                attrs[k] = v
+                                String valStr = v.toString().trim()
+                                if (valStr.length() > 0) { // Omit empty attributes like style=""
+                                    attrs[k] = valStr
+                                }
                             }
                         }
                     }
 
                     attrs.each { String ak, Object av ->
-                        if (av != null && ak != 'children' && ak != 'widgets') {
+                        if (av != null) {
                             sb.append(" ${ak}=\"${escapeXml(av.toString())}\"")
                         }
                     }
@@ -266,14 +292,44 @@
                     return sb.toString()
                 }
 
+                // Helper to build <subscreens> XML section
+                def buildSubscreensXml = { Map subsMap ->
+                    if (!subsMap) return ""
+                    String defaultAttr = subsMap.defaultItem ? " default-item=\"${escapeXml(subsMap.defaultItem.toString())}\"" : ""
+                    StringBuilder ssb = new StringBuilder("    <subscreens${defaultAttr}>\n")
+                    
+                    List subItems = subsMap.children ?: subsMap.widgets ?: []
+                    subItems.each { Object item ->
+                        if (item instanceof Map) {
+                            String sName = item.name ?: ""
+                            String sLoc = item.location ?: ""
+                            String sTitle = item.menuTitle ?: ""
+                            
+                            ssb.append("        <subscreens-item")
+                            if (sName) ssb.append(" name=\"${escapeXml(sName)}\"")
+                            if (sLoc) ssb.append(" location=\"${escapeXml(sLoc)}\"")
+                            if (sTitle && sTitle != sName) ssb.append(" menu-title=\"${escapeXml(sTitle)}\"")
+                            ssb.append("/>\n")
+                        }
+                    }
+                    ssb.append("    </subscreens>\n")
+                    return ssb.toString()
+                }
+
                 if (location) {
                     xmlText = resolveFtlIncludes(location, new HashSet<String>())
                 } else if (layoutTree) {
-                    String rawTreeText = buildXmlNode(layoutTree)
+                    String subscreensText = ""
+                    if (layoutTree.subscreens instanceof Map) {
+                        subscreensText = buildSubscreensXml(layoutTree.subscreens as Map)
+                    }
+
+                    String rawWidgetsText = buildXmlNode(layoutTree)
+                    
                     xmlText = """<?xml version="1.0" encoding="UTF-8"?>
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-    <widgets>
-${rawTreeText}    </widgets>
+${subscreensText}    <widgets>
+${rawWidgetsText}    </widgets>
 </screen>"""
                 } else {
                     xmlText = ""
@@ -394,19 +450,57 @@ ${rawTreeText}    </widgets>
                     }
                 }
 
-                try {
-                    String qmetaOutput = ec.screen.makeRender()
-                        .rootScreen(artifactUri)
-                        .renderMode("qmeta")
-                        .macroTemplate("component://agi-ai/template/screen-macro/DefaultScreenMacros.qmeta.ftl")
-                        .lastStandalone("-1")
-                        .render()
+            try {
+                    // 1. Render screen widgets via QMETA FTL
+                    String qmetaOutput = ""
+    
+                    // 1. Push rawJsonOnly flag to Moqui's context stack
+                    ec.contextStack.push()
+                    try {
+                        ec.contextStack.put("rawJsonOnly", true)
+                
+                        qmetaOutput = ec.screen.makeRender()
+                            .rootScreen(artifactUri)
+                            .renderMode("qmeta")
+                            .macroTemplate("component://agi-ai/template/screen-macro/DefaultScreenMacros.qmeta.ftl")
+                            .lastStandalone("0")
+                            .render()
+                    } finally {
+                        ec.contextStack.pop()
+                    }
+                    ec.logger.info(" [parse#XmlToTree] qmetaOutput: ${qmetaOutput}")
 
                     if (qmetaOutput && qmetaOutput.trim().length() > 0) {
                         Map rawTree = new JsonSlurper().parseText(qmetaOutput.trim()) as Map
 
+                        // 2. Programmatically inject <subscreens> via sDef.getSubscreensNode()
+                        org.moqui.impl.screen.ScreenDefinition sDef = ec.screen.getScreenDefinition(artifactUri)
+                        if (sDef) {
+                            org.moqui.util.MNode subsNode = sDef.getSubscreensNode()
+                            if (subsNode != null && subsNode.children("subscreens-item").size() > 0) {
+                                List subItemsList = []
+                                for (org.moqui.util.MNode subItemNode in subsNode.children("subscreens-item")) {
+                                    subItemsList.add([
+                                        _moquiTag: "subscreens-item",
+                                        "@type": "m-subscreens-item",
+                                        name: subItemNode.attribute("name") ?: "",
+                                        location: subItemNode.attribute("location") ?: "",
+                                        menuTitle: subItemNode.attribute("menu-title") ?: subItemNode.attribute("name") ?: ""
+                                    ])
+                                }
+                        
+                                rawTree.subscreens = [
+                                    _moquiTag: "subscreens",
+                                    defaultItem: subsNode.attribute("default-item") ?: "",
+                                    children: subItemsList
+                                ]
+                            }
+                        }
+
+                        // 3. Enrich AST with canonical mariaIds
                         enrichAstNodes(rawTree, "", 0)
 
+                        // 4. Register or Sync Artifact Record in AgiArtifact table
                         def artifactValue = ec.entity.find("org.moqui.ai.AgiArtifact")
                             .condition("artifactPath", artifactUri)
                             .one()

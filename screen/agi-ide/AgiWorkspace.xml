@@ -3,6 +3,10 @@
         xsi:noNamespaceSchemaLocation="component://agi-ai/xsd/agi-screen-1.0.xsd"
         require-authentication="true">
 
+    <actions>
+        <set field="screenPath" from="context.screenPath ?: 'component://nursinghome/screen/nursinghome.xml'"/>
+    </actions>
+
     <subscreens>
         <subscreen name="AgiCanvasEditor" location="component://agi-ide/screen/agi-ide/AgiCanvasEditor.xml"/>
         <subscreen name="AgiScreenEditor" location="component://agi-ide/screen/agi-ide/AgiScreenEditor.xml"/>
