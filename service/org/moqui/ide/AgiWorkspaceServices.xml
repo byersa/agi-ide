@@ -533,39 +533,73 @@ ${rawWidgetsText}    </widgets>
     <!-- ===================================================================== -->
     <!-- GET KNOWN ARTIFACTS LIST                                              -->
     <!-- ===================================================================== -->
-    <service verb="get" noun="KnownArtifacts" type="inline" authenticate="anonymous-all">
-        <description>Returns a list of all registered AgiArtifact records for the workspace palette.</description>
+    <service verb="get" noun="KnownArtifacts" type="inline">
+        <description>
+            Scans runtime component directories (or registered components) to discover 
+            all XML screens, Groovy services, entities, tests, and reports with fully preserved 
+            nested relative paths.
+        </description>
+        <in-parameters>
+            <parameter name="targetComponent" default-value="nursinghome"/>
+        </in-parameters>
         <out-parameters>
             <parameter name="artifacts" type="List"/>
         </out-parameters>
         <actions>
             <script><![CDATA[
-                def artifactList = ec.entity.find("org.moqui.ai.AgiArtifact")
-                    .orderBy("artifactPath")
-                    .useCache(false)
-                    .list()
+                import java.nio.file.Path
+                import java.nio.file.Paths
+                import groovy.io.FileType
 
                 List resultList = []
-                artifactList.each { art ->
-                    String path = art.artifactPath
-                    String name = path ? path.substring(path.lastIndexOf('/') + 1) : "Artifact"
-                    resultList.add([
-                        agiArtifactId: art.agiArtifactId,
-                        artifactPath: path,
-                        screenName: name,
-                        artifactTypeEnumId: art.artifactTypeEnumId ?: "AatXmlScreen"
-                    ])
-                }
+                String compName = targetComponent ?: 'nursinghome'
+                File compDir = new File("runtime/component/${compName}")
 
-                if (resultList.isEmpty()) {
-                    resultList.add([artifactPath: "component://nursinghome/screen/nursinghome.xml", screenName: "nursinghome.xml", artifactTypeEnumId: "AatXmlScreen"])
-                    resultList.add([artifactPath: "component://nursinghome/screen/nursinghome/PatientIntake.xml", screenName: "PatientIntake.xml", artifactTypeEnumId: "AatXmlScreen"])
-                    resultList.add([artifactPath: "component://agi-ide/screen/agi-ide.xml", screenName: "agi-ide.xml", artifactTypeEnumId: "AatXmlScreen"])
+                if (compDir.exists() && compDir.isDirectory()) {
+                    Path compBasePath = compDir.toPath()
+
+                    // 1. Traverse all files recursively
+                    compDir.eachFileRecurse(FileType.FILES) { File f ->
+                        String filename = f.name
+                        if (filename.startsWith('.')) return
+
+                        // Relative path from runtime/component/${compName}/
+                        Path relPath = compBasePath.relativize(f.toPath())
+                        String relPathStr = relPath.toString().replace('\\', '/')
+
+                        String artifactType = null
+                        if (filename.endsWith('.xml') && relPathStr.startsWith('screen/')) {
+                            artifactType = 'XML'
+                        } else if (filename.endsWith('.qvt.js')) {
+                            artifactType = 'QVT'
+                        } else if (relPathStr.startsWith('service/') && (filename.endsWith('Services.xml') || filename.endsWith('.groovy'))) {
+                            artifactType = 'SRV'
+                        } else if (relPathStr.startsWith('entity/') && filename.endsWith('Entities.xml')) {
+                            artifactType = 'ENT'
+                        } else if (relPathStr.startsWith('test/') && filename.endsWith('Test.xml')) {
+                            artifactType = 'TST'
+                        } else if (filename.endsWith('.ftl') || filename.endsWith('.xsl-fo')) {
+                            artifactType = 'RPT'
+                        }
+
+                        if (artifactType) {
+                            String fullComponentUri = "component://${compName}/${relPathStr}"
+                            resultList.add([
+                                screenName   : filename,
+                                label        : filename,
+                                artifactPath : fullComponentUri,
+                                value        : fullComponentUri,
+                                componentName: compName,
+                                type         : artifactType
+                            ])
+                        }
+                    }
                 }
 
                 context.artifacts = resultList
             ]]></script>
         </actions>
     </service>
+
 
 </services>

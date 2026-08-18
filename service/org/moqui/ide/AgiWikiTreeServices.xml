@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- 1. Fetch Hierarchical Tree (Intent or Discussion) -->
+    <service verb="get" noun="WikiTreeNodes" type="script" location="component://agi-ide/script/GetWikiTreeNodes.groovy">
+        <in-parameters>
+            <parameter name="wikiSpaceId" default-value="AGI_INTENT"/>
+            <parameter name="artifactPath"/>
+            <parameter name="parentWikiPageId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="treeNodes" type="List"/>
+        </out-parameters>
+    </service>
+
+    <!-- 2. Save / Update Wiki Node (Markdown Content) -->
+    <service verb="save" noun="WikiNode">
+        <in-parameters>
+            <parameter name="wikiPageId"/>
+            <parameter name="wikiSpaceId" default-value="AGI_INTENT"/>
+            <parameter name="parentWikiPageId"/>
+            <parameter name="pagePath" required="true"/>
+            <parameter name="content" required="true"/>
+            <parameter name="associatedWorkEffortId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="wikiPageId"/>
+        </out-parameters>
+        <actions>
+            <if condition="!wikiPageId">
+                <service-call name="create#moqui.resource.wiki.WikiPage" in-map="context" out-map="createResult"/>
+                <set field="wikiPageId" from="createResult.wikiPageId"/>
+            <else>
+                <service-call name="update#moqui.resource.wiki.WikiPage" in-map="context"/>
+            </else>
+            </if>
+
+            <!-- Save file text content to DbResource -->
+            <script><![CDATA[
+                org.moqui.impl.context.ExecutionContextImpl ecImpl = (org.moqui.impl.context.ExecutionContextImpl) ec
+                ec.resource.getLocationReference("dbresource://AGI_ROOT/${wikiSpaceId.toLowerCase()}/${pagePath}.md").putText(content)
+
+                // Optional: Link to an operational Action/Execution WorkEffort
+                if (associatedWorkEffortId) {
+                    ec.service.sync().name("store#mantle.work.effort.WikiPageWorkEffort").parameters([
+                        wikiPageId: wikiPageId,
+                        workEffortId: associatedWorkEffortId
+                    ]).call()
+                }
+            ]]></script>
+        </actions>
+    </service>
+
+</services>

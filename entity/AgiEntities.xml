@@ -4,4 +4,34 @@
         <field name="metaJsonData" type="text-long"/>
         <field name="lastUpdatedBy" type="id"/>
     </entity>
+
+    <entity entity-name="AgiArtifactWikiPage" package="org.moqui.ai" table-name="AGI_ARTIFACT_WIKI_PAGE">
+        <field name="agiArtifactId" type="id" is-pk="true"/>
+        <field name="wikiPageId" type="id" is-pk="true"/>
+        <field name="assocTypeEnumId" type="id"/> <!-- e.g. AweaPrimary, AweaCrossReference -->
+    
+        <relationship type="one" related="org.moqui.ai.AgiArtifact"/>
+        <relationship type="one" related="moqui.resource.wiki.WikiPage"/>
+        <relationship type="one" title="AssocType" related="moqui.basic.Enumeration">
+            <key-map field-name="assocTypeEnumId" related="enumId"/>
+        </relationship>
+    </entity>
+
+    <entity entity-name="WikiPageFacet" package="org.moqui.ai" table-name="WIKI_PAGE_FACET">
+        <field name="wikiPageFacetId" type="id" is-pk="true"/>
+        <field name="wikiPageId" type="id" required="true"/>
+        <field name="facetTypeEnumId" type="id" required="true"/>
+        <field name="facetKey" type="text-medium" required="true"/>
+        <field name="facetValue" type="text-very-long"/>
+        <field name="vectorEmbeddingId" type="id"/>
+    
+        <relationship type="one" related="moqui.resource.wiki.WikiPage"/>
+        <relationship type="one" title="FacetType" related="moqui.basic.Enumeration">
+            <key-map field-name="facetTypeEnumId" related="enumId"/>
+        </relationship>
+    
+        <index name="WP_FACET_WPID">
+            <index-field name="wikiPageId"/>
+        </index>
+    </entity>
 </entities>

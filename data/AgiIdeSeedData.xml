@@ -1,4 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
 <entity-facade-xml type="seed">
+    <!-- Wiki Root Resource for AGI Spaces -->
+    <moqui.resource.DbResource resourceId="AGI_ROOT" parentResourceId="" filename="AgiSpaces" isFile="N"/>
+
+    <!-- AGI Wiki Spaces -->
+    <moqui.resource.wiki.WikiSpace wikiSpaceId="AGI_INTENT" 
+                                   description="AGI Blueprint Intent Specifications" 
+                                   rootPageLocation="dbresource://AGI_ROOT/intent"/>
+
+    <moqui.resource.wiki.WikiSpace wikiSpaceId="AGI_DISCUSSION" 
+                                   description="AGI Agent &amp; Peer Architectural Discussions" 
+                                   rootPageLocation="dbresource://AGI_ROOT/discussion"/>
+
+    <moqui.resource.wiki.WikiSpace wikiSpaceId="AGI_INSTRUCTION" 
+                                   description="AGI System Instructions &amp; Prompts" 
+                                   rootPageLocation="dbresource://AGI_ROOT/instruction"/>
+
     <org.moqui.ai.AgiArtifact 
         agiArtifactId="SAMPLE_FORM_1" 
         artifactPath="component://agi-ide/screen/SampleForm.xml" 

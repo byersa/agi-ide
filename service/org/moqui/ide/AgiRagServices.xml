@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="preprocess" noun="RagContext" type="script" location="component://agi-ide/script/PreprocessRagContext.groovy">
+        <description>Dynamically inspects Entity metadata and conventions to build RAG context.</description>
+        <in-parameters>
+            <parameter name="artifactUri"/>
+            <parameter name="prompt" required="true"/>
+            <parameter name="targetComponent" default-value="nursinghome"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="contextItems" type="List"/>
+        </out-parameters>
+    </service>
+
+    <service verb="execute" noun="StagedAgentTurn" type="script" location="component://agi-ide/script/ExecuteStagedAgentTurn.groovy">
+        <description>Executes confirmed staged agent turn and writes artifacts.</description>
+        <in-parameters>
+            <parameter name="artifactUri"/>
+            <parameter name="targetComponent" default-value="nursinghome"/>
+            <parameter name="userPrompt" required="true"/>
+            <parameter name="originalPrompt"/>
+            <parameter name="adHocPrompt"/>
+            <parameter name="mcpTool"/>
+            <parameter name="mcpParams" type="Map"/>
+            <parameter name="selectedIntents" type="List"/>
+            <parameter name="ragContext" type="List"/>
+            <parameter name="contextPayloadJson"/>
+            <parameter name="activeRagContext"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="createdArtifactUri"/>
+            <parameter name="rawXmlContent"/>
+            <parameter name="message"/>
+            <parameter name="status"/>
+            <parameter name="filesGenerated" type="List"/>
+        </out-parameters>
+    </service>
+
+</services>

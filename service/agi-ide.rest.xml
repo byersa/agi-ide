@@ -171,4 +171,33 @@
             <param name="metaJsonBuffer" type="String" required="true"/>
         </method>
     </resource>
+    <!-- Preprocess RAG Context for Prompt Staging -->
+    <resource name="PreprocessRagContext">
+        <method type="post">
+            <service name="org.moqui.ide.AgiRagServices.preprocess#RagContext"/>
+        </method>
+    </resource>
+
+    <!-- Execute Staged Agent Turn (Batch & Single) -->
+    <resource name="ExecuteStagedAgentTurn">
+        <method type="post">
+            <service name="org.moqui.ide.AgiRagServices.execute#StagedAgentTurn"/>
+        </method>
+    </resource>
+
+    <!-- Wiki Tree Nodes & Persistence -->
+    <resource name="getWikiTreeNodes">
+        <method type="get" require-authentication="false">
+            <service name="org.moqui.ide.AgiWikiTreeServices.get#WikiTreeNodes"/>
+        </method>
+        <method type="post" require-authentication="false">
+            <service name="org.moqui.ide.AgiWikiTreeServices.get#WikiTreeNodes"/>
+        </method>
+    </resource>
+
+    <resource name="saveWikiNode">
+        <method type="post" require-authentication="false">
+            <service name="org.moqui.ide.AgiWikiTreeServices.save#WikiNode"/>
+        </method>
+    </resource>
 </rest-api>

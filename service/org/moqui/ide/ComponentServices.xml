@@ -107,7 +107,7 @@
                 artifactVal.setSequencedIdPrimary()
                 artifactVal.create()
                 
-                // 🎯 Auto-Seed Description as the Primary Root Intent WorkEffort
+                // Auto-Seed Description as Root Intent
                 if (description && description.trim()) {
                     ec.service.sync().name("org.moqui.ide.BlueprintServices.create#WorkEffortNode").parameters([
                         workEffortName: "Root Intent: " + compName,

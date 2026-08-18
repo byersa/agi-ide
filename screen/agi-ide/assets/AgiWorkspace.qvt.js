@@ -464,7 +464,6 @@
                     { name: 'AgiCanvasEditor', url: '/agi-ide-assets/AgiCanvasEditor.qvt.js', globalVar: 'AgiCanvasEditor' },
                     { name: 'AgiScreenEditor', url: '/agi-ide-assets/AgiScreenEditor.qvt.js', globalVar: 'AgiScreenEditor' },
                     { name: 'AgiComponentEditor', url: '/agi-ide-assets/AgiComponentEditor.qvt.js', globalVar: 'AgiComponentEditor' },
-                    { name: 'AgiPromptEditor', url: '/agi-ide-assets/AgiPromptEditor.qvt.js', globalVar: 'AgiPromptEditor' },
                     { name: 'AgiArtifactPalette', url: '/agi-ide-assets/AgiArtifactPalette.qvt.js', globalVar: 'AgiArtifactPalette' },
                     { name: 'MoquiXmlHost', url: '/agi-ai-assets/moqui-xml-host.qvt.js', globalVar: 'MoquiXmlHost' },
                     { name: 'AgiWorkEffortDetail', url: '/agi-ai-assets/AgiWorkEffortDetail.qvt.js', globalVar: 'AgiWorkEffortDetail' },
@@ -472,6 +471,8 @@
                     { name: 'DiscussionTree', url: '/agi-ai-assets/DiscussionTree.qvt.js', globalVar: 'DiscussionTree' },
                     { name: 'AgiNewComponentWizard', url: '/agi-ide-assets/AgiNewComponentWizard.qvt.js', globalVar: 'AgiNewComponentWizard' },
                     { name: 'AgiIntentDetail', url: '/agi-ide-assets/AgiIntentDetail.qvt.js', globalVar: 'AgiIntentDetail' },
+                    { name: 'AgiPromptEditor', url: '/agi-ide-assets/AgiPromptEditor.qvt.js', globalVar: 'AgiPromptEditor' },
+                    { name: 'AgiInstructions', url: '/agi-ide-assets/AgiInstructions.qvt.js', globalVar: 'AgiInstructions' },
                 ];
 
                 assets.forEach(asset => {

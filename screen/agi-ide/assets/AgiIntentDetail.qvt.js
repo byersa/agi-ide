@@ -4,23 +4,17 @@
         template: `
             <q-form @submit="saveIntent" class="q-gutter-xs q-pa-xs">
                 <q-input 
-                    v-model="formData.workEffortName" 
-                    label="Title / Summary *" 
+                    v-model="formData.pagePath" 
+                    label="Page Path / Title *" 
                     dense 
                     outlined 
-                    :rules="[val => !!val || 'Title is required']"
+                    :rules="[val => !!val || 'Page Path is required']"
                 />
                 <q-input 
-                    v-model="formData.description" 
-                    label="Detailed Description / Intent Specs" 
+                    v-model="formData.content" 
+                    label="Markdown Content" 
                     type="textarea" 
-                    rows="3" 
-                    dense 
-                    outlined 
-                />
-                <q-input 
-                    v-model="formData.targetMariaId" 
-                    label="Canvas Element Target (#mariaId)" 
+                    rows="5" 
                     dense 
                     outlined 
                 />
@@ -35,7 +29,7 @@
                     />
                     <q-btn 
                         type="submit" 
-                        :label="node?.isDraft ? 'Create Intent' : 'Save Specification'" 
+                        :label="node?.isDraft ? 'Create Node' : 'Save Specification'" 
                         :icon="node?.isDraft ? 'add_task' : 'save'" 
                         color="secondary" 
                         size="sm" 
@@ -52,9 +46,11 @@
             return {
                 saving: false,
                 formData: {
-                    workEffortName: '',
-                    description: '',
-                    targetMariaId: ''
+                    wikiPageId: '',
+                    wikiSpaceId: 'AGI_INTENT',
+                    pagePath: '',
+                    content: '',
+                    parentWikiPageId: ''
                 }
             };
         },
@@ -64,48 +60,48 @@
                 deep: true,
                 handler(newNode) {
                     if (newNode) {
-                        this.formData.workEffortName = newNode.workEffortName || '';
-                        this.formData.description = newNode.description || '';
-                        this.formData.targetMariaId = newNode.targetMariaId || '';
+                        this.formData.wikiPageId = newNode.wikiPageId || newNode.id || '';
+                        this.formData.wikiSpaceId = newNode.wikiSpaceId || 'AGI_INTENT';
+                        this.formData.pagePath = newNode.pagePath || newNode.label || newNode.workEffortName || '';
+                        this.formData.content = newNode.content || newNode.description || '';
+                        this.formData.parentWikiPageId = newNode.parentWikiPageId || '';
                     }
                 }
             }
         },
         methods: {
             saveIntent() {
-                if (!this.formData.workEffortName.trim()) return;
+                if (!this.formData.pagePath.trim()) return;
                 this.saving = true;
                 const vm = this;
 
-                const isDraft = !!this.node.isDraft;
-                const url = isDraft
-                    ? '/rest/s1/agi-ide/blueprint/create-node'
-                    : '/rest/s1/agi-ide/blueprint/create-node'; // Updates via same endpoint or update-node
+                const params = {
+                    wikiPageId: this.formData.wikiPageId || null,
+                    wikiSpaceId: this.formData.wikiSpaceId || 'AGI_INTENT',
+                    pagePath: this.formData.pagePath,
+                    content: this.formData.content,
+                    parentWikiPageId: this.formData.parentWikiPageId || null
+                };
 
                 $.ajax({
                     type: 'POST',
-                    url: url,
-                    data: {
-                        workEffortId: isDraft ? null : vm.node.workEffortId,
-                        workEffortName: vm.formData.workEffortName,
-                        description: vm.formData.description,
-                        targetMariaId: vm.formData.targetMariaId,
-                        agiArtifactId: vm.selectedArtifact ? vm.selectedArtifact.agiArtifactId : '',
-                        sourceReferenceId: vm.selectedArtifact ? vm.selectedArtifact.artifactPath : '',
-                        workEffortTypeEnumId: 'WetIntent'
-                    },
+                    url: '/rest/s1/agi-ide/saveWikiNode',
+                    data: params,
                     dataType: 'json',
                     headers: { 'moquiSessionToken': window.AGI_SERVER_CSRF_TOKEN || "" },
                     success: function (data) {
                         vm.saving = false;
+                        if (data && data.wikiPageId) {
+                            vm.formData.wikiPageId = data.wikiPageId;
+                        }
                         if (vm.$q) {
-                            vm.$q.notify({ type: 'positive', message: 'Intent specification saved.' });
+                            vm.$q.notify({ type: 'positive', message: 'Wiki node saved.' });
                         }
                         vm.$emit('intent-saved', data);
                     },
                     error: function (err) {
                         vm.saving = false;
-                        console.error("Failed to save intent detail:", err);
+                        console.error("Failed to save wiki node:", err);
                     }
                 });
             }
