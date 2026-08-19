@@ -48,7 +48,7 @@ Map proxyParams = [
 ]
 
 // 5. Invoke Gemini AI Proxy Service
-Map proxyResult = ec.service.sync().name("org.moqui.ide.AgiMcpServices.executeAdkProxyLoop").parameters(proxyParams).call()
+Map proxyResult = ec.service.sync().name("org.moqui.ide.AgiMcpServices.run#OpenAiProxy").parameters(proxyParams).call()
 
 if (proxyResult.error || proxyResult.status == "error") {
     context.status = "error"

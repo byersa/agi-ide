@@ -6,18 +6,25 @@
     <!-- ===================================================================== -->
     <service verb="modify" noun="Blueprint" type="inline" 
              name="org.moqui.ai.mcp.LayoutServices.modify#Blueprint">
-        <description>Modify or update a blueprint layout tree on the server</description>
+        <description>Modify or update a blueprint layout tree on the server and sync to disk XML.</description>
         <in-parameters>
-            <parameter name="artifactPath" type="String" required="true"/>
+            <parameter name="artifactPath" type="String"/>
+            <parameter name="artifactUri" type="String"/>
             <parameter name="metaJsonData" type="String" required="true"/>
         </in-parameters>
         <actions>
             <script><![CDATA[
+                String targetUri = artifactUri ?: artifactPath
                 String activeUserId = ec.user.getUserId() ?: "system_ide_user"
                 
-                // Store updated blueprint into WorkspaceBuffer
+                // 1. Store updated blueprint into WorkspaceBuffer
                 ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer")
-                    .parameters([artifactUri: artifactPath, userId: activeUserId, metaJsonBuffer: metaJsonData])
+                    .parameters([artifactUri: targetUri, userId: activeUserId, metaJsonBuffer: metaJsonData])
+                    .call()
+
+                // 2. Compile AST and write back to physical XML screen file
+                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.save#ScreenXml")
+                    .parameters([artifactUri: targetUri, metaJsonBuffer: metaJsonData])
                     .call()
             ]]></script>
         </actions>
@@ -32,6 +39,7 @@
             <parameter name="targetNodeId" type="String" required="true"/>
             <parameter name="action" type="String" default-value="APPEND"/>
             <parameter name="payloadNode" type="Map" required="true"/>
+            <parameter name="artifactUri" type="String"/>
             <parameter name="activeLayoutBuffer" type="String"/>
             <parameter name="activeLayoutBufferId" type="String"/>
             <parameter name="activeArtifactLocation" type="String"/>
@@ -51,8 +59,8 @@
                 String activeSessionId = context.sessionId ?: ec.context.sessionId
 
                 // 🎯 A. RESOLVE TARGET URI
-                String targetUri = ""
-                if (targetNodeId && targetNodeId.contains("#") && targetNodeId.startsWith("component://")) {
+                String targetUri = context.artifactUri ?: ""
+                if (!targetUri && targetNodeId && targetNodeId.contains("#") && targetNodeId.startsWith("component://")) {
                     targetUri = targetNodeId.split("#")[0]
                 }
                 if (!targetUri || targetUri.trim() == "") {
@@ -63,7 +71,7 @@
                     targetUri = (ec.context.get("activeArtifactLocation") ?: "").toString()
                 }
 
-                // 🎯 B. HYDRATE BUFFER (ADK Session State -> DB Fallback)
+                // 🎯 B. HYDRATE BUFFER (ADK Session State -> DB Fallback -> Disk Fallback)
                 String currentMetaJsonStr = context.activeLayoutBuffer
                 String bufferId = context.activeLayoutBufferId
 
@@ -80,18 +88,12 @@
 
                 if (!currentMetaJsonStr || !currentMetaJsonStr.trim().startsWith("{")) {
                     if (targetUri && targetUri.trim() != "") {
-                        // 🎯 Fetch list ordered by latest timestamp to guarantee reading newest history entry
-                        def bufferList = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
-                            .condition("artifactUri", targetUri)
-                            .condition("userId", activeUserId)
-                            .orderBy("-lastUpdatedStamp")
-                            .useCache(false)
-                            .list()
-
-                        def bufferRow = bufferList ? bufferList[0] : null
-                        if (bufferRow?.metaJsonBuffer) {
-                            currentMetaJsonStr = bufferRow.metaJsonBuffer
-                            bufferId = bufferRow.workspaceBufferId
+                        Map bufResult = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.get#WorkspaceBuffer")
+                            .parameters([artifactUri: targetUri, userId: activeUserId])
+                            .call()
+                        if (bufResult?.metaJsonBuffer) {
+                            currentMetaJsonStr = bufResult.metaJsonBuffer
+                            bufferId = bufResult.workspaceBufferId
                         }
                     }
                 }
@@ -104,18 +106,18 @@
                     try {
                         layoutTree = new JsonSlurper().parseText(currentMetaJsonStr) as Map
                     } catch (Exception parseEx) {
-                        ec.logger.warn("⚠️ [manage#WorkspaceBuffer] Invalid JSON buffer in DB/State (${parseEx.message}). Reading XML from disk...")
+                        ec.logger.warn("⚠️ [manage#WorkspaceBuffer] Invalid JSON buffer (${parseEx.message}). Reading XML from disk...")
                         parseFailed = true
                     }
                 } else {
                     parseFailed = true
                 }
 
-                // 🎯 RECOVERY: Read directly from physical XML file on disk if DB buffer is missing!
+                // 🎯 RECOVERY: Read directly from physical XML file on disk if buffer is missing
                 if (parseFailed || layoutTree.isEmpty()) {
                     if (targetUri && targetUri.trim() != "") {
                         try {
-                            ec.logger.info("📄 [manage#WorkspaceBuffer] No DB buffer found. Parsing physical XML file from disk: '${targetUri}'")
+                            ec.logger.info("📄 [manage#WorkspaceBuffer] Parsing physical XML file from disk: '${targetUri}'")
                             Map parseResult = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.parse#XmlToTree")
                                 .parameter("artifactUri", targetUri)
                                 .call()
@@ -127,7 +129,7 @@
                         }
                     }
 
-                    // Absolute last-resort fallback if file does not exist on disk
+                    // Absolute last-resort fallback
                     if (layoutTree.isEmpty()) {
                         String screenName = targetUri ? targetUri.split("/")[-1].replace(".xml", "") : "ActiveScreen"
                         ec.logger.info("🛠️ [manage#WorkspaceBuffer] Initializing default root tree for URI: '${targetUri}'")
@@ -137,9 +139,10 @@
                             mariaId: screenName + "#root",
                             widgets: [
                                 [
-                                    type: "form-single",
-                                    id: "patient_intake",
-                                    mariaId: (targetUri ?: "") + "#patient_intake",
+                                    _moquiTag: "form-single",
+                                    "@type": "m-form-single",
+                                    id: "default_form",
+                                    mariaId: (targetUri ?: "") + "#default_form",
                                     children: []
                                 ]
                             ]
@@ -158,7 +161,7 @@
                 if (isMutated) {
                     String updatedMetaJson = JsonOutput.toJson(layoutTree)
 
-                    // Persist newly populated tree directly to WorkspaceBuffer using service call
+                    // 1. Persist updated tree to WorkspaceBuffer
                     ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer")
                         .parameters([
                             workspaceBufferId: bufferId,
@@ -168,7 +171,15 @@
                         ])
                         .call()
 
-                    // ADK Session Memory Sync
+                    // 2. Compile AST and write back to physical XML on disk
+                    ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.save#ScreenXml")
+                        .parameters([
+                            artifactUri: targetUri,
+                            metaJsonBuffer: updatedMetaJson
+                        ])
+                        .call()
+
+                    // 3. ADK Session Memory Sync
                     if (activeSessionId) {
                         def runner = org.moqui.adk.AdkManager.runnerForSession(activeSessionId)
                         def sessionOpt = runner.sessionService().getSession("moqui-adk", activeUserId, activeSessionId, java.util.Optional.empty()).blockingGet()
@@ -199,6 +210,7 @@
             <parameter name="label" required="true"/>
             <parameter name="encrypt" type="String" default-value="false"/>
             <parameter name="aiIntent" type="String"/>
+            <parameter name="artifactUri"/>
             <parameter name="activeLayoutBuffer"/>
             <parameter name="activeLayoutBufferId"/>
             <parameter name="activeArtifactLocation"/>
@@ -216,7 +228,7 @@
                     ? rawName.trim() 
                     : label.replaceAll("[^a-zA-Z0-9_]", "")
 
-                String resolvedUri = targetNodeId.contains("#") ? targetNodeId.split("#")[0] : (context.activeArtifactLocation ?: "")
+                String resolvedUri = context.artifactUri ?: (targetNodeId.contains("#") ? targetNodeId.split("#")[0] : (context.activeArtifactLocation ?: ""))
 
                 // 🎯 1. HIPAA PHI / Medical Field Auto-Detection
                 Set<String> sensitivePhiFields = [
@@ -229,15 +241,17 @@
                 boolean autoPhiEncrypt = "true".equalsIgnoreCase(context.encrypt) || 
                                          sensitivePhiFields.any { normalizedCheck.contains(it) }
 
-                // 🎯 2. Populate children with an m-text-line input node so QMETA AST renders on the canvas
+                // 🎯 2. Build declarative field node for QMETA AST
                 Map dynamicFieldNode = [
+                    _moquiTag: "field",
+                    "@type": "m-field",
                     id: java.util.UUID.randomUUID().toString(),
-                    "@type": "FormField",
                     name: cleanName,
                     title: label,
                     mariaId: resolvedUri + "#" + cleanName,
                     children: [
                         [
+                            _moquiTag: "text-line",
                             "@type": "m-text-line",
                             attributes: [
                                 placeholder: "",
@@ -254,15 +268,16 @@
                     ec.logger.info("🔒 [HIPAA Enforcement] Applied encrypt='true' on field: ${cleanName}")
                 }
 
-                // Stamp AI Intent if provided or default command
+                // Stamp AI Intent if provided
                 dynamicFieldNode["ai-intent"] = context.aiIntent ?: "/add-field ${cleanName}"
 
-                // Delegate hydration, mutation, and persistence entirely to manage#WorkspaceBuffer
+                // Delegate hydration, mutation, and persistence to manage#WorkspaceBuffer
                 Map bufferResult = ec.service.sync().name("org.moqui.ai.mcp.LayoutServices.manage#WorkspaceBuffer")
                     .parameters([
                         targetNodeId: targetNodeId,
                         action: "APPEND",
                         payloadNode: dynamicFieldNode,
+                        artifactUri: resolvedUri,
                         activeLayoutBuffer: context.activeLayoutBuffer,
                         activeLayoutBufferId: context.activeLayoutBufferId,
                         activeArtifactLocation: context.activeArtifactLocation
@@ -302,7 +317,7 @@
 
                     if (isTarget) {
                         if ("APPEND".equalsIgnoreCase(action)) {
-                            // 🎯 Normalize list key: Ensure we append to whichever array already holds existing fields
+                            // Normalize list key: append to whichever collection exists
                             if (node.children == null && node.widgets != null) {
                                 node.children = node.widgets
                             }
@@ -310,7 +325,6 @@
                                 node.children = []
                             }
                             
-                            // Append without clearing existing fields
                             node.children.add(payloadNode)
                             return true
                         } else if ("REPLACE".equalsIgnoreCase(action)) {

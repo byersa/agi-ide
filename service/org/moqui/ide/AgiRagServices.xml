@@ -17,24 +17,22 @@
     <service verb="execute" noun="StagedAgentTurn" type="script" location="component://agi-ide/script/ExecuteStagedAgentTurn.groovy">
         <description>Executes confirmed staged agent turn and writes artifacts.</description>
         <in-parameters>
-            <parameter name="artifactUri"/>
-            <parameter name="targetComponent" default-value="nursinghome"/>
-            <parameter name="userPrompt" required="true"/>
-            <parameter name="originalPrompt"/>
-            <parameter name="adHocPrompt"/>
-            <parameter name="mcpTool"/>
+            <parameter name="userPrompt" type="String" allow-html="any" required="true"/>
+            <parameter name="adHocPrompt" type="String" allow-html="any"/>
+            <parameter name="targetComponent" type="String" default-value="nursinghome"/>
+            <parameter name="artifactUri" type="String"/>
+            <parameter name="mcpTool" type="String"/>
             <parameter name="mcpParams" type="Map"/>
             <parameter name="selectedIntents" type="List"/>
             <parameter name="ragContext" type="List"/>
-            <parameter name="contextPayloadJson"/>
-            <parameter name="activeRagContext"/>
+            <!-- 🎯 FIX: Add allow-html="any" so raw XML tags pass validation -->
+            <parameter name="activeRagContext" type="String" allow-html="any"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="createdArtifactUri"/>
-            <parameter name="rawXmlContent"/>
-            <parameter name="message"/>
-            <parameter name="status"/>
-            <parameter name="filesGenerated" type="List"/>
+            <parameter name="completionText" type="String"/>
+            <parameter name="createdArtifactUri" type="String"/>
+            <parameter name="rawXmlContent" type="String"/>
+            <parameter name="message" type="String"/>
         </out-parameters>
     </service>
 

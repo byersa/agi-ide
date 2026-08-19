@@ -504,13 +504,21 @@
                     ? parentWorkEffortId.trim() 
                     : null
 
+                String safeMariaId = org.moqui.ide.ScreenEditorServices.generateMariaId(sourceReferenceId, targetMariaId)
+
+                // Truncate or hash sourceReferenceId if stored in standard id field (VARCHAR 63)
+                String safeSourceRef = sourceReferenceId
+                if (safeSourceRef && safeSourceRef.length() > 60) {
+                    safeSourceRef = org.moqui.ide.ScreenEditorServices.generateMariaId(sourceReferenceId, "src")
+                }
+
                 def newWe = ec.entity.makeValue("mantle.work.effort.WorkEffort")
                 newWe.workEffortName = workEffortName
                 newWe.parentWorkEffortId = cleanParentId
                 newWe.agiArtifactId = targetArtifactId
                 newWe.sourceReferenceId = sourceReferenceId
                 newWe.workEffortTypeEnumId = workEffortTypeEnumId
-                newWe.targetMariaId = targetMariaId
+                newWe.targetMariaId = safeMariaId
                 newWe.statusId = "WeInPlanning"
                 newWe.setSequencedIdPrimary()
                 newWe.create()

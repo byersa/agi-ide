@@ -371,7 +371,7 @@
                 const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
                 const axiosConfig = ideStore ? ideStore.getAxiosConfig : {};
 
-                axios.post('/rest/s1/agi-ide/geminiProxy', {
+                axios.post('/rest/s1/agi-ide/openAiProxy', {
                     userPrompt: userPromptText,
                     moquiSessionToken: tkn,
                     focusCoordinate: currentFileUri

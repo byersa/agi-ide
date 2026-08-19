@@ -51,6 +51,12 @@
         </method>
     </resource>
 
+    <resource name="openAiProxy">
+        <method type="post" require-authentication="false">
+            <service name="org.moqui.ide.AgiMcpServices.run#OpenAiProxy"/>
+        </method>
+    </resource>
+
     <!-- ========================================================= -->
     <!--  AGI HARNESS & TELEMETRY REST ENDPOINTS                    -->
     <!-- ========================================================= -->

@@ -20,7 +20,7 @@
             `;
 
             try {
-                const response = await axios.post('/rest/s1/agi-ide/geminiProxy', {
+                const response = await axios.post('/rest/s1/agi-ide/openAiProxy', {
                     userPrompt: compilationPrompt.trim(),
                     moquiSessionToken: ideStore ? ideStore.moquiSessionToken : "",
                     targetMariaId: mariaId,

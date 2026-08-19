@@ -8,8 +8,8 @@
     <service verb="create" noun="Screen" type="inline">
         <description>
             MCP Tool: Scaffolds a new XML screen file on disk under the target component,
-            auto-registers the artifact in AgiArtifact, and links it to an intent node.
-            Optionally scaffolds a companion Vue/QVT asset if editorType is AgiComponentEditor.
+            auto-registers the artifact in AgiArtifact, seeds the WorkspaceBuffer AST,
+            and links it to a root intent node. Optionally creates companion QVT assets.
         </description>
         <in-parameters>
             <parameter name="targetComponent" type="String" default-value="nursinghome" internal="true"/>
@@ -26,15 +26,26 @@
         </out-parameters>
         <actions>
             <script><![CDATA[
+                import groovy.json.JsonOutput
+
                 String compName = targetComponent.trim().toLowerCase().replaceAll("[^a-z0-9-]", "")
                 String relPath = screenPath.trim()
+                
                 if (relPath.startsWith("component://")) {
                     relPath = relPath.replace("component://" + compName + "/screen/", "")
                 }
                 if (relPath.endsWith(".xml")) {
                     relPath = relPath.substring(0, relPath.length() - 4)
                 }
-
+                if (relPath.startsWith("/")) {
+                    relPath = relPath.substring(1)
+                }
+                
+                // Ensure component sub-folder is present (e.g. nursinghome/PatientManagement)
+                if (!relPath.startsWith(compName + "/") && !relPath.contains("/")) {
+                    relPath = "${compName}/${relPath}"
+                }
+                
                 String fullArtifactUri = "component://${compName}/screen/${relPath}.xml"
                 String physicalFilePath = "runtime/component/${compName}/screen/${relPath}.xml"
 
@@ -105,8 +116,9 @@ ${scriptIncludeTag}
 </screen>
 """
                 targetFile.text = xmlContent
-                ec.logger.info("📄 [MCP /create-screen] Created XML screen shell at ${physicalFilePath} (Editor: ${targetEditor})")
+                ec.logger.info("📄 [MCP /create-screen] Created XML screen shell at ${physicalFilePath}")
 
+                // Auto-register AgiArtifact record
                 def enumCheck = ec.entity.find("moqui.basic.Enumeration").condition("enumId", "AatXmlScreen").one()
                 String typeEnumId = enumCheck ? "AatXmlScreen" : null
 
@@ -126,9 +138,17 @@ ${scriptIncludeTag}
                     artifactVal.create()
                 }
 
+                // Initial Seed of WorkspaceBuffer AST
+                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.parse#XmlToTree")
+                    .parameter("artifactUri", fullArtifactUri)
+                    .call()
+
                 String cleanParentId = (parentWorkEffortId != null && parentWorkEffortId.trim().length() > 0) 
                     ? parentWorkEffortId.trim() 
                     : null
+
+                String safeMariaId = org.moqui.ide.ScreenEditorServices.generateMariaId(sourceReferenceId, targetMariaId)
+                ec.logger.info("📦 [MCP /create#Screen] safeMariaId: ${safeMariaId}, length: ${safeMariaId.length()} ")
 
                 Map weResult = ec.service.sync().name("org.moqui.ide.BlueprintServices.create#WorkEffortNode").parameters([
                     workEffortName: "Screen Intent: " + displayTitle,
@@ -136,7 +156,7 @@ ${scriptIncludeTag}
                     agiArtifactId: artifactVal.agiArtifactId,
                     sourceReferenceId: fullArtifactUri,
                     workEffortTypeEnumId: "WetIntent",
-                    targetMariaId: rootContainerId
+                    targetMariaId: safeMariaId 
                 ]).call()
 
                 context.artifactUri = fullArtifactUri
@@ -204,6 +224,7 @@ ${scriptIncludeTag}
                 }
                 ec.logger.info("🚚 [MCP /move-artifact] Successfully relocated file on disk to: ${tgtPhysical}")
 
+                // Move companion QVT asset if present
                 String srcQvtPhysical = srcPhysical.replace(".xml", ".qvt.js")
                 int lastSlashIdx = srcQvtPhysical.lastIndexOf('/')
                 if (lastSlashIdx != -1) {
@@ -223,6 +244,7 @@ ${scriptIncludeTag}
                     }
                 }
 
+                // Cascade update all database references
                 def art = ec.entity.find("org.moqui.ai.AgiArtifact").condition("artifactPath", srcUri).one()
                 if (art) {
                     art.artifactPath = tgtUri
@@ -346,6 +368,11 @@ ${scriptIncludeTag}
                 xmlFile.text = xmlText
                 ec.logger.info("✏️ [MCP /attach-qvt-asset] Updated ${physicalPath} to include ${scriptTag}")
 
+                // Re-sync AST
+                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.parse#XmlToTree")
+                    .parameter("artifactUri", srcUri)
+                    .call()
+
                 def art = ec.entity.find("org.moqui.ai.AgiArtifact").condition("artifactPath", srcUri).one()
                 if (art) {
                     def parentWe = ec.entity.find("mantle.work.effort.WorkEffort")
@@ -369,20 +396,20 @@ ${scriptIncludeTag}
     </service>
 
     <!-- ===================================================================== -->
-    <!-- ADD CONTAINER LAYOUT WIDGET                                           -->
+    <!-- ADD CONTAINER LAYOUT WIDGET (AST WorkspaceBuffer Mutator)             -->
     <!-- ===================================================================== -->
     <service verb="add" noun="Container" authenticate="anonymous-all">
         <description>
-            Injects a container layout widget (e.g. container-row, container-box, section) 
-            into a target XML screen at a specified parent element ID.
+            Injects a container layout widget into the active Meta-JSON AST in WorkspaceBuffer,
+            persists the buffer, and re-compiles the clean XML back to disk.
         </description>
         <in-parameters>
             <parameter name="artifactUri" required="true"><description>Full component URI (e.g. component://nursinghome/screen/nursinghome.xml)</description></parameter>
             <parameter name="containerType" default-value="container"><description>Tag name: container, container-row, container-box, or section</description></parameter>
             <parameter name="containerId"><description>Optional ID attribute for the new container</description></parameter>
             <parameter name="styleClass"><description>Optional CSS class string (e.g. row items-center justify-between q-pa-sm)</description></parameter>
-            <parameter name="parentContainerId" default-value="nursinghome-root"><description>Target parent container ID inside the screen</description></parameter>
-            <parameter name="conditionScript"><description>Optional Moqui Groovy condition for role/permission gating (e.g. ec.user.hasPermission('NURSE_ADMIN'))</description></parameter>
+            <parameter name="parentContainerId"><description>Target parent container ID or mariaId inside the screen AST</description></parameter>
+            <parameter name="conditionScript"><description>Optional Moqui Groovy condition for role/permission gating</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="artifactUri"/>
@@ -390,45 +417,76 @@ ${scriptIncludeTag}
         </out-parameters>
         <actions>
             <script><![CDATA[
-                def resRef = ec.resource.getLocationReference(artifactUri)
-                if (!resRef || !resRef.exists) {
-                    ec.message.addError("Target artifact XML file does not exist at ${artifactUri}")
+                import groovy.json.JsonSlurper
+                import groovy.json.JsonOutput
+
+                // 1. Fetch current AST layout tree from WorkspaceBuffer
+                Map bufResult = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.get#WorkspaceBuffer")
+                    .parameter("artifactUri", artifactUri)
+                    .call()
+
+                if (!bufResult?.metaJsonBuffer) {
+                    ec.message.addError("Could not retrieve active WorkspaceBuffer AST for artifact: ${artifactUri}")
                     return
                 }
 
-                String xmlText = resRef.getText()
-                def rootNode = new XmlSlurper(false, false).parseText(xmlText)
-
+                Map layoutTree = new JsonSlurper().parseText(bufResult.metaJsonBuffer) as Map
                 String newId = containerId ?: "${containerType}-${System.currentTimeMillis()}"
 
-                def targetParent = rootNode.depthFirst().find { it.@id == parentContainerId }
-                if (!targetParent) {
-                    targetParent = rootNode.widgets[0]
+                // 2. Build the new AST node
+                Map newNode = [
+                    _moquiTag: containerType,
+                    '@type': "m-${containerType}",
+                    id: newId,
+                    mariaId: "maria_${newId.replaceAll('[^a-zA-Z0-9_]', '_')}",
+                    children: []
+                ]
+                if (styleClass) newNode.style = styleClass
+                if (conditionScript) newNode.condition = conditionScript
+
+                // 3. Helper to locate target parent node in AST
+                def findTargetNode
+                findTargetNode = { Map node ->
+                    if (!node) return null
+                    if (parentContainerId) {
+                        if (node.id == parentContainerId || node.mariaId == parentContainerId || node.name == parentContainerId) {
+                            return node
+                        }
+                    }
+                    List searchChildren = []
+                    if (node.children instanceof List) searchChildren.addAll(node.children)
+                    if (node.widgets instanceof List) searchChildren.addAll(node.widgets)
+
+                    for (def child in searchChildren) {
+                        if (child instanceof Map) {
+                            def match = findTargetNode((Map) child)
+                            if (match != null) return match
+                        }
+                    }
+                    return null
                 }
 
-                if (!targetParent) {
-                    ec.message.addError("Could not locate parent container '${parentContainerId}' or <widgets> root in ${artifactUri}")
-                    return
+                Map targetNode = parentContainerId ? findTargetNode(layoutTree) : null
+                if (!targetNode) {
+                    // Fallback to top-level widgets or root node
+                    targetNode = layoutTree
                 }
 
-                def sb = new StringBuilder()
-                if (containerType == "section") {
-                    sb.append("<section name=\"${newId}\"")
-                    if (conditionScript) sb.append(" condition=\"${conditionScript}\"")
-                    sb.append("><widgets></widgets></section>")
-                } else {
-                    sb.append("<${containerType} id=\"${newId}\"")
-                    if (styleClass) sb.append(" class=\"${styleClass}\"")
-                    sb.append("></${containerType}>")
-                }
+                if (targetNode.children == null) targetNode.children = []
+                targetNode.children.add(newNode)
 
-                String updatedXml = xmlText.replace(" id=\"${parentContainerId}\">", " id=\"${parentContainerId}\">\n        " + sb.toString())
-                if (updatedXml == xmlText) {
-                    updatedXml = xmlText.replace("</container>", "    " + sb.toString() + "\n</container>")
-                }
+                // 4. Save updated AST buffer and compile back to physical XML
+                String updatedJson = JsonOutput.toJson(layoutTree)
 
-                resRef.putText(updatedXml)
-                ec.logger.info("📦 [MCP /add-container] Injected <${containerType} id=\"${newId}\"> into ${artifactUri}")
+                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer")
+                    .parameters([artifactUri: artifactUri, metaJsonBuffer: updatedJson])
+                    .call()
+
+                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.save#ScreenXml")
+                    .parameters([artifactUri: artifactUri, metaJsonBuffer: updatedJson])
+                    .call()
+
+                ec.logger.info("📦 [MCP /add-container] Injected <${containerType} id=\"${newId}\"> into AST for ${artifactUri}")
 
                 context.artifactUri = artifactUri
                 context.createdContainerId = newId
@@ -440,12 +498,16 @@ ${scriptIncludeTag}
                             .condition("workEffortTypeEnumId", "WetIntent")
                             .one()
 
+                    String safeMariaId = org.moqui.ide.ScreenEditorServices.generateMariaId(sourceReferenceId, targetMariaId)
+                    ec.logger.info("📦 [MCP /add-container] safeMariaId: ${safeMariaId}, length: ${safeMariaId.length()} ")
+
                     ec.service.sync().name("org.moqui.ide.BlueprintServices.create#WorkEffortNode").parameters([
                         workEffortName: "Added Container (${containerType}): ${newId}",
                         parentWorkEffortId: parentWe?.workEffortId,
                         agiArtifactId: art.agiArtifactId,
                         sourceReferenceId: artifactUri,
-                        workEffortTypeEnumId: "WetIntent"
+                        workEffortTypeEnumId: "WetIntent",
+                        targetMariaId: safeMariaId
                     ]).call()
                 }
             ]]></script>
@@ -453,10 +515,13 @@ ${scriptIncludeTag}
     </service>
 
     <!-- ===================================================================== -->
-    <!-- BIND SUBSCREEN TO PARENT SCREEN                                       -->
+    <!-- BIND SUBSCREEN TO PARENT SCREEN (AST WorkspaceBuffer Mutator)         -->
     <!-- ===================================================================== -->
     <service verb="bind" noun="Subscreen" authenticate="anonymous-all">
-        <description>Mounts child subscreens into parent XML cleanly without string corruption.</description>
+        <description>
+            Mounts child subscreens directly into the parent screen's Meta-JSON AST in WorkspaceBuffer,
+            persists the buffer, and re-compiles the clean XML back to disk.
+        </description>
         <in-parameters>
             <parameter name="artifactUri" required="true"/>
             <parameter name="subscreenName" required="true"/>
@@ -470,16 +535,9 @@ ${scriptIncludeTag}
         </out-parameters>
         <actions>
             <script><![CDATA[
-                import groovy.xml.XmlParser
-                import groovy.xml.XmlUtil
+                import groovy.json.JsonSlurper
+                import groovy.json.JsonOutput
 
-                def resRef = ec.resource.getLocationReference(artifactUri)
-                if (!resRef || !resRef.exists) {
-                    ec.message.addError("Parent screen URI (${artifactUri}) does not exist.")
-                    return
-                }
-
-                String xmlText = resRef.getText()
                 String name = subscreenName
                 String location = subscreenLocation
                 
@@ -491,55 +549,87 @@ ${scriptIncludeTag}
                 String title = menuTitle ?: name.replaceAll("([a-z])([A-Z])", '$1 $2')
                 boolean setAsDefault = isDefault || (defaultSubscreen && defaultSubscreen.toString().contains(name))
 
-                // Parse XML safely using XmlParser to avoid substring replacements
-                def rootNode = new XmlParser(false, false).parseText(xmlText)
-                def subscreensNode = rootNode.subscreens[0]
-
-                if (!subscreensNode) {
-                    // Create <subscreens> container if it doesn't exist
-                    subscreensNode = rootNode.appendNode('subscreens')
-                }
-
-                if (setAsDefault) {
-                    subscreensNode.attributes()['default-item'] = name
-                }
-
-                // Check if subscreen-item already exists to prevent duplicate entries
-                def existingItem = subscreensNode.'subscreens-item'.find { it.attributes()['name'] == name }
-                if (existingItem) {
-                    existingItem.attributes()['location'] = location
-                    existingItem.attributes()['menu-title'] = title
-                } else {
-                    subscreensNode.appendNode('subscreens-item', [
-                        name: name,
-                        location: location,
-                        'menu-title': title
-                    ])
-                }
-
-                // Ensure <subscreens-tabs> and <subscreens-active> exist in <widgets>
-                def widgetsNode = rootNode.widgets[0]
-                if (!widgetsNode) widgetsNode = rootNode.appendNode('widgets')
-
-                def rootContainer = widgetsNode.container.find { it.attributes()['id'] == 'nursinghome-root' } ?: widgetsNode
-
-                if (!rootContainer.'subscreens-tabs'[0]) {
-                    rootContainer.appendNode('subscreens-tabs', [id: 'nursinghome-nav-tabs'])
-                }
-                if (!rootContainer.'subscreens-active'[0]) {
-                    rootContainer.appendNode('subscreens-active', [id: 'nursinghome-body-viewport'])
-                }
-
-                // Serialize back to formatted XML
-                String updatedXml = XmlUtil.serialize(rootNode)
-                resRef.putText(updatedXml)
-
-                // Sync back to WorkspaceBuffer AST
-                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.parse#XmlToTree")
+                // 1. Fetch current AST layout tree
+                Map bufResult = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.get#WorkspaceBuffer")
                     .parameter("artifactUri", artifactUri)
                     .call()
 
-                ec.logger.info("🔗 [bind#Subscreen] Bound subscreen [${name}] to [${artifactUri}] safely.")
+                if (!bufResult?.metaJsonBuffer) {
+                    ec.message.addError("Parent screen URI (${artifactUri}) could not load into WorkspaceBuffer.")
+                    return
+                }
+
+                Map layoutTree = new JsonSlurper().parseText(bufResult.metaJsonBuffer) as Map
+
+                // 2. Mutate subscreens map inside the AST
+                if (layoutTree.subscreens == null || !(layoutTree.subscreens instanceof Map)) {
+                    layoutTree.subscreens = [
+                        _moquiTag: "subscreens",
+                        defaultItem: setAsDefault ? name : "",
+                        children: []
+                    ]
+                }
+
+                if (setAsDefault) {
+                    layoutTree.subscreens.defaultItem = name
+                }
+
+                List subItems = layoutTree.subscreens.children ?: []
+                def existingItem = subItems.find { it.name == name }
+
+                if (existingItem) {
+                    existingItem.location = location
+                    existingItem.menuTitle = title
+                } else {
+                    subItems.add([
+                        _moquiTag: "subscreens-item",
+                        "@type": "m-subscreens-item",
+                        name: name,
+                        location: location,
+                        menuTitle: title
+                    ])
+                }
+                layoutTree.subscreens.children = subItems
+
+                // 3. Ensure navigation and body viewports exist in the widget tree
+                def findOrCreateWidget = { String tag, String idVal ->
+                    def findTag
+                    findTag = { Map node ->
+                        if (!node) return null
+                        if (node._moquiTag == tag || node['@type'] == "m-${tag}") return node
+                        for (child in (node.children ?: [])) {
+                            if (child instanceof Map) {
+                                def m = findTag(child)
+                                if (m) return m
+                            }
+                        }
+                        return null
+                    }
+                    if (!findTag(layoutTree)) {
+                        if (layoutTree.children == null) layoutTree.children = []
+                        layoutTree.children.add([
+                            _moquiTag: tag,
+                            '@type': "m-${tag}",
+                            id: idVal
+                        ])
+                    }
+                }
+
+                findOrCreateWidget("subscreens-tabs", "nursinghome-nav-tabs")
+                findOrCreateWidget("subscreens-active", "nursinghome-body-viewport")
+
+                // 4. Save and compile
+                String updatedJson = JsonOutput.toJson(layoutTree)
+
+                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer")
+                    .parameters([artifactUri: artifactUri, metaJsonBuffer: updatedJson])
+                    .call()
+
+                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.save#ScreenXml")
+                    .parameters([artifactUri: artifactUri, metaJsonBuffer: updatedJson])
+                    .call()
+
+                ec.logger.info("🔗 [bind#Subscreen] Bound subscreen [${name}] to [${artifactUri}] in AST.")
                 context.artifactUri = artifactUri
             ]]></script>
         </actions>
@@ -554,8 +644,8 @@ ${scriptIncludeTag}
             Accepts either 'artifactUri' or 'screenPath' parameters.
         </description>
         <in-parameters>
-            <parameter name="artifactUri"/> <!-- e.g. "component://nursinghome/screen/nursinghome.xml" -->
-            <parameter name="screenPath"/>  <!-- Fallback parameter alias -->
+            <parameter name="artifactUri"/>
+            <parameter name="screenPath"/>
         </in-parameters>
         <out-parameters>
             <parameter name="rawXmlContent"/>
@@ -583,11 +673,9 @@ ${scriptIncludeTag}
                             fileName = parts[1]
                         }
 
-                        // Try XML screen path
                         String xmlLoc = "component://${componentName}/screen/${componentName}/${fileName}.xml"
                         resourceReference = ec.resource.getLocationReference(xmlLoc)
 
-                        // Try QVT asset path
                         if (!resourceReference || !resourceReference.exists) {
                             String qvtLoc = "component://${componentName}/screen/${componentName}/assets/${fileName}.qvt.js"
                             resourceReference = ec.resource.getLocationReference(qvtLoc)
@@ -597,13 +685,13 @@ ${scriptIncludeTag}
                     if (resourceReference && resourceReference.exists) {
                         context.rawXmlContent = resourceReference.getText()
                         context.fileLocation = resourceReference.location
-                        ec.logger.info("⚡ [REST /getRawXml] Successfully retrieved asset at: [${resourceReference.location}]")
+                        ec.logger.info("⚡ [REST /getRawXml] Retrieved asset at: [${resourceReference.location}]")
                     } else {
                         context.rawXmlContent = ""
                         context.fileLocation = null
                     }
                 } catch (Exception ex) {
-                    ec.logger.error("Failed to execute flexible dynamic resource extraction", ex)
+                    ec.logger.error("Failed to execute dynamic resource extraction", ex)
                     context.rawXmlContent = ""
                     context.fileLocation = null
                 }
@@ -612,64 +700,173 @@ ${scriptIncludeTag}
     </service>
 
     <!-- ===================================================================== -->
-    <!-- ADD ACTION TO SCREEN AST                                              -->
+    <!-- ADD ACTION TO SCREEN AST (AST WorkspaceBuffer Mutator)                -->
     <!-- ===================================================================== -->
     <service verb="add" noun="ActionToScreen" authenticate="anonymous-all">
         <description>
-            Injects an action block (e.g. entity-find, service-call, script) into a screen's AST or XML file.
+            Injects an action block (e.g. entity-find, service-call) into the screen's AST
+            and persists the updated buffer to disk.
         </description>
         <in-parameters>
             <parameter name="artifactUri" required="true"/>
-            <parameter name="actionType" required="true"/> <!-- e.g. "entity-find", "service-call" -->
-            <parameter name="entityName"/> <!-- e.g. "moqui.basic.Enumeration" -->
-            <parameter name="listName"/> <!-- e.g. "genderList" -->
-            <parameter name="filterField"/> <!-- e.g. "enumTypeId" -->
-            <parameter name="filterValue"/> <!-- e.g. "Gender" -->
+            <parameter name="actionType" required="true"/>
+            <parameter name="entityName"/>
+            <parameter name="listName"/>
+            <parameter name="filterField"/>
+            <parameter name="filterValue"/>
         </in-parameters>
         <out-parameters>
             <parameter name="artifactUri"/>
         </out-parameters>
         <actions>
             <script><![CDATA[
-                def resRef = ec.resource.getLocationReference(artifactUri)
-                if (!resRef || !resRef.exists) {
-                    ec.message.addError("Screen XML file not found at ${artifactUri}")
-                    return
-                }
+                import groovy.json.JsonSlurper
+                import groovy.json.JsonOutput
 
-                String xmlText = resRef.getText()
-
-                // Construct XML action block based on intent actionType
-                StringBuilder actionXml = new StringBuilder()
-                if (actionType == "entity-find") {
-                    actionXml.append("        <entity-find entity-name=\"${entityName}\" list=\"${listName}\">\n")
-                    if (filterField && filterValue) {
-                        actionXml.append("            <econdition field-name=\"${filterField}\" value=\"${filterValue}\"/>\n")
-                    }
-                    actionXml.append("            <order-by field-name=\"description\"/>\n")
-                    actionXml.append("        </entity-find>\n")
-                }
-
-                // Inject into existing <actions> block or construct a new one
-                if (xmlText.contains("<actions>")) {
-                    xmlText = xmlText.replace("</actions>", actionXml.toString() + "    </actions>")
-                } else {
-                    String fullActionsBlock = "    <actions>\n" + actionXml.toString() + "    </actions>\n"
-                    if (xmlText.contains("<widgets>")) {
-                        xmlText = xmlText.replace("<widgets>", fullActionsBlock + "\n    <widgets>")
-                    } else {
-                        xmlText = xmlText.replace("</screen>", fullActionsBlock + "</screen>")
-                    }
-                }
-
-                resRef.putText(xmlText)
-                
-                // Sync updated XML back into WorkspaceBuffer AST
-                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.parse#XmlToTree")
+                // 1. Fetch current AST layout tree
+                Map bufResult = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.get#WorkspaceBuffer")
                     .parameter("artifactUri", artifactUri)
                     .call()
 
-                ec.logger.info("⚡ [add#ActionToScreen] Injected ${actionType} into ${artifactUri}")
+                if (!bufResult?.metaJsonBuffer) {
+                    ec.message.addError("Screen XML could not load into WorkspaceBuffer at ${artifactUri}")
+                    return
+                }
+
+                Map layoutTree = new JsonSlurper().parseText(bufResult.metaJsonBuffer) as Map
+
+                // 2. Build Action Node Map
+                Map actionNode = [
+                    _moquiTag: actionType,
+                    '@type': "m-${actionType}"
+                ]
+                if (actionType == "entity-find") {
+                    actionNode["entity-name"] = entityName
+                    actionNode.list = listName
+                    if (filterField && filterValue) {
+                        actionNode.children = [[
+                            _moquiTag: "econdition",
+                            "field-name": filterField,
+                            value: filterValue
+                        ]]
+                    }
+                }
+
+                if (layoutTree.actions == null || !(layoutTree.actions instanceof Map)) {
+                    layoutTree.actions = [
+                        _moquiTag: "actions",
+                        children: []
+                    ]
+                }
+
+                List actionItems = layoutTree.actions.children ?: []
+                actionItems.add(actionNode)
+                layoutTree.actions.children = actionItems
+
+                // 3. Save and compile
+                String updatedJson = JsonOutput.toJson(layoutTree)
+
+                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer")
+                    .parameters([artifactUri: artifactUri, metaJsonBuffer: updatedJson])
+                    .call()
+
+                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.save#ScreenXml")
+                    .parameters([artifactUri: artifactUri, metaJsonBuffer: updatedJson])
+                    .call()
+
+                ec.logger.info("⚡ [add#ActionToScreen] Injected ${actionType} into AST for ${artifactUri}")
+                context.artifactUri = artifactUri
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- ===================================================================== -->
+    <!-- SCAFFOLD SUBSCREEN HUB (Header Tabs + Body Active Layout)             -->
+    <!-- ===================================================================== -->
+    <service verb="scaffold" noun="SubscreenHub" authenticate="anonymous-all">
+        <description>
+            Restructures an active screen into a standard navigation hub layout:
+            Creates a top Header Container with subscreens-tabs and a center Body Container with subscreens-active.
+        </description>
+        <in-parameters>
+            <parameter name="artifactUri" required="true"/>
+            <parameter name="headerTitle"/>
+            <parameter name="headerStyle" default-value="q-pa-sm bg-grey-2 border-bottom"/>
+            <parameter name="contentStyle" default-value="q-pa-md"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="artifactUri"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import groovy.json.JsonSlurper
+                import groovy.json.JsonOutput
+    
+                // 1. Hydrate AST from WorkspaceBuffer
+                Map bufResult = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.get#WorkspaceBuffer")
+                    .parameter("artifactUri", artifactUri)
+                    .call()
+    
+                if (!bufResult?.metaJsonBuffer) {
+                    ec.message.addError("Could not load WorkspaceBuffer for: ${artifactUri}")
+                    return
+                }
+    
+                Map layoutTree = new JsonSlurper().parseText(bufResult.metaJsonBuffer) as Map
+                String baseName = artifactUri.replaceAll(/.*\/|\.xml$/, "")
+                String titleText = headerTitle ?: baseName.replaceAll(/([a-z])([A-Z])/, '$1 $2')
+    
+                // 2. Build Header Container Node
+                Map headerContainer = [
+                    _moquiTag: "container",
+                    "@type": "m-container",
+                    id: "${baseName}-header-banner",
+                    style: headerStyle,
+                    children: [
+                        [
+                            _moquiTag: "label",
+                            "@type": "m-label",
+                            type: "h4",
+                            text: titleText
+                        ],
+                        [
+                            _moquiTag: "subscreens-tabs",
+                            "@type": "m-subscreens-tabs",
+                            id: "${baseName}-nav-tabs"
+                        ]
+                    ]
+                ]
+    
+                // 3. Build Content Viewport Node
+                Map contentContainer = [
+                    _moquiTag: "container",
+                    "@type": "m-container",
+                    id: "${baseName}-content-viewport",
+                    style: contentStyle,
+                    children: [
+                        [
+                            _moquiTag: "subscreens-active",
+                            "@type": "m-subscreens-active",
+                            id: "${baseName}-active-body"
+                        ]
+                    ]
+                ]
+    
+                // 4. Overwrite widgets root children with clean two-section layout
+                layoutTree.children = [headerContainer, contentContainer]
+    
+                // 5. Persist AST to WorkspaceBuffer & compile XML to disk
+                String updatedJson = JsonOutput.toJson(layoutTree)
+    
+                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer")
+                    .parameters([artifactUri: artifactUri, metaJsonBuffer: updatedJson])
+                    .call()
+    
+                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.save#ScreenXml")
+                    .parameters([artifactUri: artifactUri, metaJsonBuffer: updatedJson])
+                    .call()
+    
+                ec.logger.info("📐 [scaffold#SubscreenHub] Successfully scaffolded Header + Content layout in ${artifactUri}")
                 context.artifactUri = artifactUri
             ]]></script>
         </actions>

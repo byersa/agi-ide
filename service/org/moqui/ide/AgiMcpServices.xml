@@ -14,8 +14,8 @@
         </out-parameters>
     </service>
 
-    <service verb="execute" noun="AdkProxyLoop"  name="executeAdkProxyLoop" type="script" 
-        location="component://agi-ide/script/executeAdkProxyLoop.groovy" read-only="true">
+    <service verb="execute" noun="OpenAiProxyLoop"  name="executeOpenAiProxyLoop" type="script"
+        location="component://agi-ide/script/executeOpenAiProxyLoop.groovy" read-only="true">
         <in-parameters>
             <parameter name="userPrompt" required="true" type="String"/>
             <parameter name="activeTree" required="false" type="Map"/>
@@ -23,6 +23,32 @@
         </in-parameters>
         <out-parameters>
             <parameter name="completionText" required="true" type="String"/>
+        </out-parameters>
+    </service>
+
+    <service verb="run" noun="OpenAiProxy" type="script"
+             location="component://agi-ide/script/executeOpenAiProxyLoop.groovy">
+        <description>
+            Executes multi-turn agent tool execution loop against OpenAI-compatible REST endpoints.
+        </description>
+        <in-parameters>
+            <parameter name="userPrompt" required="true" allow-html="any" />
+            <parameter name="targetComponent" default-value="nursinghome"/>
+            <parameter name="focusCoordinate"/>
+            <parameter name="activeArtifactLocation"/>
+            <parameter name="targetMariaId"/>
+            <parameter name="activeRagContext" allow-html="any" />
+            <parameter name="availableToolSchemas" type="List"/>
+            <!-- Optional overrides for dynamic provider selection -->
+            <parameter name="aiEndpointUrl"/>
+            <parameter name="aiApiKey"/>
+            <parameter name="aiModelName"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="completionText" type="String"/>
+            <parameter name="status" type="String"/>
+            <parameter name="createdArtifactUri" type="String"/>
+            <parameter name="rawXmlContent" type="String"/>
         </out-parameters>
     </service>
 

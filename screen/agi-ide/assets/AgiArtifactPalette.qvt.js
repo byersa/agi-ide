@@ -320,13 +320,26 @@
                 return 'cyan-4';
             },
 
+            // Inside AgiArtifactPalette.qvt.js methods:
+
             selectArtifact(item) {
-                this.recordHistory(item);
-                this.$emit('artifact-selected', item);
+                // Normalize path to component:// URI
+                let location = item.value;
+                if (location && location.startsWith('runtime/component/')) {
+                    location = location.replace(/^runtime\/component\/([^\/]+)\//, 'component://$1/');
+                }
+
+                const payload = {
+                    ...item,
+                    value: location
+                };
+
+                this.recordHistory(payload);
+                this.$emit('artifact-selected', payload);
                 if (this.contextBus) {
                     this.contextBus.postMessage({
                         event: 'open-screen-artifact',
-                        artifactLocation: item.value,
+                        artifactLocation: location,
                         artifactType: item.type,
                         targetComponent: item.componentName || 'nursinghome'
                     });

@@ -6,7 +6,7 @@ sequenceDiagram
     autonumber
     participant UI_Shell as AgiCommandPalette (Vue Parent)
     participant REST as Moqui REST API Engine
-    participant ADK as AgiMcpServices (executeAdkProxyLoop)
+    participant ADK as AgiMcpServices (executeOpenAiProxyLoop)
     participant DB as Moqui Database (WorkspaceBuffer)
     participant MGR as AdkManager (Native Session State)
     participant LLM as External Gemini API Gateway
@@ -14,7 +14,7 @@ sequenceDiagram
     Note over UI_Shell: User Submits Prompt or Mutation Trigger<br/>[PROX-01]
     Note over UI_Shell: Packages memory context pointers<br/>(userPrompt, focusCoordinate, etc.)
     
-    UI_Shell->>REST: POST /geminiProxy [PROX-02]
+    UI_Shell->>REST: POST /openAiProxy [PROX-02]
     REST->>ADK: Invoke execute#35;AdkProxyLoop script [PROX-03]
     
     rect rgba(100, 150, 255, 0.15)
@@ -50,7 +50,7 @@ sequenceDiagram
 | Key | Phase / Event | Layer Involved | Technical Mechanism / Operation | Architectural Responsibility |
 | :--- | :--- | :--- | :--- | :--- |
 | <nobr>`[PROX-01]`</nobr> | Prompt Trigger | `AgiCommandPalette.qvt.js` | User inputs text query; app tracks active cursor coordinate context parameters. | Packages user intent alongside real-time frontend file pointer attributes before submitting across network lines. |
-| <nobr>`[PROX-02]`</nobr> | Secure Outbound POST | Axios HTTP Client | JavaScript executes an authenticated `axios.post()` to `/rest/s1/agi-ide/geminiProxy` with `axiosConfig`. | Passes the active session token to bypass gates while pushing data to the network layer. |
+| <nobr>`[PROX-02]`</nobr> | Secure Outbound POST | Axios HTTP Client | JavaScript executes an authenticated `axios.post()` to `/rest/s1/agi-ide/openAiProxy` with `axiosConfig`. | Passes the active session token to bypass gates while pushing data to the network layer. |
 | <nobr>`[PROX-03]`</nobr> | Direct Proxy Route | `agi-ide.rest.xml` | REST engine processes route definition and executes target service artifact script. | Bypasses mid-tier web controllers to trigger your core backend script compilation line immediately. |
 | <nobr>`[PROX-04]`</nobr> | Cache Layer Sync | `AgiWorkspaceServices` | Script issues a synchronous internal `<service-call>` to `get#WorkspaceBuffer`. | Pulls the active layout tree string directly from database memory to guarantee backend state accuracy. |
 | <nobr>`[PROX-05]`</nobr> | Token Session Warm-Up | `AdkManager` Core | System matches browser transaction tokens against an active `ConcurrentHashMap` cache. | Restores or provisions a dedicated, continuous execution footprint mapping to the LLM agent instance. |

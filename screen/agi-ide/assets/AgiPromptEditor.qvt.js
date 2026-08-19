@@ -778,7 +778,7 @@
                 };
 
                 try {
-                    const response = await axios.post('/rest/s1/agi-ide/geminiProxy', payload, { headers });
+                    const response = await axios.post('/rest/s1/agi-ide/openAiProxy', payload, { headers });
                     vm.isExecuting = false;
                     const res = response.data || {};
 

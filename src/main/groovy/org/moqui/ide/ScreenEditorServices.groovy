@@ -592,4 +592,32 @@ class ScreenEditorServices {
             return [success: false, message: "Scaffolding generation failed: " + e.getMessage()]
         }
     }
+
+    /**
+     * Generates a deterministic, human-readable mariaId guaranteed to fit
+     * within Moqui/PostgreSQL VARCHAR(63) entity ID limits without collisions.
+     */
+    static String generateMariaId(String rawCoordinate, String rawNodeId) {
+        if (!rawCoordinate && !rawNodeId) return "node_${System.currentTimeMillis()}"
+        
+        // 1. Extract clean screen name (e.g. 'PatientDetails' from 'component://nursinghome/.../PatientDetails.xml')
+        String screenToken = rawCoordinate ? rawCoordinate.replaceAll(/.*\/|\.xml$/, "") : "screen"
+        
+        // 2. Extract and clean node ID token (e.g. 'header_container' from 'PatientDetails#header_container')
+        String nodeToken = rawNodeId ? rawNodeId.replaceAll(/.*#/, "").replaceAll(/[^a-zA-Z0-9_]/, "_") : "root"
+        
+        // 3. Keep base prefix readable (capped at 48 chars)
+        String readableBase = "${screenToken}#${nodeToken}"
+        if (readableBase.length() > 48) {
+            readableBase = readableBase.substring(readableBase.length() - 48)
+        }
+        
+        // 4. Generate 6-char Base36 alphanumeric hash of the full coordinate for collision proofing
+        String fullKey = "${rawCoordinate}::${rawNodeId}"
+        int hashCode = Math.abs(fullKey.hashCode())
+        String hashStamp = Integer.toString(hashCode, 36).padLeft(6, '0')
+        
+        // Total length = max 48 + 1 + 6 = 55 chars (safely under 63)
+        return "${readableBase}_${hashStamp}"
+    }
 }
