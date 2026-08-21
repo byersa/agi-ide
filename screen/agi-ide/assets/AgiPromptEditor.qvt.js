@@ -384,7 +384,7 @@
                     selectedIntents: [],
                     stagedRagContext: [],
                     includeFullAst: true,
-                    includeRawXml: true
+                    includeRawXml: false
                 }
             };
         },
@@ -495,28 +495,37 @@
             async fetchActiveRagContext(artifactUri) {
                 if (!artifactUri) {
                     this.activeRagContextJson = 'No active artifact location specified.';
+                    this.rawFileContent = '';
                     return;
                 }
                 var vm = this;
                 const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
 
                 try {
-                    const response = await axios.get('/rest/s1/agi-ide/getRawXml', {
+                    // Fetch actual JSON AST buffer from WorkspaceBuffer
+                    const response = await axios.get('/rest/s1/agi-ide/getWorkspaceBuffer', {
                         params: { artifactUri: artifactUri },
                         headers: headers
                     });
 
+                    const bufData = response.data || {};
+                    let astTree = bufData.metaJsonBuffer || bufData.layoutTree || null;
+
+                    if (typeof astTree === 'string' && astTree.trim().startsWith('{')) {
+                        try { astTree = JSON.parse(astTree); } catch (e) { }
+                    }
+
                     const payload = {
                         artifactUri: artifactUri,
                         targetComponent: vm.targetComponent,
-                        rawXmlContent: response.data || 'Empty XML File'
+                        astTree: astTree // 🎯 Real AST payload containing widgets & fields
                     };
                     vm.activeRagContextJson = JSON.stringify(payload, null, 2);
                 } catch (err) {
                     vm.activeRagContextJson = JSON.stringify({
                         artifactUri: artifactUri,
                         status: 'error',
-                        message: 'Could not fetch raw XML AST context for this artifact.'
+                        message: 'Could not fetch AST tree for this artifact.'
                     }, null, 2);
                 }
             },
@@ -570,16 +579,14 @@
                 const payload = {
                     artifactUri: currentFileUri,
                     targetComponent: this.targetComponent || 'nursinghome',
-                    // Tab 1: Primary prompt + Ad-hoc directives + MCP tool
                     userPrompt: this.userPrompt.trim(),
                     adHocPrompt: this.stagedTurn.adHocPrompt,
                     mcpTool: this.selectedCommand ? this.selectedCommand.command : null,
                     mcpParams: this.selectedCommand ? this.commandParamValues : null,
-                    // Tab 2: Selected Intent Nodes
                     selectedIntents: this.stagedTurn.selectedIntents,
-                    // Tab 3: RAG Knowledge items + Scoped AST
                     ragContext: activeRag,
-                    activeRagContext: this.stagedTurn.includeRawXml ? this.activeRagContextJson : null
+                    rawXmlContent: this.stagedTurn.includeRawXml ? this.rawFileContent : null,
+                    activeRagContext: this.stagedTurn.includeFullAst ? this.activeRagContextJson : null
                 };
 
                 try {
@@ -768,7 +775,7 @@
                     userPrompt: vm.userPrompt,
                     targetComponent: vm.targetComponent || 'nursinghome',
                     focusCoordinate: vm.activeArtifactLocation || '',
-                    activeRagContext: vm.activeRagContextJson || '',
+                    activeRagContext: null, // Avoid passing full file content in quick/direct executions
                     availableToolSchemas: vm.registeredCommands.map(cmd => ({
                         command: cmd.command,
                         serviceName: cmd.serviceName,

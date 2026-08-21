@@ -1,0 +1,156 @@
+{
+    "archetypeId": "qbe-list-table",
+    "name": "Query By Example List Table",
+    "description": "Standard Moqui list screen featuring dynamic find filters, pagination, sortable columns, and row-level navigation/actions.",
+    "category": "Screen Archetypes",
+    "version": "1.0.0",
+    "targetArtifact": "screen",
+    "schemaVersion": "xml-screen-3.xsd",
+    "parameters": [
+        {
+            "name": "entityName",
+            "type": "String",
+            "required": true,
+            "description": "Target entity or view-entity (e.g., mantle.party.PartyDetail or custom entity)."
+        },
+        {
+            "name": "screenTitle",
+            "type": "String",
+            "required": false,
+            "default": "Find ${entityTitle}",
+            "description": "Display title for the generated screen."
+        },
+        {
+            "name": "defaultOrderBy",
+            "type": "String",
+            "required": false,
+            "description": "Default sorting field (e.g., -entryDate or partyId)."
+        },
+        {
+            "name": "pageSize",
+            "type": "Integer",
+            "required": false,
+            "default": 20,
+            "description": "Default page size for pagination."
+        },
+        {
+            "name": "enableCreateDialog",
+            "type": "Boolean",
+            "required": false,
+            "default": true,
+            "description": "Include a container-dialog for inline entity creation."
+        },
+        {
+            "name": "createTransition",
+            "type": "String",
+            "required": false,
+            "default": "create${entityNameShort}",
+            "description": "Transition invoked by the create dialog form."
+        },
+        {
+            "name": "detailScreenLocation",
+            "type": "String",
+            "required": false,
+            "description": "Path to the detail/edit screen (e.g., Edit${entityNameShort})."
+        },
+        {
+            "name": "filterFields",
+            "type": "List<FieldDefinition>",
+            "required": true,
+            "description": "Fields included in the find form with comparison operators (equals, like, in, between).",
+            "itemSchema": {
+                "fieldName": "String",
+                "operator": "equals | like | contains | in | between | greater-equals | less-equals",
+                "widgetType": "text-find | drop-down | date-find | date-period",
+                "optionsEntity": "String"
+            }
+        },
+        {
+            "name": "columnFields",
+            "type": "List<ColumnDefinition>",
+            "required": true,
+            "description": "Columns displayed in the form-list results table.",
+            "itemSchema": {
+                "fieldName": "String",
+                "title": "String",
+                "sortable": "Boolean",
+                "linkType": "detail | transition | none",
+                "linkTarget": "String",
+                "displayFormat": "String"
+            }
+        }
+    ],
+    "screenTemplate": {
+        "screen": {
+            "@require-authentication": "true",
+            "transition": [
+                {
+                    "@name": "find${entityNameShort}",
+                    "actions": {
+                        "default-response": {
+                            "@url": "."
+                        }
+                    }
+                }
+            ],
+            "actions": {
+                "entity-find": {
+                    "@entity-name": "${entityName}",
+                    "@list": "${listName}",
+                    "@use-cache": "false",
+                    "search-form-inputs": {
+                        "@default-order-by": "${defaultOrderBy}"
+                    }
+                }
+            },
+            "widgets": {
+                "container": {
+                    "@id": "${entityNameShort}-list-container",
+                    "container-dialog": {
+                        "@condition": "enableCreateDialog",
+                        "@id": "Create${entityNameShort}Dialog",
+                        "@button-text": "Create ${entityTitle}",
+                        "form-single": {
+                            "@name": "Create${entityNameShort}",
+                            "@transition": "${createTransition}",
+                            "auto-fields-entity": {
+                                "@entity-name": "${entityName}",
+                                "@field-type": "edit"
+                            },
+                            "field": [
+                                {
+                                    "@name": "submitButton",
+                                    "default-field": {
+                                        "submit": {
+                                            "@text": "Create"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "form-list": {
+                        "@name": "${entityNameShort}List",
+                        "@list": "${listName}",
+                        "@skip-form": "false",
+                        "@header-dialog": "true",
+                        "@saved-finds": "true",
+                        "@select-columns": "true",
+                        "@page-size": "${pageSize}",
+                        "entity-find": {
+                            "@entity-name": "${entityName}",
+                            "@list": "${listName}",
+                            "search-form-inputs": {
+                                "@default-order-by": "${defaultOrderBy}"
+                            }
+                        },
+                        "auto-fields-entity": {
+                            "@entity-name": "${entityName}",
+                            "@field-type": "find-display"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

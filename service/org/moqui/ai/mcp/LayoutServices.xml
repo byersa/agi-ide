@@ -22,10 +22,6 @@
                     .parameters([artifactUri: targetUri, userId: activeUserId, metaJsonBuffer: metaJsonData])
                     .call()
 
-                // 2. Compile AST and write back to physical XML screen file
-                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.save#ScreenXml")
-                    .parameters([artifactUri: targetUri, metaJsonBuffer: metaJsonData])
-                    .call()
             ]]></script>
         </actions>
     </service>
@@ -76,13 +72,19 @@
                 String bufferId = context.activeLayoutBufferId
 
                 if (activeSessionId) {
-                    def runner = org.moqui.adk.AdkManager.runnerForSession(activeSessionId)
-                    def sessionOpt = runner.sessionService().getSession("moqui-adk", activeUserId, activeSessionId, java.util.Optional.empty()).blockingGet()
-                    if (sessionOpt && sessionOpt.isPresent()) {
-                        String stateBuffer = sessionOpt.get().state().get("activeLayoutBuffer")
-                        if (stateBuffer && stateBuffer.startsWith("{")) {
-                            currentMetaJsonStr = stateBuffer
+                    try {
+                        def runner = org.moqui.adk.AdkManager.runnerForSession(activeSessionId)
+                        if (runner != null) {
+                            def sessionOpt = runner.sessionService().getSession("moqui-adk", activeUserId, activeSessionId, java.util.Optional.empty()).blockingGet()
+                            if (sessionOpt && sessionOpt.isPresent()) {
+                                String stateBuffer = sessionOpt.get().state().get("activeLayoutBuffer")
+                                if (stateBuffer && stateBuffer.startsWith("{")) {
+                                    currentMetaJsonStr = stateBuffer
+                                }
+                            }
                         }
+                    } catch (Exception adkEx) {
+                        ec.logger.warn("⚠️ [manage#WorkspaceBuffer] Failed reading ADK Session state: ${adkEx.message}")
                     }
                 }
 
@@ -129,7 +131,6 @@
                         }
                     }
 
-                    // Absolute last-resort fallback
                     if (layoutTree.isEmpty()) {
                         String screenName = targetUri ? targetUri.split("/")[-1].replace(".xml", "") : "ActiveScreen"
                         ec.logger.info("🛠️ [manage#WorkspaceBuffer] Initializing default root tree for URI: '${targetUri}'")
@@ -171,20 +172,26 @@
                         ])
                         .call()
 
-                    // 2. Compile AST and write back to physical XML on disk
-                    ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.save#ScreenXml")
-                        .parameters([
-                            artifactUri: targetUri,
-                            metaJsonBuffer: updatedMetaJson
-                        ])
-                        .call()
+//                    // 2. Compile AST and write back to physical XML on disk
+//                    ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.save#ScreenXml")
+//                        .parameters([
+//                            artifactUri: targetUri,
+//                            metaJsonBuffer: updatedMetaJson
+//                        ])
+//                        .call()
 
                     // 3. ADK Session Memory Sync
                     if (activeSessionId) {
-                        def runner = org.moqui.adk.AdkManager.runnerForSession(activeSessionId)
-                        def sessionOpt = runner.sessionService().getSession("moqui-adk", activeUserId, activeSessionId, java.util.Optional.empty()).blockingGet()
-                        if (sessionOpt && sessionOpt.isPresent()) {
-                            sessionOpt.get().state().put("activeLayoutBuffer", updatedMetaJson)
+                        try {
+                            def runner = org.moqui.adk.AdkManager.runnerForSession(activeSessionId)
+                            if (runner != null) {
+                                def sessionOpt = runner.sessionService().getSession("moqui-adk", activeUserId, activeSessionId, java.util.Optional.empty()).blockingGet()
+                                if (sessionOpt && sessionOpt.isPresent()) {
+                                    sessionOpt.get().state().put("activeLayoutBuffer", updatedMetaJson)
+                                }
+                            }
+                        } catch (Exception adkSyncEx) {
+                            ec.logger.warn("⚠️ [manage#WorkspaceBuffer] ADK Session sync skipped: ${adkSyncEx.message}")
                         }
                     }
 
@@ -262,16 +269,13 @@
                     ]
                 ]
 
-                // Enforce HIPAA Encryption if PHI data detected
                 if (autoPhiEncrypt) {
                     dynamicFieldNode["encrypt"] = "true"
                     ec.logger.info("🔒 [HIPAA Enforcement] Applied encrypt='true' on field: ${cleanName}")
                 }
 
-                // Stamp AI Intent if provided
                 dynamicFieldNode["ai-intent"] = context.aiIntent ?: "/add-field ${cleanName}"
 
-                // Delegate hydration, mutation, and persistence to manage#WorkspaceBuffer
                 Map bufferResult = ec.service.sync().name("org.moqui.ai.mcp.LayoutServices.manage#WorkspaceBuffer")
                     .parameters([
                         targetNodeId: targetNodeId,
@@ -313,18 +317,17 @@
                         (node.mariaId == targetNodeId) || 
                         (node.id == cleanTargetId) ||
                         (node.name == cleanTargetId) ||
+                        (node.screen == cleanTargetId) ||
                         (node.mariaId?.toString()?.endsWith("#" + cleanTargetId))
 
                     if (isTarget) {
                         if ("APPEND".equalsIgnoreCase(action)) {
-                            // Normalize list key: append to whichever collection exists
                             if (node.children == null && node.widgets != null) {
                                 node.children = node.widgets
                             }
                             if (node.children == null) {
                                 node.children = []
                             }
-                            
                             node.children.add(payloadNode)
                             return true
                         } else if ("REPLACE".equalsIgnoreCase(action)) {

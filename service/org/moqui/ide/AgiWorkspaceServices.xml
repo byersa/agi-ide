@@ -226,58 +226,66 @@
                     'ai-intent', 'children', 'widgets', 'subscreens', 'screen', 'location', 'pathIndex'
                 ]
 
-                // Internal recursive helper to transform layoutTree Map into Moqui XML using _moquiTag
+                // In AgiWorkspaceServices.xml -> compile#TreeToXml:
                 def buildXmlNode
                 buildXmlNode = { Map nodeMap ->
                     if (!nodeMap) return ""
-
-                    String rawTag = nodeMap._moquiTag ?: (nodeMap.tagName ?: nodeMap.type ?: nodeMap['@type'] ?: "container").toString().replaceAll("^@", "")
-
-                    // If the root AST node is "screen" or "widgets", un-wrap and recurse straight to children
+                
+                    // 🎯 Support AST formats where tag is defined as 'name', 'tag', or '_moquiTag'
+                    String rawTag = nodeMap._moquiTag ?: nodeMap.tag ?: nodeMap.tagName ?: nodeMap.type ?: nodeMap['@type']
+                    if (!rawTag && nodeMap.name && (nodeMap.children || nodeMap.attributes || nodeMap.name.contains("-"))) {
+                        rawTag = nodeMap.name
+                    }
+                    rawTag = (rawTag ?: "container").toString().replaceAll("^@", "")
+                
                     if (rawTag == "screen" || rawTag == "widgets") {
                         StringBuilder rootSb = new StringBuilder()
                         List rootChildren = []
                         if (nodeMap.children instanceof List) rootChildren.addAll(nodeMap.children)
                         if (nodeMap.widgets instanceof List) rootChildren.addAll(nodeMap.widgets)
-
+                
                         rootChildren.each { Object child ->
                             if (child instanceof Map) rootSb.append(buildXmlNode((Map) child))
                         }
                         return rootSb.toString()
                     }
-
+                
                     String tagName = rawTag
                     StringBuilder sb = new StringBuilder("<${tagName}")
                     List childrenList = []
-
+                
                     Map attrs = [:]
                     if (nodeMap.attributes instanceof Map) {
                         attrs.putAll(nodeMap.attributes as Map)
                     }
-
+                
                     nodeMap.each { Object kObj, Object v ->
                         if (v == null) return
                         String k = kObj.toString()
-
+                
                         if (k == 'children' || k == 'widgets') {
                             if (v instanceof List) childrenList.addAll((List) v)
                             else if (v instanceof Map) childrenList.add((Map) v)
                         } else if (!ignoredAttributes.contains(k)) {
+                            // Avoid duplicating tag name as an attribute if 'name' was used as the tag identifier
+                            if (k == 'name' && rawTag == v.toString() && !attrs.containsKey('name')) {
+                                return
+                            }
                             if (!(v instanceof Map) && !(v instanceof List)) {
                                 String valStr = v.toString().trim()
-                                if (valStr.length() > 0) { // Omit empty attributes like style=""
+                                if (valStr.length() > 0) {
                                     attrs[k] = valStr
                                 }
                             }
                         }
                     }
-
+                
                     attrs.each { String ak, Object av ->
                         if (av != null) {
                             sb.append(" ${ak}=\"${escapeXml(av.toString())}\"")
                         }
                     }
-
+                
                     if (childrenList) {
                         sb.append(">\n")
                         childrenList.each { Object child ->
@@ -364,7 +372,16 @@ ${rawWidgetsText}    </widgets>
                     return
                 }
 
-                Map layoutTree = new JsonSlurper().parseText(metaJsonBuffer) as Map
+                Map layoutTree
+                if (metaJsonBuffer instanceof Map) {
+                    layoutTree = (Map) metaJsonBuffer
+                } else if (metaJsonBuffer instanceof CharSequence && metaJsonBuffer.toString().trim().startsWith('{')) {
+                    layoutTree = new JsonSlurper().parseText(metaJsonBuffer.toString()) as Map
+                } else {
+                    ec.logger.error("❌ Invalid JSON payload provided to save#ScreenXml: ${metaJsonBuffer}")
+                    context.status = "INVALID_PAYLOAD"
+                    return
+                }
 
                 Map compileResult = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.compile#TreeToXml")
                     .parameter("layoutTree", layoutTree)

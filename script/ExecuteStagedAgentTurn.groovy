@@ -46,9 +46,11 @@ Map proxyParams = [
     activeRagContext    : (activeRagContext ?: "") + ragBuilder.toString(),
     moquiSessionToken   : ec.web?.sessionToken ?: ""
 ]
+ec.logger.info("In ExecuteStagedAgentTurn, proxyParams: ${proxyParams}")
 
 // 5. Invoke Gemini AI Proxy Service
 Map proxyResult = ec.service.sync().name("org.moqui.ide.AgiMcpServices.run#OpenAiProxy").parameters(proxyParams).call()
+ec.logger.info("In ExecuteStagedAgentTurn, proxyResult: ${proxyResult}")
 
 if (proxyResult.error || proxyResult.status == "error") {
     context.status = "error"
