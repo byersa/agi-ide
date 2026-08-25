@@ -408,13 +408,23 @@
         mounted() {
             var vm = this;
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
+            // In AgiPromptEditor.qvt.js inside mounted():
             this.contextBus.onmessage = function (event) {
                 if (event.data && (event.data.event === 'force-open-command-palette' || event.data.event === 'open-prompt-editor')) {
                     vm.targetComponent = event.data.targetComponent || 'nursinghome';
                     vm.activeArtifactLocation = event.data.artifactLocation || '';
                     vm.targetArtifactId = event.data.agiArtifactId || '';
-                    vm.isOpen = true;
 
+                    // 🎯 Capture targeted element focus & ad-hoc style prompt
+                    if (event.data.adHocPrompt) {
+                        vm.stagedTurn.adHocPrompt = event.data.adHocPrompt;
+                        vm.stagedTurn.isStaged = true;
+                    }
+                    if (event.data.focusCoordinate) {
+                        vm.focusedElementId = event.data.focusCoordinate;
+                    }
+
+                    vm.isOpen = true;
                     vm.fetchDynamicTools();
                     if (vm.activeArtifactLocation) {
                         vm.fetchActiveRagContext(vm.activeArtifactLocation);

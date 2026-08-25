@@ -1,0 +1,92 @@
+{
+    "archetypeId": "form-single-edit",
+    "name": "Single Form Edit / Create",
+    "description": "Standard Moqui edit/create screen utilizing a declarative form-single with auto-fields or explicit field definitions and service transitions.",
+    "category": "Screen Archetypes",
+    "version": "1.0.0",
+    "targetArtifact": "screen",
+    "schemaVersion": "xml-screen-3.xsd",
+    "metaJson": {
+        "name": "screen",
+        "attributes": {
+            "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+            "xsi:noNamespaceSchemaLocation": "http://moqui.org/xsd/xml-screen-3.xsd",
+            "default-menu-title": "Add Patient"
+        },
+        "children": [
+            {
+                "name": "transition",
+                "attributes": {
+                    "name": "createPatient"
+                },
+                "children": [
+                    {
+                        "name": "service-call",
+                        "attributes": {
+                            "name": "nursinghome.NursingHomeServices.create#Patient",
+                            "in-map": "true"
+                        }
+                    },
+                    {
+                        "name": "default-response",
+                        "attributes": {
+                            "url": ".."
+                        }
+                    }
+                ]
+            },
+            {
+                "name": "widgets",
+                "children": [
+                    {
+                        "name": "container-box",
+                        "children": [
+                            {
+                                "name": "box-header",
+                                "attributes": {
+                                    "title": "Patient Information"
+                                }
+                            },
+                            {
+                                "name": "box-body",
+                                "children": [
+                                    {
+                                        "name": "form-single",
+                                        "attributes": {
+                                            "name": "AddPatientForm",
+                                            "transition": "createPatient"
+                                        },
+                                        "children": [
+                                            {
+                                                "name": "field",
+                                                "attributes": {
+                                                    "name": "submitButton"
+                                                },
+                                                "children": [
+                                                    {
+                                                        "name": "default-field",
+                                                        "attributes": {
+                                                            "title": "Save Patient"
+                                                        },
+                                                        "children": [
+                                                            {
+                                                                "name": "submit",
+                                                                "attributes": {
+                                                                    "icon": "fa fa-check"
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+}

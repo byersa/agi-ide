@@ -1,9 +1,58 @@
+package org.moqui.ide
+
 import org.moqui.impl.entity.EntityDefinition
 
 contextItems = []
 String cleanPrompt = (prompt ?: "").toLowerCase()
+String targetUri = artifactUri ?: ""
 
-// 1. Compliance Rule Detection
+// =====================================================================================
+// 1. SIBLING SCREEN ARTIFACT DISCOVERY (Same Directory Resolution)
+// =====================================================================================
+if (targetUri && targetUri.startsWith("component://") && targetUri.endsWith(".xml")) {
+    try {
+        def targetRef = ec.resource.getLocationReference(targetUri)
+        def parentRef = targetRef?.getParent()
+
+        if (parentRef && parentRef.exists) {
+            def entries = parentRef.directoryEntries
+            for (def entry in entries) {
+                String entryLoc = entry.location
+                // Look for sibling screens that aren't the target screen itself
+                if (entryLoc.endsWith(".xml") && entryLoc != targetUri) {
+                    String siblingName = entryLoc.substring(entryLoc.lastIndexOf('/') + 1)
+
+                    // Fetch existing buffer AST or fallback to disk text
+                    Map bufRes = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.get#WorkspaceBuffer")
+                        .parameters([artifactUri: entryLoc])
+                        .call()
+
+                    String schemaSnippet = ""
+                    if (bufRes?.metaJsonBuffer) {
+                        schemaSnippet = bufRes.metaJsonBuffer
+                    } else if (entry.exists) {
+                        schemaSnippet = entry.getText()?.take(500) + "..."
+                    }
+
+                    contextItems.add([
+                        category: 'SIBLING_ARTIFACT',
+                        title   : "${siblingName} Screen Schema",
+                        type    : 'sibling-screen',
+                        snippet : schemaSnippet,
+                        enabled : true,
+                        uri     : entryLoc
+                    ])
+                }
+            }
+        }
+    } catch (Exception ex) {
+        ec.logger.warn("⚠️ Error gathering sibling RAG context for ${targetUri}: ${ex.message}")
+    }
+}
+
+// =====================================================================================
+// 2. COMPLIANCE RULE DETECTION
+// =====================================================================================
 if (cleanPrompt.contains('patient') || cleanPrompt.contains('health') || cleanPrompt.contains('medical') || cleanPrompt.contains('ssn')) {
     contextItems.add([
         category: 'HIPAA COMPLIANCE',
@@ -14,12 +63,13 @@ if (cleanPrompt.contains('patient') || cleanPrompt.contains('health') || cleanPr
     ])
 }
 
-// 2. Tokenize prompt into search terms
+// =====================================================================================
+// 3. UDM & DOMAIN ENTITY MATCHING
+// =====================================================================================
 Set<String> promptTokens = cleanPrompt.replaceAll(/[^a-zA-Z0-9\s]/, ' ')
     .split(/\s+/)
     .findAll { it.length() > 2 } as Set<String>
 
-// Safe entity name retrieval without casting issues
 List allEntityNames = new ArrayList(ec.entity.getAllEntityNames())
 
 String targetComp = targetComponent ?: 'nursinghome'
@@ -71,7 +121,9 @@ for (String entityName in matchedEntities.take(10)) {
     }
 }
 
-// 3. Declarative Screen Standards
+// =====================================================================================
+// 4. DECLARATIVE SCREEN STANDARDS
+// =====================================================================================
 contextItems.add([
     category: 'MOQUI MACRO',
     title: 'Moqui Declarative Screen Standards (xml-screen-3.xsd)',

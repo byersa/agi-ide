@@ -78,14 +78,23 @@ ec.logger.info("🔧 [PROXY LOOP TOOLS] Registered ${openAiTools.size()} active 
 String systemInstruction = """You are the AI Orchestrator for the Moqui AI IDE System.
 Your goal is to scaffold screens, refactor assets, or update UI components for the target component '${targetComponent}'.
 
-CRITICAL RULES & CONVENTIONS:
-- Top-level domain screens belong under screenPath '${targetComponent}/<ScreenName>' (e.g. '${targetComponent}/PatientManagement').
-- Subscreens belong under their parent directory (e.g. '${targetComponent}/PatientManagement/PatientList').
-- When asked to 'Fill in', 'Build', or 'Update' a screen, call 'modify_blueprint' passing:
-    - artifactUri: The full target URI (e.g. 'component://${targetComponent}/screen/${targetComponent}/PatientManagement/PatientList.xml')
-    - metaJsonData: A valid JSON AST string representing the complete screen layout tree (where each node contains '_moquiTag' or 'name' for the tag name, an 'attributes' object for XML attributes, and a 'children' array).
-- DO NOT emit raw XML text or markdown blocks. Only manipulate the JSON AST structure.
-- Target component is '${targetComponent}'.
+CRITICAL RULES & TOOL CONTRACT:
+- Top-level domain screens belong under screenPath '${targetComponent}/<ScreenName>'.
+- Subscreens belong under their parent directory (e.g. '${targetComponent}/PatientManagement/AddPatient').
+- When asked to 'Fill in', 'Build', or 'Update' a screen, call 'modify_blueprint' with BOTH required arguments:
+    1. 'artifactUri': The full target URI (e.g. 'component://${targetComponent}/screen/${targetComponent}/PatientManagement/AddPatient.xml')
+    2. 'metaJsonData': A valid JSON string containing the complete AST tree object:
+       {
+         "name": "screen",
+         "attributes": {
+           "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+           "xsi:noNamespaceSchemaLocation": "http://moqui.org/xsd/xml-screen-3.xsd",
+           "default-menu-title": "<Title>"
+         },
+         "children": [ ... ]
+       }
+- NEVER call 'modify_blueprint' with empty or null arguments.
+- Sibling field schemas and compliance rules in the staged context must be directly incorporated into the AST.
 """
 
 StringBuilder userPromptBuilder = new StringBuilder()
@@ -105,13 +114,17 @@ List messages = [
 // STEP 3: MULTI-TURN ORCHESTRATION LOOP
 // =====================================================================================
 int currentTurn = 0
-int MAX_TURNS = 3
+int MAX_TURNS = 6
 String finalArtifactUri = null
 String finalMessage = ""
 boolean executionSuccess = false
 
 // Set of read-only tool names that require follow-up execution turn
-Set<String> readOnlyTools = ["get_raw_xml", "get_artifact_palette", "get_workspace_buffer", "get_form_metadata"] as Set
+Set<String> readOnlyTools = ["get_raw_xml", 
+                             "get_artifact_palette", 
+                             "get_workspace_buffer", 
+                             "get_screen_archetype",
+                             "get_form_metadata"] as Set
 
 try {
     while (currentTurn < MAX_TURNS && !executionSuccess) {
@@ -188,7 +201,7 @@ try {
                 }
 
                 // 🔍 DEBUG LOG: Inspect exactly what the LLM generated for this tool call
-                ec.logger.info("""🛠️ [AGI PROXY LOOP DEBUG] 
+                ec.logger.info("""🛠️ [AGI PROXY LOOP DEBUG Turn: ${currentTurn}] 
                   - Called Function Name: ${calledName}
                   - Raw Arguments String from LLM: ${rawArgsStr}
                   - Parsed Map Arguments size: ${toolArgs?.size()}
@@ -246,6 +259,9 @@ try {
                     }
                 }
 
+                if (serviceName == "McpServices.mcp#ToolsCall") {
+                    toolArgs.name = calledName
+                }
                 ec.logger.info("🔧 [HARNESS CALL] Invoking ${serviceName} with: ${toolArgs}")
 
                 Map toolResult = [:]
@@ -321,23 +337,29 @@ try {
     // STEP 4: FINALIZE RESPONSE & SYNC ARTIFACT STATE
     // =================================================================================
     if (executionSuccess) {
-        String updatedRawXml = ""
-        String targetReadUri = finalArtifactUri ?: artifactUri
-        if (targetReadUri) {
-            try {
-                def resRef = ec.resource.getLocationReference(targetReadUri)
-                if (resRef && resRef.exists) updatedRawXml = resRef.getText()
-            } catch (Exception ignored) {}
+        String targetUri = finalArtifactUri ?: artifactUri
+        Map bufferData = [:]
+    
+        if (targetUri) {
+            Map bufRes = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.get#WorkspaceBuffer")
+                .parameters([artifactUri: targetUri, userId: userId])
+                .call()
+            if (bufRes?.metaJsonBuffer) {
+                bufferData = [
+                    workspaceBufferId: bufRes.workspaceBufferId,
+                    metaJsonBuffer   : bufRes.metaJsonBuffer
+                ]
+            }
         }
-
-        ec.logger.info("🏁 [PROXY LOOP COMPLETE] Target URI: ${targetReadUri}, Content Length: ${updatedRawXml.length()}")
-
+    
+        ec.logger.info("🏁 [PROXY LOOP COMPLETE] Target URI: ${targetUri}, Buffer present: ${!bufferData.isEmpty()}")
+    
         context.completionText = JsonOutput.toJson([
-            status: "success",
-            type: targetReadUri ? "MUTATION_EXECUTED" : "TEXT_RESPONSE",
-            createdArtifactUri: targetReadUri,
-            rawXmlContent: updatedRawXml,
-            message: finalMessage
+            status            : "success",
+            type              : targetUri ? "MUTATION_EXECUTED" : "TEXT_RESPONSE",
+            targetArtifactUri : targetUri,
+            workspaceBuffer   : bufferData,
+            message           : finalMessage
         ])
     } else {
         context.completionText = JsonOutput.toJson([

@@ -79,3 +79,61 @@
                     .q-item .q-field__label {
                         color: rgba(0, 0, 0, 0.6) !important;
                     }
+
+                    /* Add to AgiCanvasEditor style block or workspace theme */
+                    #canvas-elements-viewport div[name="container-box"],
+                    #canvas-elements-viewport div[name="box-body"],
+                    #canvas-elements-viewport div[name="form-single"] {
+                        display: flex;
+                        flex-direction: column;
+                        min-height: 48px;
+                        width: 100%;
+                        padding: 8px;
+                        background: #ffffff;
+                        border-radius: 4px;
+                        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+                    }
+
+                    #canvas-elements-viewport div[name="field"] {
+                        display: flex;
+                        align-items: center;
+                        min-height: 36px;
+                        margin-bottom: 8px;
+                        padding: 4px 8px;
+                        border: 1px dashed #cbd5e1;
+                        border-radius: 4px;
+                        background: #f8fafc;
+                    }
+
+                    .agi-canvas-selected-node {
+                        outline: 2px solid #1976D2 !important;
+                        outline-offset: 2px;
+                        box-shadow: 0 0 8px rgba(25, 118, 210, 0.4) !important;
+                        transition: outline 0.15s ease-in-out;
+                    }
+
+                    .pulse-highlight {
+                        animation: agiPulse 1s ease-in-out;
+                    }
+
+                    @keyframes agiPulse {
+                        0% {
+                            background-color: rgba(25, 118, 210, 0.25);
+                        }
+
+                        100% {
+                            background-color: transparent;
+                        }
+                    }
+
+                    /* Show action badge on hover or when element is selected */
+                    .agi-hover-container .agi-action-badge {
+                        opacity: 0;
+                        transition: opacity 0.15s ease-in-out;
+                    }
+
+                    .agi-hover-container:hover>.agi-action-badge,
+                    .agi-hover-container.agi-canvas-selected-node>.agi-action-badge,
+                    .agi-action-badge.is-active {
+                        opacity: 1 !important;
+                    }

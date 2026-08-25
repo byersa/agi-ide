@@ -356,4 +356,59 @@
         </actions>
     </service>
 
+<!-- ===================================================================== -->
+    <!-- GET SCREEN ARCHETYPE TEMPLATE                                         -->
+    <!-- ===================================================================== -->
+    <service verb="get" noun="ScreenArchetype" type="inline"
+             name="org.moqui.ai.mcp.LayoutServices.get#ScreenArchetype">
+        <description>Retrieve a canonical JSON screen archetype template (such as 'form-single-edit' or 'qbe-list-table') from component storage to guide AST layout generation.</description>
+        <in-parameters>
+            <parameter name="archetypeId" type="String" required="true">
+                <description>The ID of the archetype template to load (e.g., 'form-single-edit', 'qbe-list-table').</description>
+            </parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="status" type="String"/>
+            <parameter name="archetypeId" type="String"/>
+            <parameter name="archetypeJson" type="String"/>
+            <parameter name="archetypeMap" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import groovy.json.JsonSlurper
+                import groovy.json.JsonOutput
+                import org.moqui.resource.ResourceReference
+
+                String cleanId = archetypeId.trim().replace(".json", "")
+                String templatePath = "component://agi-ide/template/screen-archetypes/${cleanId}.json"
+
+                ResourceReference rr = ec.resource.getLocationReference(templatePath)
+                if (rr == null || !rr.exists) {
+                    ec.logger.warn("⚠️ [get#ScreenArchetype] Archetype template not found at: ${templatePath}")
+                    context.status = "NOT_FOUND"
+                    return
+                }
+
+                String rawText = rr.getText()
+                if (!rawText || rawText.trim().isEmpty()) {
+                    ec.logger.error("❌ [get#ScreenArchetype] Archetype template at '${templatePath}' is empty.")
+                    context.status = "EMPTY_FILE"
+                    return
+                }
+
+                try {
+                    Map parsedMap = new JsonSlurper().parseText(rawText) as Map
+                    context.status = "SUCCESS"
+                    context.archetypeId = cleanId
+                    context.archetypeJson = rawText
+                    context.archetypeMap = parsedMap
+                    ec.logger.info("📄 [get#ScreenArchetype] Successfully loaded archetype: ${cleanId}")
+                } catch (Exception ex) {
+                    ec.logger.error("❌ [get#ScreenArchetype] Failed parsing JSON for archetype '${cleanId}': ${ex.message}")
+                    context.status = "PARSE_ERROR"
+                }
+            ]]></script>
+        </actions>
+    </service>
+
 </services>
