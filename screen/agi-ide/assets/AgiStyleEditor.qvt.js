@@ -209,6 +209,7 @@
                 }
             };
 
+            this.loadThemeArtifact();
             this.applyTokensToDocument(this.activeTokens);
             this.applyLiveCustomCss();
         },
@@ -218,6 +219,22 @@
         },
 
         methods: {
+            async loadThemeArtifact() {
+                if (!this.themeArtifactUri) return;
+                try {
+                    const resp = await axios.get(`/rest/s1/agi-ide/getThemeJson?artifactUri=${encodeURIComponent(this.themeArtifactUri)}`);
+                    const data = resp.data?.themeData;
+                    if (data && data.tokens) {
+                        this.activeTokens = { ...this.activeTokens, ...data.tokens };
+                        this.applyTokensToDocument(this.activeTokens);
+                        console.info(`🎨 [AgiStyleEditor] Loaded theme tokens from ${this.themeArtifactUri}`);
+                    }
+                } catch (err) {
+                    console.warn("⚠️ Could not load remote theme artifact, using local defaults.", err);
+                    this.applyTokensToDocument(this.activeTokens);
+                }
+            },
+
             isColorToken(key) {
                 return !key.includes('radius') && !key.includes('spacing') && !key.includes('width');
             },

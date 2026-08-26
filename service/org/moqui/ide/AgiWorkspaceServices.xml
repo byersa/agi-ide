@@ -650,4 +650,32 @@ ${rawWidgetsText}    </widgets>
             ]]></script>
         </actions>
     </service>
+
+    <!-- ===================================================================== -->
+    <!-- GET THEME JSON ARTIFACT                                               -->
+    <!-- ===================================================================== -->
+    <service verb="get" noun="ThemeJson" type="inline">
+        <in-parameters>
+            <parameter name="artifactUri" type="String" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="themeData" type="Map"/>
+            <parameter name="status" type="String"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import groovy.json.JsonSlurper
+
+                org.moqui.resource.ResourceReference rr = ec.resource.getLocationReference(artifactUri)
+                if (rr != null && rr.exists) {
+                    String rawText = rr.getText()
+                    context.themeData = new JsonSlurper().parseText(rawText)
+                    context.status = "SUCCESS"
+                } else {
+                    context.status = "FILE_NOT_FOUND"
+                }
+            ]]></script>
+        </actions>
+    </service>
+
 </services>

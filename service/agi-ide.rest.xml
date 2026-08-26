@@ -206,4 +206,19 @@
             <service name="org.moqui.ide.AgiWikiTreeServices.save#WikiNode"/>
         </method>
     </resource>
+
+    <!-- Save Theme JSON Resource -->
+    <resource name="saveThemeJson">
+        <method type="post">
+            <service name="org.moqui.ide.AgiWorkspaceServices.save#ThemeJson"/>
+        </method>
+    </resource>
+
+    <!-- Get Theme JSON Resource -->
+    <resource name="getThemeJson">
+        <method type="get">
+            <service name="org.moqui.ide.AgiWorkspaceServices.get#ThemeJson"/>
+        </method>
+    </resource>
 </rest-api>
+

@@ -80,16 +80,30 @@
             }
         },
         mounted() {
+            const vm = this;
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
+
+            // 🎯 1. Listen for local broadcast mutations from AgiPromptEditor / Agent
+            this.contextBus.onmessage = function (event) {
+                if (!event.data) return;
+
+                if (event.data.event === 'artifact-state-mutated') {
+                    console.info("📡 [AgiWorkspace] Detected artifact mutation via ContextBus. Re-hydrating workspace buffer...");
+                    vm.hydrateWorkspaceBuffer();
+                }
+            };
+
             this.loadRequiredComponents();
             this.resolveTargetComponentAndPath();
 
+            // 🎯 2. KEYBOARD SHORTCUT LISTENER (Super / Meta / OS / Alt + Arrow Keys)
             this._keyHandler = (e) => this.handleKeyboardSnapping(e);
             window.addEventListener('keydown', this._keyHandler);
 
             this._unloadHandler = () => this.closeExternalWindows();
             window.addEventListener('beforeunload', this._unloadHandler);
 
+            // 🎯 3. External Window State Poller
             this.poller = setInterval(() => {
                 Object.keys(this.activeLayoutGrid).forEach(name => {
                     const panel = this.activeLayoutGrid[name];
@@ -101,6 +115,7 @@
                 });
             }, 1000);
 
+            // 🎯 4. Moqui Server WebSocket Notification Fallback
             if (window.moqui && typeof window.moqui.addNotificationListener === 'function') {
                 window.moqui.addNotificationListener('agi-ide-workspace', (notification) => {
                     try {
@@ -129,6 +144,7 @@
             this.hydrateMcpOrchestratorFromDatabase();
             this.hydrateWorkspaceBuffer();
         },
+
         beforeUnmount() {
             if (this._keyHandler) window.removeEventListener('keydown', this._keyHandler);
             if (this._unloadHandler) window.removeEventListener('beforeunload', this._unloadHandler);

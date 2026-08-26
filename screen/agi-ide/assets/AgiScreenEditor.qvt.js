@@ -184,50 +184,55 @@
             },
 
             highlightAndScrollToSourceElement(mariaId, nodeData = null) {
-                if (!mariaId) return;
+                if (!mariaId || !this.cmInstance) return;
 
-                const parts = mariaId.toString().split('#');
+                const genericSubTags = [
+                    'default-field', 'header-field', 'text-line', 'date-time',
+                    'drop-down', 'check', 'radio', 'text-find', 'display', 'hidden'
+                ];
+
+                // 1. Resolve true semantic element name (ignoring child widget leaf tags)
+                const parts = mariaId.toString().split('#').filter(p => !genericSubTags.includes(p));
                 const rawElementName = parts[parts.length - 1] || mariaId;
-                const elementName = nodeData?.attributes?.name || nodeData?.name || rawElementName;
+                const elementName = nodeData?.attributes?.name || (nodeData?.name && !genericSubTags.includes(nodeData.name) ? nodeData.name : rawElementName);
 
-                if (this.cmInstance) {
-                    const doc = this.cmInstance.getDoc();
-                    const text = doc.getValue();
-                    if (!text) return;
+                const doc = this.cmInstance.getDoc();
+                const text = doc.getValue();
+                if (!text || !elementName) return;
 
-                    const searchPatterns = [
-                        `name="${elementName}"`,
-                        `<field name="${elementName}"`,
-                        `id="${elementName}"`,
-                        `<${elementName}`
-                    ];
+                // 2. Strict hierarchical search patterns
+                const searchPatterns = [
+                    `name="${elementName}"`,
+                    `<field name="${elementName}"`,
+                    `id="${elementName}"`,
+                    `<${elementName}`
+                ];
 
-                    let targetIndex = -1;
-                    let patternLen = 0;
+                let targetIndex = -1;
+                let patternLen = 0;
 
-                    for (let pattern of searchPatterns) {
-                        const idx = text.indexOf(pattern);
-                        if (idx !== -1) {
-                            targetIndex = idx;
-                            patternLen = pattern.length;
-                            break;
-                        }
+                for (let pattern of searchPatterns) {
+                    const idx = text.indexOf(pattern);
+                    if (idx !== -1) {
+                        targetIndex = idx;
+                        patternLen = pattern.length;
+                        break;
                     }
+                }
 
-                    if (targetIndex !== -1) {
-                        this.activeHighlightedMariaId = mariaId;
-                        if (this.activeTextMarker) this.activeTextMarker.clear();
+                if (targetIndex !== -1) {
+                    this.activeHighlightedMariaId = mariaId;
+                    if (this.activeTextMarker) this.activeTextMarker.clear();
 
-                        const startPos = doc.posFromIndex(targetIndex);
-                        const endPos = doc.posFromIndex(targetIndex + patternLen);
+                    const startPos = doc.posFromIndex(targetIndex);
+                    const endPos = doc.posFromIndex(targetIndex + patternLen);
 
-                        this.activeTextMarker = doc.markText(startPos, endPos, {
-                            className: 'cm-selected-xml-node bg-primary text-white text-weight-bold'
-                        });
+                    this.activeTextMarker = doc.markText(startPos, endPos, {
+                        className: 'cm-selected-xml-node bg-primary text-white text-weight-bold'
+                    });
 
-                        this.cmInstance.scrollIntoView({ from: startPos, to: endPos }, 80);
-                        this.cmInstance.setSelection(startPos, endPos);
-                    }
+                    this.cmInstance.scrollIntoView({ from: startPos, to: endPos }, 80);
+                    this.cmInstance.setSelection(startPos, endPos);
                 }
             }
         }

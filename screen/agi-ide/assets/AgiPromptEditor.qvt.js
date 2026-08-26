@@ -307,7 +307,7 @@
                                             </q-item-label>
                                             <q-btn flat dense size="xs" color="secondary" icon="tune" label="Re-Stage / Fork" @click="forkHistoryTurn(hist)" />
                                         </div>
-                                        <q-item-label caption class="text-grey-3 font-mono q-mt-xs">{{ hist.text }}</q-item-label>
+                                        <q-item-label caption class="text-slate-200 font-mono q-mt-xs">{{ hist.text }}</q-item-label>
                                         <q-item-label v-if="hist.resultUri" caption class="text-cyan-4 font-mono text-caption ellipsis">
                                             👉 Created/Updated: {{ hist.resultUri }}
                                         </q-item-label>
@@ -367,6 +367,7 @@
                 targetComponent: 'nursinghome',
                 activeArtifactLocation: '',
                 targetArtifactId: '',
+                focusedElementId: '',
                 blueprintTreeKey: 1,
                 isExecuting: false,
                 showCommandList: false,
@@ -408,22 +409,33 @@
         mounted() {
             var vm = this;
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
-            // In AgiPromptEditor.qvt.js inside mounted():
             this.contextBus.onmessage = function (event) {
-                if (event.data && (event.data.event === 'force-open-command-palette' || event.data.event === 'open-prompt-editor')) {
+                if (!event.data) return;
+
+                // Track element selection across the workspace continuously
+                if (event.data.event === 'element-selected-by-id' && event.data.mariaId) {
+                    vm.focusedElementId = event.data.mariaId;
+                    return;
+                }
+
+                if (event.data.event === 'force-open-command-palette' || event.data.event === 'open-prompt-editor') {
                     vm.targetComponent = event.data.targetComponent || 'nursinghome';
-                    vm.activeArtifactLocation = event.data.artifactLocation || '';
+                    vm.activeArtifactLocation = event.data.artifactLocation || vm.activeArtifactLocation || '';
                     vm.targetArtifactId = event.data.agiArtifactId || '';
 
-                    // 🎯 Capture targeted element focus & ad-hoc style prompt
-                    if (event.data.adHocPrompt) {
-                        vm.stagedTurn.adHocPrompt = event.data.adHocPrompt;
-                        vm.stagedTurn.isStaged = true;
-                    }
-                    if (event.data.focusCoordinate) {
-                        vm.focusedElementId = event.data.focusCoordinate;
+                    // Capture coordinate for targeted AST mutations
+                    const coord = event.data.focusCoordinate || vm.focusedElementId || '';
+                    vm.focusedElementId = coord;
+
+                    if (coord) {
+                        const parts = coord.split('#');
+                        const elemName = parts[parts.length - 1];
+                        const targetHeader = '[Target Field / Node: name="' + elemName + '", id="' + coord + '"]\n';
+                        vm.stagedTurn.adHocPrompt = targetHeader + (event.data.adHocPrompt || '');
                     }
 
+                    // Keep standard unstaged mode when opening
+                    vm.stagedTurn.isStaged = false;
                     vm.isOpen = true;
                     vm.fetchDynamicTools();
                     if (vm.activeArtifactLocation) {
@@ -434,6 +446,7 @@
 
             this.fetchDynamicTools();
         },
+
         beforeUnmount() {
             if (this.contextBus) this.contextBus.close();
         },
@@ -444,6 +457,18 @@
                     || (window.opener && window.opener.moqui && window.opener.moqui.moquiSessionToken)
                     || (document.querySelector('meta[name="moqui-session-token"]')?.getAttribute('content'))
                     || "";
+            },
+
+            onPromptInput(val) {
+                this.showCommandList = val.startsWith('/') && !this.selectedCommand;
+            },
+
+            onDialogClosed() {
+                this.userPrompt = '';
+                this.showPalette = false;
+                this.stagedTurn.isStaged = false;
+                this.stagedTurn.adHocPrompt = '';
+                this.clearSelectedCommand();
             },
 
             onArtifactSelectedFromPalette(item) {
@@ -462,6 +487,29 @@
                 } else {
                     this.userPrompt += (this.userPrompt.length > 0 ? ' ' : '') + item.value;
                 }
+            },
+
+            selectCommand(cmd) {
+                this.selectedCommand = cmd;
+                this.showCommandList = false;
+                this.userPrompt = cmd.command + ' ';
+                this.commandParamValues = {};
+
+                if (cmd.params) {
+                    cmd.params.forEach(p => {
+                        this.commandParamValues[p.name] = '';
+                    });
+                }
+
+                if (this.commandParamValues.hasOwnProperty('targetComponent')) {
+                    this.commandParamValues['targetComponent'] = this.targetComponent || 'nursinghome';
+                }
+            },
+
+            clearSelectedCommand() {
+                this.selectedCommand = null;
+                this.userPrompt = '';
+                this.commandParamValues = {};
             },
 
             async fetchDynamicTools() {
@@ -505,14 +553,13 @@
             async fetchActiveRagContext(artifactUri) {
                 if (!artifactUri) {
                     this.activeRagContextJson = 'No active artifact location specified.';
-                    this.rawFileContent = '';
                     return;
                 }
                 var vm = this;
-                const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
+                var headers = { 'moquiSessionToken': this.resolveCsrfToken() };
+                var openBraceChar = String.fromCharCode(123);
 
                 try {
-                    // Fetch actual JSON AST buffer from WorkspaceBuffer
                     const response = await axios.get('/rest/s1/agi-ide/getWorkspaceBuffer', {
                         params: { artifactUri: artifactUri },
                         headers: headers
@@ -521,14 +568,48 @@
                     const bufData = response.data || {};
                     let astTree = bufData.metaJsonBuffer || bufData.layoutTree || null;
 
-                    if (typeof astTree === 'string' && astTree.trim().startsWith('{')) {
+                    if (typeof astTree === 'string' && astTree.trim().indexOf(openBraceChar) === 0) {
                         try { astTree = JSON.parse(astTree); } catch (e) { }
+                    }
+
+                    // Pre-populate Focused Element into Staged RAG Context
+                    if (vm.focusedElementId && astTree) {
+                        const targetName = vm.focusedElementId.split('#').pop();
+
+                        const findNode = function (node) {
+                            if (!node) return null;
+                            if (node.attributes && node.attributes.name === targetName) return node;
+                            if (node.name === targetName || node.mariaId === vm.focusedElementId) return node;
+                            if (Array.isArray(node.children)) {
+                                for (var i = 0; i < node.children.length; i++) {
+                                    var found = findNode(node.children[i]);
+                                    if (found) return found;
+                                }
+                            }
+                            return null;
+                        };
+
+                        const focusedNode = findNode(astTree);
+                        if (focusedNode) {
+                            const nodeSnippet = JSON.stringify(focusedNode, null, 2);
+                            const itemTitle = '<field name="' + targetName + '">';
+
+                            vm.stagedTurn.stagedRagContext = [
+                                {
+                                    category: 'FOCUSED ELEMENT AST',
+                                    title: itemTitle,
+                                    snippet: nodeSnippet,
+                                    enabled: true
+                                }
+                            ].concat(vm.stagedTurn.stagedRagContext || []);
+                        }
                     }
 
                     const payload = {
                         artifactUri: artifactUri,
                         targetComponent: vm.targetComponent,
-                        astTree: astTree // 🎯 Real AST payload containing widgets & fields
+                        focusCoordinate: vm.focusedElementId || null,
+                        astTree: astTree
                     };
                     vm.activeRagContextJson = JSON.stringify(payload, null, 2);
                 } catch (err) {
@@ -537,6 +618,15 @@
                         status: 'error',
                         message: 'Could not fetch AST tree for this artifact.'
                     }, null, 2);
+                }
+            },
+
+            safeFormatAstSnippet(node) {
+                if (!node) return '';
+                try {
+                    return JSON.stringify(node, null, 2);
+                } catch (e) {
+                    return String(node);
                 }
             },
 
@@ -589,6 +679,7 @@
                 const payload = {
                     artifactUri: currentFileUri,
                     targetComponent: this.targetComponent || 'nursinghome',
+                    focusCoordinate: this.focusedElementId || null,
                     userPrompt: this.userPrompt.trim(),
                     adHocPrompt: this.stagedTurn.adHocPrompt,
                     mcpTool: this.selectedCommand ? this.selectedCommand.command : null,
@@ -636,88 +727,6 @@
                     const errorMsg = err.response?.data?.errors || err.message || 'Staged agent execution failed.';
                     if (this.$q) this.$q.notify({ type: 'negative', message: errorMsg });
                 }
-            },
-
-            // 🎯 FORK PRIOR HISTORY TURN: Restores context & intent state to all 4 tabs
-            forkHistoryTurn(hist) {
-                this.userPrompt = hist.text || '';
-                this.activeTab = 'prompt';
-                this.stagedTurn.isStaged = true;
-
-                if (hist.payload) {
-                    this.stagedTurn.adHocPrompt = hist.payload.adHocPrompt || '';
-                    this.stagedTurn.selectedIntents = hist.payload.selectedIntents || [];
-                    if (hist.payload.ragContext) {
-                        this.stagedTurn.stagedRagContext = hist.payload.ragContext;
-                    }
-                }
-                if (this.$q) {
-                    this.$q.notify({
-                        type: 'info',
-                        message: 'History turn loaded into Staging Pipeline across all tabs.'
-                    });
-                }
-            },
-
-            processExecutionTelemetry(executedCommandName, promptText, resultUri, stagedPayload) {
-                var vm = this;
-                const newUri = resultUri || vm.activeArtifactLocation;
-
-                if (newUri) {
-                    vm.activeArtifactLocation = newUri;
-                    vm.fetchActiveRagContext(newUri);
-                }
-
-                vm.promptHistory.unshift({
-                    timestamp: new Date().toLocaleTimeString(),
-                    command: executedCommandName || 'AI Agent',
-                    text: promptText,
-                    resultUri: newUri || '',
-                    payload: stagedPayload || null
-                });
-
-                vm.blueprintTreeKey++;
-
-                if (newUri && vm.contextBus) {
-                    vm.contextBus.postMessage({
-                        event: 'reload-blueprint-tree',
-                        artifactUri: newUri
-                    });
-                    vm.contextBus.postMessage({
-                        event: 'open-screen-artifact',
-                        artifactUri: newUri
-                    });
-                }
-
-                vm.userPrompt = '';
-                vm.clearSelectedCommand();
-            },
-
-            onPromptInput(val) {
-                this.showCommandList = val.startsWith('/') && !this.selectedCommand;
-            },
-
-            selectCommand(cmd) {
-                this.selectedCommand = cmd;
-                this.showCommandList = false;
-                this.userPrompt = cmd.command + ' ';
-                this.commandParamValues = {};
-
-                if (cmd.params) {
-                    cmd.params.forEach(p => {
-                        this.commandParamValues[p.name] = '';
-                    });
-                }
-
-                if (this.commandParamValues.hasOwnProperty('targetComponent')) {
-                    this.commandParamValues['targetComponent'] = this.targetComponent || 'nursinghome';
-                }
-            },
-
-            clearSelectedCommand() {
-                this.selectedCommand = null;
-                this.userPrompt = '';
-                this.commandParamValues = {};
             },
 
             // 🎯 DIRECT EXECUTE TRACK: Immediate single-turn execution
@@ -784,8 +793,8 @@
                 const payload = {
                     userPrompt: vm.userPrompt,
                     targetComponent: vm.targetComponent || 'nursinghome',
-                    focusCoordinate: vm.activeArtifactLocation || '',
-                    activeRagContext: null, // Avoid passing full file content in quick/direct executions
+                    focusCoordinate: vm.focusedElementId || vm.activeArtifactLocation || '',
+                    activeRagContext: vm.activeRagContextJson || null,
                     availableToolSchemas: vm.registeredCommands.map(cmd => ({
                         command: cmd.command,
                         serviceName: cmd.serviceName,
@@ -841,11 +850,58 @@
                 }
             },
 
-            onDialogClosed() {
-                this.userPrompt = '';
-                this.showPalette = false;
-                this.stagedTurn.isStaged = false;
-                this.clearSelectedCommand();
+            forkHistoryTurn(hist) {
+                this.userPrompt = hist.text || '';
+                this.activeTab = 'prompt';
+                this.stagedTurn.isStaged = true;
+
+                if (hist.payload) {
+                    this.stagedTurn.adHocPrompt = hist.payload.adHocPrompt || '';
+                    this.stagedTurn.selectedIntents = hist.payload.selectedIntents || [];
+                    if (hist.payload.ragContext) {
+                        this.stagedTurn.stagedRagContext = hist.payload.ragContext;
+                    }
+                }
+                if (this.$q) {
+                    this.$q.notify({
+                        type: 'info',
+                        message: 'History turn loaded into Staging Pipeline across all tabs.'
+                    });
+                }
+            },
+
+            processExecutionTelemetry(executedCommandName, promptText, resultUri, stagedPayload) {
+                var vm = this;
+                const newUri = resultUri || vm.activeArtifactLocation;
+
+                if (newUri) {
+                    vm.activeArtifactLocation = newUri;
+                    vm.fetchActiveRagContext(newUri);
+                }
+
+                vm.promptHistory.unshift({
+                    timestamp: new Date().toLocaleTimeString(),
+                    command: executedCommandName || 'AI Agent',
+                    text: promptText,
+                    resultUri: newUri || '',
+                    payload: stagedPayload || null
+                });
+
+                vm.blueprintTreeKey++;
+
+                if (newUri && vm.contextBus) {
+                    vm.contextBus.postMessage({
+                        event: 'reload-blueprint-tree',
+                        artifactUri: newUri
+                    });
+                    vm.contextBus.postMessage({
+                        event: 'open-screen-artifact',
+                        artifactUri: newUri
+                    });
+                }
+
+                vm.userPrompt = '';
+                vm.clearSelectedCommand();
             }
         }
     };
