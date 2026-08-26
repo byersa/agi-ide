@@ -20,6 +20,11 @@
                 targetComponentName: 'nursinghome',
                 ignoredFrameworkComponents: ['agi-ide', 'agi-ai', 'moqui-usl', 'mantle-usl', 'webroot', 'tools'],
 
+                activeFocusedCoordinate: '',
+                isDirty: false,
+                showUnsavedSwitchDialog: false,
+                pendingSwitchItem: null,
+
                 windowDisplayMode: 'Collage Grid',
                 displayModeOptions: ['Collage Grid', 'Focus Canvas', 'Focus Source', 'Focus Theme'],
                 activeScreens: ['AgiCanvasEditor', 'AgiScreenEditor', 'AgiComponentEditor', 'AgiStyleEditor'],
@@ -70,25 +75,32 @@
         },
         computed: {
             isWorkspaceReady() {
-                const rdy = !!(
+                return !!(
                     this.loadedComponents.AgiCanvasEditor &&
                     this.loadedComponents.AgiScreenEditor &&
                     this.loadedComponents.AgiComponentEditor &&
                     this.loadedComponents.AgiStyleEditor
                 );
-                return rdy;
             }
         },
         mounted() {
             const vm = this;
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
 
-            // 🎯 1. Listen for local broadcast mutations from AgiPromptEditor / Agent
+            // 🎯 1. Listen for local broadcast mutations from AgiPromptEditor / Canvas
             this.contextBus.onmessage = function (event) {
                 if (!event.data) return;
 
+                if (event.data.event === 'element-selected-by-id' && event.data.mariaId) {
+                    if (!event.data.mariaId.includes('agi-workspace-root') && !event.data.mariaId.includes('AgiWorkspace')) {
+                        vm.activeFocusedCoordinate = event.data.mariaId;
+                    }
+                    return;
+                }
+
                 if (event.data.event === 'artifact-state-mutated') {
-                    console.info("📡 [AgiWorkspace] Detected artifact mutation via ContextBus. Re-hydrating workspace buffer...");
+                    console.info("📡 [AgiWorkspace] Detected artifact mutation via ContextBus. Setting isDirty=true...");
+                    vm.isDirty = true;
                     vm.hydrateWorkspaceBuffer();
                 }
             };
@@ -96,14 +108,28 @@
             this.loadRequiredComponents();
             this.resolveTargetComponentAndPath();
 
-            // 🎯 2. KEYBOARD SHORTCUT LISTENER (Super / Meta / OS / Alt + Arrow Keys)
-            this._keyHandler = (e) => this.handleKeyboardSnapping(e);
+            // 🎯 2. Keyboard Handlers (Save Ctrl+S, Snapping Super+Arrows)
+            this._keyHandler = (e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+                    e.preventDefault();
+                    vm.handleChildEditorSave();
+                    return;
+                }
+                vm.handleKeyboardSnapping(e);
+            };
             window.addEventListener('keydown', this._keyHandler);
 
-            this._unloadHandler = () => this.closeExternalWindows();
+            // 🎯 3. Prevent accidental tab closure if unsaved draft exists
+            this._unloadHandler = (e) => {
+                if (vm.isDirty) {
+                    e.preventDefault();
+                    e.returnValue = 'You have unsaved changes in the workspace buffer. Are you sure you want to leave?';
+                    return e.returnValue;
+                }
+                vm.closeExternalWindows();
+            };
             window.addEventListener('beforeunload', this._unloadHandler);
 
-            // 🎯 3. External Window State Poller
             this.poller = setInterval(() => {
                 Object.keys(this.activeLayoutGrid).forEach(name => {
                     const panel = this.activeLayoutGrid[name];
@@ -115,32 +141,6 @@
                 });
             }, 1000);
 
-            // 🎯 4. Moqui Server WebSocket Notification Fallback
-            if (window.moqui && typeof window.moqui.addNotificationListener === 'function') {
-                window.moqui.addNotificationListener('agi-ide-workspace', (notification) => {
-                    try {
-                        const packet = typeof notification.message === 'string'
-                            ? JSON.parse(notification.message)
-                            : notification.message;
-
-                        if (packet && packet.event === 'artifact-state-mutated' && packet.mutatedTree) {
-                            console.info("📡 [AgiWorkspace] Intercepted backend structural mutation. Syncing Pinia store...");
-                            this.activeWorkspaceBuffer.metaJsonBuffer = packet.mutatedTree;
-
-                            const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
-                            if (ideStore && typeof ideStore.updateActiveBlueprint === 'function') {
-                                ideStore.updateActiveBlueprint({
-                                    artifactUri: this.localScreenPath,
-                                    blueprintTree: packet.mutatedTree
-                                });
-                            }
-                        }
-                    } catch (err) {
-                        console.error("❌ Error parsing agi-ide-workspace notification payload:", err);
-                    }
-                });
-            }
-
             this.hydrateMcpOrchestratorFromDatabase();
             this.hydrateWorkspaceBuffer();
         },
@@ -151,12 +151,13 @@
             if (this.poller) clearInterval(this.poller);
             this.closeExternalWindows();
         },
+
         template: `
             <div class="column fit no-wrap q-pa-md q-gutter-y-md" style="min-height: 90vh;">
                 <!-- 1. Header Controls Toolbar -->
                 <div id="agi-workspace-header" class="row items-center justify-between q-pa-sm bg-grey-10 text-white rounded-borders shadow-2">
                     
-                    <!-- Left Identity Badge -->
+                    <!-- Left Identity Badge & Dirty Indicator -->
                     <div class="row items-center q-gutter-x-sm">
                         <q-icon name="dashboard_customize" color="primary" size="sm" />
                         <div>
@@ -168,12 +169,45 @@
                                 <q-badge color="deep-purple-8" class="q-ml-xs text-caption font-mono" style="font-size: 9px;">
                                     DOMAIN APP
                                 </q-badge>
+                                <!-- UNSAVED CHANGES WARNING BADGE -->
+                                <q-badge v-if="isDirty" color="amber-10" text-color="black" class="q-ml-sm text-caption font-mono text-weight-bold animate-pulse">
+                                    <q-icon name="warning" size="xs" class="q-mr-xs" /> UNSAVED DRAFT (*)
+                                </q-badge>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Right Controls -->
+                    <!-- Right Controls & Actions -->
                     <div class="row items-center q-gutter-x-sm">
+                        
+                        <!-- Manual Save to Disk (Ctrl+S) -->
+                        <q-btn 
+                            :color="isDirty ? 'positive' : 'grey-8'" 
+                            icon="save" 
+                            :label="isDirty ? 'Save to Disk (*)' : 'Saved'" 
+                            dense 
+                            class="q-px-sm font-mono text-weight-bold"
+                            @click.stop="handleChildEditorSave"
+                        >
+                            <q-tooltip class="bg-grey-10 text-caption">Compile and write workspace draft to physical XML file (Ctrl+S)</q-tooltip>
+                        </q-btn>
+
+                        <!-- Discard / Revert to Disk -->
+                        <q-btn 
+                            v-if="isDirty"
+                            color="negative" 
+                            flat
+                            icon="undo" 
+                            label="Revert" 
+                            dense 
+                            class="q-px-sm font-mono"
+                            @click.stop="revertBufferToDisk"
+                        >
+                            <q-tooltip class="bg-grey-10 text-caption">Discard buffer draft and restore original file from disk</q-tooltip>
+                        </q-btn>
+
+                        <q-separator vertical dark class="q-mx-xs" />
+
                         <q-select
                             v-model="windowDisplayMode"
                             :options="displayModeOptions"
@@ -182,7 +216,7 @@
                             outlined
                             dark
                             bg-color="grey-9"
-                            style="min-width: 160px;"
+                            style="min-width: 150px;"
                             @update:model-value="handleDisplayModeChange"
                         ></q-select>
 
@@ -198,7 +232,7 @@
                             outlined
                             dark
                             bg-color="grey-9"
-                            style="min-width: 260px;"
+                            style="min-width: 240px;"
                         ></q-select>
 
                         <q-btn 
@@ -207,7 +241,7 @@
                             label="AI Prompt" 
                             dense 
                             class="q-px-sm"
-                            @click="triggerPromptOverlay"
+                            @click.stop="triggerPromptOverlay"
                         >
                             <q-tooltip class="bg-grey-10 text-caption">Launch AGI AI Assistant Core</q-tooltip>
                         </q-btn>
@@ -218,7 +252,7 @@
                             label="New Component" 
                             dense 
                             class="q-px-sm"
-                            @click="triggerNewComponentWizard"
+                            @click.stop="triggerNewComponentWizard"
                         >
                             <q-tooltip class="bg-grey-10 text-caption">Initialize a new Moqui component skeleton</q-tooltip>
                         </q-btn>
@@ -229,7 +263,7 @@
                             label="Artifacts" 
                             dense 
                             class="q-px-sm"
-                            @click="showArtifactPalette = true"
+                            @click.stop="showArtifactPalette = true"
                         >
                             <q-tooltip class="bg-grey-10 text-caption">Browse and focus workspace artifacts</q-tooltip>
                         </q-btn>
@@ -405,12 +439,33 @@
                     </q-card>
                 </q-dialog>
 
+                <!-- UNSAVED NAVIGATION CONFIRMATION MODAL -->
+                <q-dialog v-model="showUnsavedSwitchDialog" persistent>
+                    <q-card class="bg-slate-900 text-white shadow-24" style="min-width: 420px; border: 1px solid #334155;">
+                        <q-card-section class="row items-center q-gutter-x-sm bg-slate-950 q-pa-sm">
+                            <q-icon name="warning" color="amber" size="sm" />
+                            <div class="text-subtitle2 text-weight-bold font-mono">Unsaved Changes in Draft Buffer</div>
+                        </q-card-section>
+
+                        <q-card-section class="q-pa-md text-caption font-mono text-slate-200">
+                            You have modified <strong>{{ localScreenPath }}</strong> in the workspace buffer without saving to disk.
+                            <br/><br/>
+                            Do you want to save your changes to disk before switching artifacts?
+                        </q-card-section>
+
+                        <q-card-actions align="right" class="bg-slate-950 q-pa-sm">
+                            <q-btn flat label="Cancel" color="grey-4" v-close-popup />
+                            <q-btn flat label="Discard & Switch" color="negative" @click="confirmDiscardAndSwitch" />
+                            <q-btn label="Save & Switch" color="positive" @click="confirmSaveAndSwitch" />
+                        </q-card-actions>
+                    </q-card>
+                </q-dialog>
+
             </div>
         `,
         methods: {
             getPanelClass(panelName) {
                 const panel = this.activeLayoutGrid[panelName];
-
                 if (panel.state === 'maximized') return 'col-12';
                 if (panel.state === 'left' || panel.state === 'right') return 'col-12 col-md-6';
 
@@ -420,7 +475,6 @@
                 if (hasMaximized) {
                     return panel.state === 'maximized' ? 'col-12' : 'hidden';
                 }
-
                 return 'col-12 col-md-6';
             },
 
@@ -523,7 +577,6 @@
                 ];
 
                 assets.forEach(asset => {
-                    // 1. Direct discovery if already evaluated into global scope
                     const compDef = window[asset.globalVar]
                         || window.AgiComponents?.[asset.name]
                         || window.AgiComponents?.[asset.name.toLowerCase()]
@@ -535,7 +588,6 @@
                         return;
                     }
 
-                    // 2. Dynamic loader with fallback
                     const script = document.createElement('script');
                     script.type = 'text/javascript';
                     script.src = asset.url;
@@ -559,14 +611,11 @@
 
                     script.onerror = () => {
                         if (asset.fallbackUrl) {
-                            console.warn(`[AGI] Primary script URL failed for ${asset.name}. Retrying fallback: ${asset.fallbackUrl}`);
                             const fallbackScript = document.createElement('script');
                             fallbackScript.type = 'text/javascript';
                             fallbackScript.src = asset.fallbackUrl;
                             fallbackScript.onload = script.onload;
                             document.head.appendChild(fallbackScript);
-                        } else {
-                            console.error(`[AGI] Failed to load asset script: ${asset.url}`);
                         }
                     };
 
@@ -602,9 +651,7 @@
                                 const clone = doc.importNode(el, true);
                                 doc.head.appendChild(clone);
                             });
-                        } catch (e) {
-                            console.error("Failed to inject styles into child window", e);
-                        }
+                        } catch (e) { }
                     };
 
                     setTimeout(injectStyles, 500);
@@ -685,7 +732,8 @@
                         event: 'open-prompt-editor',
                         panelName: this.activeScreens[0],
                         artifactLocation: this.localScreenPath,
-                        targetComponent: this.targetComponentName
+                        targetComponent: this.targetComponentName,
+                        focusCoordinate: this.activeFocusedCoordinate || ''
                     });
                 }
             },
@@ -729,6 +777,40 @@
                 }
             },
 
+            // 🎯 REVERT BUFFER TO DISK
+            async revertBufferToDisk() {
+                try {
+                    const headers = { 'X-CSRF-Token': window.AGI_SERVER_CSRF_TOKEN };
+                    const resp = await axios.post('/rest/s1/agi-ide/revertWorkspaceBuffer', {
+                        artifactUri: this.localScreenPath
+                    }, { headers });
+
+                    if (resp.data?.status === 'SUCCESS' || resp.data?.metaJsonBuffer) {
+                        this.activeWorkspaceBuffer.metaJsonBuffer = resp.data.metaJsonBuffer;
+                        this.isDirty = false;
+
+                        const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
+                        if (ideStore && typeof ideStore.updateActiveBlueprint === 'function') {
+                            ideStore.updateActiveBlueprint({
+                                artifactUri: this.localScreenPath,
+                                blueprintTree: resp.data.metaJsonBuffer
+                            });
+                        }
+
+                        this.$q?.notify({
+                            type: 'info',
+                            message: 'Workspace buffer reverted to saved file on disk.'
+                        });
+                    }
+                } catch (err) {
+                    this.$q?.notify({
+                        type: 'negative',
+                        message: 'Failed to revert workspace buffer.'
+                    });
+                }
+            },
+
+            // 🎯 MANUAL SAVE TO DISK (Ctrl+S)
             async handleChildEditorSave() {
                 const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
                 const activeBlueprint = ideStore ? ideStore.getActiveBlueprint : this.activeWorkspaceBuffer.metaJsonBuffer;
@@ -753,6 +835,7 @@
                     }, { headers });
 
                     if (fileSaveResponse.data?.status === 'SUCCESS') {
+                        this.isDirty = false;
                         this.$q?.notify({
                             type: 'positive',
                             message: 'Screen XML successfully compiled and saved to disk!'
@@ -781,7 +864,6 @@
                         });
                     }
                 } catch (err) {
-                    console.error("Failed to save theme artifact:", err);
                     this.$q?.notify({
                         type: 'negative',
                         message: 'Failed to save theme artifact.'
@@ -789,7 +871,35 @@
                 }
             },
 
+            // 🎯 ARTIFACT SELECTION & UNSAVED NAVIGATION GUARD
             onArtifactSelectedFromWorkspace(item) {
+                if (this.isDirty) {
+                    this.pendingSwitchItem = item;
+                    this.showUnsavedSwitchDialog = true;
+                    return;
+                }
+                this.executeArtifactSwitch(item);
+            },
+
+            async confirmSaveAndSwitch() {
+                await this.handleChildEditorSave();
+                this.showUnsavedSwitchDialog = false;
+                if (this.pendingSwitchItem) {
+                    this.executeArtifactSwitch(this.pendingSwitchItem);
+                    this.pendingSwitchItem = null;
+                }
+            },
+
+            confirmDiscardAndSwitch() {
+                this.isDirty = false;
+                this.showUnsavedSwitchDialog = false;
+                if (this.pendingSwitchItem) {
+                    this.executeArtifactSwitch(this.pendingSwitchItem);
+                    this.pendingSwitchItem = null;
+                }
+            },
+
+            executeArtifactSwitch(item) {
                 this.showArtifactPalette = false;
                 const uri = item.value || '';
 
