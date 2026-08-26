@@ -1,0 +1,320 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- 1. SCREEN ENTITY GROUNDING (Introspection for APE) -->
+    <service verb="get" noun="ScreenEntityGrounding">
+        <in-parameters>
+            <parameter name="artifactUri" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="detectedEntities" type="List"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import org.moqui.resource.ResourceReference
+                import groovy.util.Node
+
+                detectedEntities = []
+                ec.logger.info("🔍 [AgiEntityServices] Introspecting artifactUri: ${artifactUri}")
+
+                if (!artifactUri) {
+                    ec.logger.warn("⚠️ [AgiEntityServices] artifactUri is empty")
+                    return
+                }
+
+                ResourceReference rr = ec.resource.getLocationReference(artifactUri)
+                if (!rr || !rr.exists) {
+                    ec.logger.warn("⚠️ [AgiEntityServices] Resource does not exist at location: ${artifactUri}")
+                    return
+                }
+
+                String screenText = rr.getText()
+                Node screenNode = null
+                try {
+                    groovy.xml.XmlParser parser = new groovy.xml.XmlParser(false, false)
+                    parser.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+                    screenNode = parser.parseText(screenText)
+                } catch (Exception e) {
+                    ec.logger.error("❌ [AgiEntityServices] Failed to parse XML text for ${artifactUri}: ${e.message}")
+                    return
+                }
+
+                Set<String> entityNames = new LinkedHashSet<>()
+
+                screenNode.depthFirst().each { Node n ->
+                    String nodeName = n.name()?.toString()
+                    Map attrs = n.attributes() ?: [:]
+
+                    if (nodeName == 'service-call') {
+                        String sName = attrs.get('name') ?: ''
+                        if (sName.contains('#')) {
+                            String possibleEntity = sName.substring(sName.indexOf('#') + 1)
+                            ec.logger.info("👉 [AgiEntityServices] Found service-call target: ${possibleEntity}")
+                            entityNames.add(possibleEntity)
+                        }
+                    } else if (nodeName in ['entity-find-one', 'entity-find', 'entity-auto']) {
+                        String ent = attrs.get('entity-name') ?: ''
+                        if (ent) {
+                            ec.logger.info("👉 [AgiEntityServices] Found entity-find/auto target: ${ent}")
+                            entityNames.add(ent)
+                        }
+                    }
+                }
+
+                // Domain fallback for Mantle UDM base entity grounding
+                if (artifactUri.contains('Patient') || entityNames.any { it.toLowerCase().contains('patient') }) {
+                    entityNames.add('nursinghome.patient.Patient')
+                    entityNames.add('mantle.party.Person')
+                    entityNames.add('mantle.party.Party')
+                }
+
+                ec.logger.info("📋 [AgiEntityServices] Resolved candidate entities: ${entityNames}")
+
+                def findEntityDef = { String name ->
+                    if (!name) return null
+                    try {
+                        if (ec.entity.isEntityDefined(name)) return ec.entity.getEntityDefinition(name)
+                        String shortName = name.contains('.') ? name.split('\\.').last() : name
+                        if (ec.entity.isEntityDefined(shortName)) return ec.entity.getEntityDefinition(shortName)
+                    } catch (Exception ignored) { }
+                    return null
+                }
+
+                entityNames.each { String entName ->
+                    try {
+                        def ed = findEntityDef(entName)
+                        if (ed != null) {
+                            String resolvedName = ed.getFullEntityName()
+                            Map fieldsMap = [:]
+                            ed.getFieldNames(true, true).each { String fName ->
+                                def fi = ed.getFieldInfo(fName)
+                                if (fi != null) {
+                                    fieldsMap.put(fName, [
+                                        type     : fi.type ?: 'text-medium',
+                                        isPk     : fi.isPk,
+                                        encrypt  : fi.encrypt ?: false
+                                    ])
+                                }
+                            }
+
+                            List rels = []
+                            ed.getRelationshipsInfo(false).each { rel ->
+                                rels.add([
+                                    relatedEntity: rel.relatedEntityName,
+                                    type         : rel.type,
+                                    title        : rel.title ?: ''
+                                ])
+                            }
+
+                            detectedEntities.add([
+                                entityName   : resolvedName,
+                                isPrimary    : detectedEntities.isEmpty(),
+                                enabled      : true,
+                                fields       : fieldsMap,
+                                relationships: rels
+                            ])
+                            ec.logger.info("✅ [AgiEntityServices] Ground entity: ${resolvedName} (${fieldsMap.size()} fields)")
+                        } else if (entName == 'nursinghome.patient.Patient') {
+                            detectedEntities.add([
+                                entityName   : 'nursinghome.patient.Patient (Target Entity)',
+                                isPrimary    : true,
+                                enabled      : true,
+                                fields       : [
+                                    patientId       : [type: 'id', isPk: true, encrypt: false],
+                                    partyId         : [type: 'id', isPk: false, encrypt: false],
+                                    medicalRecordNum: [type: 'text-short', isPk: false, encrypt: true],
+                                    admissionDate   : [type: 'date-time', isPk: false, encrypt: false]
+                                ],
+                                relationships: [
+                                    [relatedEntity: 'mantle.party.Person', type: 'one', title: 'PersonRecord']
+                                ]
+                            ])
+                        }
+                    } catch (Exception e) {
+                        ec.logger.warn("⚠️ [AgiEntityServices] Error resolving entity metadata for ${entName}: ${e.message}")
+                    }
+                }
+
+                ec.logger.info("🎯 [AgiEntityServices] Total detected entities output: ${detectedEntities.size()}")
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- 2. GET ENTITY BLUEPRINT (XML/Schema -> JSON AST for AEE) -->
+    <service verb="get" noun="EntityBlueprint">
+        <in-parameters>
+            <parameter name="artifactUri" required="false"/>
+            <parameter name="entityName" required="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="entityAst" type="Map"/>
+            <parameter name="rawXmlContent" type="String"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import org.moqui.resource.ResourceReference
+                import groovy.util.Node
+
+                if (artifactUri) {
+                    ResourceReference rr = ec.resource.getLocationReference(artifactUri)
+                    if (rr && rr.exists) {
+                        rawXmlContent = rr.getText()
+                        groovy.xml.XmlParser parser = new groovy.xml.XmlParser(false, false)
+                        parser.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+                        Node rootNode = parser.parseText(rawXmlContent)
+
+                        def parseNodeToAst
+                        parseNodeToAst = { Node n ->
+                            Map nodeMap = [
+                                name      : n.name()?.toString(),
+                                attributes: n.attributes() ?: [:],
+                                children  : []
+                            ]
+                            n.children().each { child ->
+                                if (child instanceof Node) nodeMap.children.add(parseNodeToAst(child))
+                            }
+                            return nodeMap
+                        }
+                        entityAst = parseNodeToAst(rootNode)
+                        return
+                    }
+                }
+
+                String lookupName = entityName ?: (artifactUri ? artifactUri.split('/').last().replace('.entity.xml', '').replace('.xml', '') : null)
+                if (lookupName && ec.entity.isEntityDefined(lookupName)) {
+                    def ed = ec.entity.getEntityDefinition(lookupName)
+                    List fields = []
+                    ed.getFieldNames(true, true).each { String fName ->
+                        def fi = ed.getFieldInfo(fName)
+                        if (fi != null) {
+                            fields.add([
+                                name      : 'field',
+                                attributes: [
+                                    name    : fName,
+                                    type    : fi.type ?: 'text-medium',
+                                    isPk    : fi.isPk ? 'true' : 'false',
+                                    encrypt : fi.encrypt ? 'true' : 'false'
+                                ]
+                            ])
+                        }
+                    }
+
+                    List relationships = []
+                    ed.getRelationshipsInfo(false).each { rel ->
+                        relationships.add([
+                            name      : 'relationship',
+                            attributes: [
+                                type          : rel.type ?: 'one',
+                                'related'     : rel.relatedEntityName,
+                                title         : rel.title ?: ''
+                            ]
+                        ])
+                    }
+
+                    entityAst = [
+                        name      : 'entities',
+                        attributes: [
+                            'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+                            'xsi:noNamespaceSchemaLocation': 'http://moqui.org/xsd/moqui-entity-3.xsd'
+                        ],
+                        children  : [
+                            [
+                                name      : 'entity',
+                                attributes: [
+                                    'entity-name'      : ed.getEntityName(),
+                                    'package'          : ed.groupName ?: 'nursinghome',
+                                    'enable-audit-log' : 'true'
+                                ],
+                                children  : fields + relationships
+                            ]
+                        ]
+                    ]
+                }
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- 3. SAVE ENTITY XML (JSON AST -> XML) -->
+    <service verb="save" noun="EntityXml">
+        <in-parameters>
+            <parameter name="artifactUri" required="true"/>
+            <parameter name="entityAst" type="Map"/>
+            <parameter name="rawXmlContent" type="String"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="status" type="String"/>
+            <parameter name="message" type="String"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import org.moqui.resource.ResourceReference
+                import groovy.xml.MarkupBuilder
+
+                String finalXml = rawXmlContent
+                if (!finalXml && entityAst) {
+                    StringWriter writer = new StringWriter()
+                    MarkupBuilder xml = new MarkupBuilder(writer)
+
+                    def renderAstNode
+                    renderAstNode = { Map node, MarkupBuilder builder ->
+                        String tag = node.name ?: 'entity'
+                        Map attrs = node.attributes ?: [:]
+                        List children = node.children ?: []
+
+                        if (children.isEmpty()) {
+                            builder."${tag}"(attrs)
+                        } else {
+                            builder."${tag}"(attrs) {
+                                children.each { child ->
+                                    if (child instanceof Map) renderAstNode(child, builder)
+                                }
+                            }
+                        }
+                    }
+
+                    renderAstNode(entityAst, xml)
+                    finalXml = '<?xml version="1.0" encoding="UTF-8"?>\n' + writer.toString()
+                }
+
+                if (finalXml && artifactUri) {
+                    ResourceReference rr = ec.resource.getLocationReference(artifactUri)
+                    rr.putText(finalXml)
+                    status = "SUCCESS"
+                    message = "Entity definition successfully saved to disk."
+                } else {
+                    status = "ERROR"
+                    message = "No XML or AST provided."
+                }
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- 4. QUERY LIVE ENTITY DATA -->
+    <service verb="query" noun="EntityData">
+        <in-parameters>
+            <parameter name="entityName" required="true"/>
+            <parameter name="limit" type="Integer" default="20"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="status" type="String"/>
+            <parameter name="records" type="List"/>
+            <parameter name="totalCount" type="Long"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                if (!ec.entity.isEntityDefined(entityName)) {
+                    status = "NOT_FOUND"
+                    records = []
+                    totalCount = 0
+                    return
+                }
+
+                def ef = ec.entity.find(entityName).limit(limit)
+                records = ef.list()?.collect { it.getMap() } ?: []
+                totalCount = ef.count()
+                status = "SUCCESS"
+            ]]></script>
+        </actions>
+    </service>
+
+</services>

@@ -220,10 +220,30 @@
                                 label="2. DATA GROUNDING (DATA)"
                             >
                                 <div class="q-pa-xs q-gutter-y-xs font-mono text-caption">
-                                    <div class="row items-center justify-between bg-slate-950 q-pa-xs rounded-borders">
-                                        <span class="text-grey-4">Entity/Service:</span>
-                                        <span class="text-weight-bold text-white">{{ detectedEntityOrService }}</span>
-                                    </div>
+                                    <div class="text-caption text-grey-4 text-weight-bold q-mb-xs">DETECTED ENTITIES &amp; SCHEMAS</div>
+                                    <q-list dense separator class="bg-black rounded-borders max-h-36 overflow-y-auto">
+                                        <q-item v-for="(ent, idx) in detectedEntities" :key="idx" tag="label" class="q-pa-xs" v-ripple>
+                                            <q-item-section side top>
+                                                <q-checkbox v-model="ent.enabled" dense color="secondary" @update:model-value="syncControlsToAssemblyBuffer" />
+                                            </q-item-section>
+                                            <q-item-section>
+                                                <q-item-label class="text-weight-bold text-caption text-secondary">
+                                                    {{ ent.entityName }}
+                                                    <q-badge v-if="ent.isPrimary" color="purple-8" class="q-ml-xs text-caption" style="font-size: 8px;">Primary</q-badge>
+                                                </q-item-label>
+                                                <q-item-label caption class="text-grey-5" style="font-size: 9px;">
+                                                    {{ Object.keys(ent.fields || {}).length }} fields | {{ (ent.relationships || []).length }} relationships
+                                                </q-item-label>
+                                            </q-item-section>
+                                        </q-item>
+                                        <q-item v-if="detectedEntities.length === 0" class="q-pa-xs">
+                                            <q-item-section class="text-grey-5 italic text-center" style="font-size: 10px;">
+                                                No direct entity mappings detected.
+                                            </q-item-section>
+                                        </q-item>
+                                    </q-list>
+
+                                    <!-- AST & XML Inclusion Checkboxes -->
                                     <div class="row items-center q-gutter-x-xs q-mt-xs">
                                         <q-checkbox v-model="includeFullAst" dense dark color="cyan-4" label="Full Screen AST" @update:model-value="syncControlsToAssemblyBuffer" />
                                         <q-checkbox v-model="includeRawXml" dense dark color="cyan-4" label="Raw XML" @update:model-value="syncControlsToAssemblyBuffer" />
@@ -339,8 +359,9 @@
                             <div class="q-mt-xs q-pa-xs bg-slate-950 rounded-borders row items-center justify-between text-caption font-mono text-grey-4" style="border: 1px solid #1e293b;">
                                 <div class="row items-center q-gutter-x-sm">
                                     <q-badge color="purple-8">{{ includeTargetCoordinate && focusedElementId ? 'Target: <' + displayTargetTag + '>' : 'Root Target' }}</q-badge>
+                                    <q-badge color="cyan-9">{{ activeEntitiesCount }} Entities</q-badge>
                                     <q-badge color="deep-purple-8">{{ selectedIntents.length }} Intents</q-badge>
-                                    <q-badge color="secondary">{{ activeRulesCount }} Rules Active</q-badge>
+                                    <q-badge color="secondary">{{ activeRulesCount }} Rules</q-badge>
                                 </div>
                                 <span style="font-size: 11px;">Ready for Agent Compilation</span>
                             </div>
@@ -375,6 +396,7 @@
                 includeTargetCoordinate: true,
                 includeFullAst: false,
                 includeRawXml: false,
+                detectedEntities: [],
                 selectedIntents: [],
                 governanceRules: [
                     { title: 'HIPAA Data Encryption', snippet: 'Enforce encrypt="true" on PHI/PII fields; enable-audit-log="true" on medical entities', enabled: true },
@@ -412,7 +434,6 @@
                     if (!this.focusedElementId.includes('AgiWorkspace') && !this.focusedElementId.includes('agi-workspace-root')) {
                         const subParts = this.focusedElementId.split('#').filter(Boolean);
                         subParts.forEach(sub => {
-                            // Filter out generic boilerplate container tags from the breadcrumb display
                             if (!['container-box', 'box-body', 'box-header', 'container'].includes(sub)) {
                                 if (!segs.includes(sub)) {
                                     segs.push(sub);
@@ -451,10 +472,6 @@
                 return list;
             },
 
-            detectedEntityOrService() {
-                if (this.activeArtifactLocation.includes('Patient')) return 'nursinghome.patient.Patient (Mantle Extended)';
-                return 'Auto-detected from Screen Transition';
-            },
             availableCommands() {
                 if (!this.userPrompt.startsWith('/')) return [];
                 const search = this.userPrompt.toLowerCase();
@@ -464,6 +481,9 @@
                 if (!this.selectedCommand || !this.selectedCommand.params) return [];
                 return this.selectedCommand.params.filter(p => !p.internal);
             },
+            activeEntitiesCount() {
+                return this.detectedEntities.filter(e => e.enabled).length;
+            },
             activeRulesCount() {
                 return this.governanceRules.filter(r => r.enabled).length;
             }
@@ -472,13 +492,10 @@
         mounted() {
             const vm = this;
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
-            // In AgiPromptEditor.qvt.js mounted():
-            // In mounted() of AgiPromptEditor.qvt.js:
             this.contextBus.onmessage = function (event) {
                 if (!event.data) return;
 
                 if (event.data.event === 'element-selected-by-id' && event.data.mariaId) {
-                    // 🎯 Ignore clicks on workspace shell/root containers
                     if (!event.data.mariaId.includes('agi-workspace-root') && !event.data.mariaId.includes('AgiWorkspace')) {
                         vm.focusedElementId = event.data.mariaId;
                         vm.includeTargetCoordinate = true;
@@ -492,7 +509,6 @@
                     vm.activeArtifactLocation = event.data.artifactLocation || vm.activeArtifactLocation || '';
                     vm.targetArtifactId = event.data.agiArtifactId || '';
 
-                    // Extract coordinate, ignoring workspace shell
                     let coord = event.data.focusCoordinate || vm.focusedElementId || '';
                     if (coord.includes('agi-workspace-root')) {
                         coord = vm.focusedElementId && !vm.focusedElementId.includes('agi-workspace-root') ? vm.focusedElementId : '';
@@ -601,6 +617,7 @@
                 const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
                 const openBraceChar = String.fromCharCode(123);
 
+                // 1. Load Workspace Buffer AST
                 try {
                     const response = await axios.get('/rest/s1/agi-ide/getWorkspaceBuffer', {
                         params: { artifactUri: artifactUri },
@@ -616,15 +633,40 @@
 
                     vm.rawAstObject = astTree;
                     vm.rawXmlSource = bufData.rawXmlContent || '';
-
-                    // Trigger live assembly once AST object is hydrated
-                    vm.syncControlsToAssemblyBuffer();
-
                 } catch (err) {
                     console.warn("Could not load workspace buffer AST:", err);
                     vm.rawAstObject = null;
-                    vm.syncControlsToAssemblyBuffer();
                 }
+
+                // 2. Fetch Entity Definitions via Backend Introspection Service
+                try {
+                    const entityResp = await axios.get('/rest/s1/agi-ide/getScreenEntityGrounding', {
+                        params: { artifactUri: artifactUri },
+                        headers: headers
+                    });
+                    vm.detectedEntities = (entityResp.data?.detectedEntities || []).map(ent => ({
+                        ...ent,
+                        enabled: ent.enabled !== undefined ? ent.enabled : true
+                    }));
+                } catch (err) {
+                    console.warn("Could not introspect screen entities, using standard fallback:", err);
+                    vm.detectedEntities = [
+                        {
+                            entityName: 'nursinghome.patient.Patient',
+                            isPrimary: true,
+                            enabled: true,
+                            fields: {
+                                patientId: { type: 'id', isPk: true },
+                                partyId: { type: 'id', isPk: false },
+                                medicalRecordNum: { type: 'text-short', encrypt: true },
+                                admissionDate: { type: 'date-time' }
+                            },
+                            relationships: [{ relatedEntity: 'mantle.party.Person', type: 'one' }]
+                        }
+                    ];
+                }
+
+                vm.syncControlsToAssemblyBuffer();
             },
 
             // 🎯 SYNTHESIS ENGINE: Generates the Editable Assembly Buffer from Left Controls
@@ -635,18 +677,11 @@
                 if (this.includeTargetCoordinate && this.focusedElementId && this.rawAstObject) {
                     const targetName = this.focusedElementId.split('#').pop();
 
-                    // Recursive AST node resolver supporting Moqui tag structures
                     const findNode = (node) => {
                         if (!node || typeof node !== 'object') return null;
-
                         const attrName = node.attributes?.name;
-                        const nodeName = node.name || node._moquiTag;
                         const mId = node.mariaId || node.id;
-
-                        if (attrName === targetName || mId === this.focusedElementId) {
-                            return node;
-                        }
-
+                        if (attrName === targetName || mId === this.focusedElementId) return node;
                         const children = node.children || node.widgets || [];
                         if (Array.isArray(children)) {
                             for (let child of children) {
@@ -678,10 +713,22 @@
                     lines.push("");
                 }
 
-                // 2. Data Grounding & Schemas
+                // 2. Data Grounding & Schemas Section
+                const activeEntities = (this.detectedEntities || []).filter(e => e.enabled);
                 lines.push("/* ========================================================================= */");
-                lines.push(`/* [2. DATA GROUNDING]: ${this.detectedEntityOrService} */`);
+                lines.push(`/* [2. DATA GROUNDING & SCHEMAS]: ${activeEntities.length} Entities Selected             */`);
                 lines.push("/* ========================================================================= */");
+
+                activeEntities.forEach(ent => {
+                    lines.push(`/* Entity: ${ent.entityName} ${ent.isPrimary ? '(Primary Target)' : ''} */`);
+                    lines.push(JSON.stringify({
+                        entityName: ent.entityName,
+                        fields: ent.fields || {},
+                        relationships: ent.relationships || []
+                    }, null, 2));
+                    lines.push("");
+                });
+
                 if (this.includeFullAst && this.rawAstObject) {
                     lines.push("/* Full Screen Blueprint AST: */");
                     lines.push(JSON.stringify(this.rawAstObject, null, 2));
@@ -738,24 +785,25 @@
                     'Content-Type': 'application/json'
                 };
 
-                // In AgiPromptEditor.qvt.js inside handleDirectDispatch():
+                const activeEntityRag = (this.detectedEntities || []).filter(e => e.enabled).map(e => ({
+                    category: 'ENTITY_SCHEMA',
+                    title: e.entityName,
+                    snippet: `Fields: ${Object.keys(e.fields || {}).join(', ')}`,
+                    enabled: true
+                }));
+
                 const payload = {
                     artifactUri: currentFileUri,
                     targetComponent: this.targetComponent || 'nursinghome',
                     focusCoordinate: this.includeTargetCoordinate ? (this.focusedElementId || null) : null,
                     focusCoordinateArray: this.includeTargetCoordinate ? this.parsedCoordinateArray : [],
                     userPrompt: executedPromptText,
-
-                    // 🎯 1. User's visible/editable staging buffer sent as prompt directives
                     adHocPrompt: this.stagedAssemblyBuffer,
-
                     mcpTool: this.selectedCommand ? this.selectedCommand.command : null,
                     mcpParams: this.selectedCommand ? this.commandParamValues : null,
                     selectedIntents: this.selectedIntents,
-                    ragContext: this.governanceRules.filter(r => r.enabled),
+                    ragContext: [...this.governanceRules.filter(r => r.enabled), ...activeEntityRag],
                     rawXmlContent: this.includeRawXml ? this.rawXmlSource : null,
-
-                    // 🎯 2. Raw JSON document tree preserved so backend can locate & mutate in-place
                     activeRagContext: JSON.stringify({
                         artifactUri: currentFileUri,
                         targetComponent: this.targetComponent,

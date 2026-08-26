@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- 1. GET SERVICE BLUEPRINT (XML -> JSON AST) -->
+    <service verb="get" noun="ServiceBlueprint">
+        <in-parameters>
+            <parameter name="artifactUri" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="serviceAst" type="Map"/>
+            <parameter name="rawXmlContent" type="String"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import org.moqui.resource.ResourceReference
+                import groovy.util.Node
+                import groovy.json.JsonOutput
+
+                if (!artifactUri) return
+                ResourceReference rr = ec.resource.getLocationReference(artifactUri)
+                if (!rr || !rr.exists) return
+
+                rawXmlContent = rr.getText()
+                groovy.xml.XmlParser parser = new XmlParser(false, false)
+                parser.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+                Node rootNode = parser.parseText(rawXmlContent)
+
+                def parseNodeToAst
+                parseNodeToAst = { Node n ->
+                    Map nodeMap = [
+                        name      : n.name()?.toString(),
+                        attributes: n.attributes() ?: [:],
+                        children  : []
+                    ]
+                    String txt = n.text()?.trim()
+                    if (txt) nodeMap.text = txt
+
+                    n.children().each { child ->
+                        if (child instanceof Node) {
+                            nodeMap.children.add(parseNodeToAst(child))
+                        }
+                    }
+                    return nodeMap
+                }
+
+                serviceAst = parseNodeToAst(rootNode)
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- 2. SAVE SERVICE XML (JSON AST -> XML) -->
+    <service verb="save" noun="ServiceXml">
+        <in-parameters>
+            <parameter name="artifactUri" required="true"/>
+            <parameter name="serviceAst" type="Map"/>
+            <parameter name="rawXmlContent" type="String"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="status" type="String"/>
+            <parameter name="message" type="String"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import org.moqui.resource.ResourceReference
+                import groovy.xml.MarkupBuilder
+
+                String finalXml = rawXmlContent
+                if (!finalXml && serviceAst) {
+                    StringWriter writer = new StringWriter()
+                    MarkupBuilder xml = new MarkupBuilder(writer)
+
+                    def renderAstNode
+                    renderAstNode = { Map node, MarkupBuilder builder ->
+                        String tag = node.name ?: 'service'
+                        Map attrs = node.attributes ?: [:]
+                        List children = node.children ?: []
+
+                        if (children.isEmpty() && !node.text) {
+                            builder."${tag}"(attrs)
+                        } else if (children.isEmpty() && node.text) {
+                            builder."${tag}"(attrs, node.text)
+                        } else {
+                            builder."${tag}"(attrs) {
+                                children.each { child ->
+                                    if (child instanceof Map) renderAstNode(child, builder)
+                                }
+                            }
+                        }
+                    }
+
+                    renderAstNode(serviceAst, xml)
+                    finalXml = '<?xml version="1.0" encoding="UTF-8"?>\n' + writer.toString()
+                }
+
+                if (finalXml && artifactUri) {
+                    ResourceReference rr = ec.resource.getLocationReference(artifactUri)
+                    rr.putText(finalXml)
+                    status = "SUCCESS"
+                    message = "Service definition written to disk."
+                } else {
+                    status = "ERROR"
+                    message = "No XML or AST provided."
+                }
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- 3. TRANSIENT TEST SERVICE EXECUTION (RUNNER & AI RECOVERY HARNESS) -->
+    <service verb="test" noun="ServiceExecution">
+        <in-parameters>
+            <parameter name="serviceName" required="true"/>
+            <parameter name="testParameters" type="Map"/>
+            <parameter name="rollbackTransaction" type="Boolean" default="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="status" type="String"/>
+            <parameter name="results" type="Map"/>
+            <parameter name="errorMessage" type="String"/>
+            <parameter name="errorStackTrace" type="String"/>
+            <parameter name="executionTimeMs" type="Long"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                long start = System.currentTimeMillis()
+                boolean beganTx = false
+                Map inMap = testParameters ?: [:]
+
+                try {
+                    if (rollbackTransaction) {
+                        beganTx = ec.transaction.begin(60)
+                    }
+
+                    Map res = ec.service.sync().name(serviceName).parameters(inMap).call()
+                    results = res
+                    status = (res.containsKey("errorMessage") || res.containsKey("error")) ? "FAILURE" : "SUCCESS"
+
+                } catch (Throwable t) {
+                    status = "ERROR"
+                    errorMessage = t.getMessage() ?: t.toString()
+                    StringWriter sw = new StringWriter()
+                    t.printStackTrace(new PrintWriter(sw))
+                    errorStackTrace = sw.toString()
+                    ec.logger.warn("Test execution error on service [${serviceName}]: ${errorMessage}")
+                } finally {
+                    if (rollbackTransaction && beganTx) {
+                        try {
+                            ec.transaction.rollback(true, "Rollback transient test execution", null)
+                        } catch (Exception e) {
+                            ec.logger.warn("Error rolling back test transaction: ${e.message}")
+                        }
+                    }
+                    executionTimeMs = System.currentTimeMillis() - start
+                }
+            ]]></script>
+        </actions>
+    </service>
+
+</services>

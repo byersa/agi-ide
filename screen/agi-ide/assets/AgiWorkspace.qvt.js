@@ -31,6 +31,8 @@
                 availableScreensOptions: [
                     { label: 'Canvas Viewport', value: 'AgiCanvasEditor' },
                     { label: 'Screen Source', value: 'AgiScreenEditor' },
+                    { label: 'Service Editor', value: 'AgiServiceEditor' },
+                    { label: 'Entity Editor', value: 'AgiEntityEditor' },
                     { label: 'Component Source', value: 'AgiComponentEditor' },
                     { label: 'Theme / Style Editor', value: 'AgiStyleEditor' }
                 ],
@@ -38,6 +40,8 @@
                 activeLayoutGrid: {
                     AgiCanvasEditor: { state: 'docked', windowRef: null },
                     AgiScreenEditor: { state: 'docked', windowRef: null },
+                    AgiServiceEditor: { state: 'docked', windowRef: null },
+                    AgiEntityEditor: { state: 'docked', windowRef: null },
                     AgiComponentEditor: { state: 'docked', windowRef: null },
                     AgiStyleEditor: { state: 'docked', windowRef: null }
                 },
@@ -50,6 +54,8 @@
                 loadedComponents: {
                     AgiCanvasEditor: false,
                     AgiScreenEditor: false,
+                    AgiServiceEditor: false,
+                    AgiEntityEditor: false,
                     AgiComponentEditor: false,
                     AgiStyleEditor: false,
                     AgiPromptEditor: false,
@@ -62,6 +68,8 @@
                 editorConstructors: {
                     AgiCanvasEditor: null,
                     AgiScreenEditor: null,
+                    AgiServiceEditor: null,
+                    AgiEntityEditor: null,
                     AgiComponentEditor: null,
                     AgiStyleEditor: null,
                     AgiPromptEditor: null,
@@ -155,9 +163,9 @@
         template: `
             <div class="column fit no-wrap q-pa-md q-gutter-y-md" style="min-height: 90vh;">
                 <!-- 1. Header Controls Toolbar -->
-                <div id="agi-workspace-header" class="row items-center justify-between q-pa-sm bg-grey-10 text-white rounded-borders shadow-2">
+                <div id="agi-workspace-header" @click.stop class="row items-center justify-between q-pa-sm bg-grey-10 text-white rounded-borders shadow-2">
                     
-                    <!-- Left Identity Badge & Dirty Indicator -->
+                    <!-- Left Identity Badge -->
                     <div class="row items-center q-gutter-x-sm">
                         <q-icon name="dashboard_customize" color="primary" size="sm" />
                         <div>
@@ -169,18 +177,16 @@
                                 <q-badge color="deep-purple-8" class="q-ml-xs text-caption font-mono" style="font-size: 9px;">
                                     DOMAIN APP
                                 </q-badge>
-                                <!-- UNSAVED CHANGES WARNING BADGE -->
                                 <q-badge v-if="isDirty" color="amber-10" text-color="black" class="q-ml-sm text-caption font-mono text-weight-bold animate-pulse">
                                     <q-icon name="warning" size="xs" class="q-mr-xs" /> UNSAVED DRAFT (*)
                                 </q-badge>
                             </div>
                         </div>
                     </div>
-
-                    <!-- Right Controls & Actions -->
-                    <div class="row items-center q-gutter-x-sm">
+                
+                    <!-- Right Controls: Explicit @click.stop on interactive controls -->
+                    <div class="row items-center q-gutter-x-sm" @click.stop>
                         
-                        <!-- Manual Save to Disk (Ctrl+S) -->
                         <q-btn 
                             :color="isDirty ? 'positive' : 'grey-8'" 
                             icon="save" 
@@ -191,8 +197,7 @@
                         >
                             <q-tooltip class="bg-grey-10 text-caption">Compile and write workspace draft to physical XML file (Ctrl+S)</q-tooltip>
                         </q-btn>
-
-                        <!-- Discard / Revert to Disk -->
+                
                         <q-btn 
                             v-if="isDirty"
                             color="negative" 
@@ -205,9 +210,9 @@
                         >
                             <q-tooltip class="bg-grey-10 text-caption">Discard buffer draft and restore original file from disk</q-tooltip>
                         </q-btn>
-
+                
                         <q-separator vertical dark class="q-mx-xs" />
-
+                
                         <q-select
                             v-model="windowDisplayMode"
                             :options="displayModeOptions"
@@ -217,9 +222,11 @@
                             dark
                             bg-color="grey-9"
                             style="min-width: 150px;"
+                            @click.stop
                             @update:model-value="handleDisplayModeChange"
                         ></q-select>
-
+                
+                        <!-- Active Canvas Editors multi-select -->
                         <q-select
                             v-model="activeScreens"
                             :options="availableScreensOptions"
@@ -233,8 +240,9 @@
                             dark
                             bg-color="grey-9"
                             style="min-width: 240px;"
+                            @click.stop
                         ></q-select>
-
+                
                         <q-btn 
                             color="deep-purple-7" 
                             icon="terminal" 
@@ -256,7 +264,7 @@
                         >
                             <q-tooltip class="bg-grey-10 text-caption">Initialize a new Moqui component skeleton</q-tooltip>
                         </q-btn>
-
+                
                         <q-btn 
                             color="cyan-8" 
                             icon="folder_open" 
@@ -413,6 +421,67 @@
                             </div>
                         </div>
 
+                        <!-- Service Pipeline Editor Panel -->
+                        <div 
+                            v-if="isPanelVisible('AgiServiceEditor')" 
+                            :class="[getPanelClass('AgiServiceEditor')]" 
+                            style="min-height: 420px;"
+                            @click="focusedPanel = 'AgiServiceEditor'"
+                        >
+                            <div class="fit column rounded-borders border-dark overflow-hidden bg-grey-10" style="border: 1px solid #334155;">
+                                <div class="bg-black text-white q-pa-xs row items-center justify-between font-mono text-caption">
+                                    <div class="row items-center q-gutter-x-xs">
+                                        <q-icon name="miscellaneous_services" color="amber-4" />
+                                        <span class="text-weight-bold">Service Pipeline Editor</span>
+                                    </div>
+                                    <div class="row items-center q-gutter-x-xs">
+                                        <q-btn flat dense icon="west" size="xs" color="cyan-4" @click.stop="snapPanel('AgiServiceEditor', 'left')" />
+                                        <q-btn flat dense icon="east" size="xs" color="cyan-4" @click.stop="snapPanel('AgiServiceEditor', 'right')" />
+                                        <q-btn flat dense :icon="activeLayoutGrid.AgiServiceEditor?.state === 'maximized' ? 'fullscreen_exit' : 'fullscreen'" size="xs" color="primary" @click.stop="toggleMaximize('AgiServiceEditor')" />
+                                    </div>
+                                </div>
+                                <div class="col overflow-auto">
+                                    <component 
+                                        v-if="editorConstructors.AgiServiceEditor"
+                                        :is="editorConstructors.AgiServiceEditor" 
+                                        :service-uri="localScreenPath" 
+                                        :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" 
+                                        @trigger-save="handleChildEditorSave"
+                                    ></component>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Entity Model Editor Panel -->
+                        <div 
+                            v-if="isPanelVisible('AgiEntityEditor')" 
+                            :class="[getPanelClass('AgiEntityEditor')]" 
+                            style="min-height: 420px;"
+                            @click="focusedPanel = 'AgiEntityEditor'"
+                        >
+                            <div class="fit column rounded-borders border-dark overflow-hidden bg-grey-10" style="border: 1px solid #334155;">
+                                <div class="bg-black text-white q-pa-xs row items-center justify-between font-mono text-caption">
+                                    <div class="row items-center q-gutter-x-xs">
+                                        <q-icon name="storage" color="secondary" />
+                                        <span class="text-weight-bold">Entity Schema Editor</span>
+                                    </div>
+                                    <div class="row items-center q-gutter-x-xs">
+                                        <q-btn flat dense icon="west" size="xs" color="cyan-4" @click.stop="snapPanel('AgiEntityEditor', 'left')" />
+                                        <q-btn flat dense icon="east" size="xs" color="cyan-4" @click.stop="snapPanel('AgiEntityEditor', 'right')" />
+                                        <q-btn flat dense :icon="activeLayoutGrid.AgiEntityEditor?.state === 'maximized' ? 'fullscreen_exit' : 'fullscreen'" size="xs" color="primary" @click.stop="toggleMaximize('AgiEntityEditor')" />
+                                    </div>
+                                </div>
+                                <div class="col overflow-auto">
+                                    <component 
+                                        v-if="editorConstructors.AgiEntityEditor"
+                                        :is="editorConstructors.AgiEntityEditor" 
+                                        :entity-uri="localScreenPath" 
+                                        :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" 
+                                        @trigger-save="handleChildEditorSave"
+                                    ></component>
+                                </div>
+                            </div>
+                        </div>
                     </div>
             
                 </div>
@@ -564,6 +633,8 @@
                     { name: 'AgiStyleEditor', url: '/agi-ide-assets/AgiStyleEditor.qvt.js', fallbackUrl: '/apps/agi-ide/assets/AgiStyleEditor.qvt.js', globalVar: 'AgiStyleEditor' },
                     { name: 'AgiCanvasEditor', url: '/agi-ide-assets/AgiCanvasEditor.qvt.js', globalVar: 'AgiCanvasEditor' },
                     { name: 'AgiScreenEditor', url: '/agi-ide-assets/AgiScreenEditor.qvt.js', globalVar: 'AgiScreenEditor' },
+                    { name: 'AgiServiceEditor', url: '/agi-ide-assets/AgiServiceEditor.qvt.js', globalVar: 'AgiServiceEditor' },
+                    { name: 'AgiEntityEditor', url: '/agi-ide-assets/AgiEntityEditor.qvt.js', globalVar: 'AgiEntityEditor' },
                     { name: 'AgiComponentEditor', url: '/agi-ide-assets/AgiComponentEditor.qvt.js', globalVar: 'AgiComponentEditor' },
                     { name: 'AgiArtifactPalette', url: '/agi-ide-assets/AgiArtifactPalette.qvt.js', globalVar: 'AgiArtifactPalette' },
                     { name: 'MoquiXmlHost', url: '/agi-ai-assets/moqui-xml-host.qvt.js', globalVar: 'MoquiXmlHost' },

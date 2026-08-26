@@ -220,5 +220,48 @@
             <service name="org.moqui.ide.AgiWorkspaceServices.get#ThemeJson"/>
         </method>
     </resource>
+    <resource name="getScreenEntityGrounding">
+        <method type="get">
+            <service name="org.moqui.ide.AgiEntityServices.get#ScreenEntityGrounding"/>
+        </method>
+    </resource>
+    <!-- Service Blueprint & Execution Endpoints -->
+    <resource name="getServiceBlueprint">
+        <method type="get">
+            <service name="org.moqui.ide.AgiServiceServices.get#ServiceBlueprint"/>
+        </method>
+    </resource>
+
+    <resource name="saveServiceXml">
+        <method type="post">
+            <service name="org.moqui.ide.AgiServiceServices.save#ServiceXml"/>
+        </method>
+    </resource>
+
+    <resource name="testServiceExecution">
+        <method type="post">
+            <service name="org.moqui.ide.AgiServiceServices.test#ServiceExecution"/>
+        </method>
+    </resource>
+
+<!-- Entity Blueprint & Data Endpoints -->
+    <resource name="getEntityBlueprint">
+        <method type="get">
+            <service name="org.moqui.ide.AgiEntityServices.get#EntityBlueprint"/>
+        </method>
+    </resource>
+
+    <resource name="saveEntityXml">
+        <method type="post">
+            <service name="org.moqui.ide.AgiEntityServices.save#EntityXml"/>
+        </method>
+    </resource>
+
+    <resource name="queryEntityData">
+        <method type="get">
+            <service name="org.moqui.ide.AgiEntityServices.query#EntityData"/>
+        </method>
+    </resource>
+
 </rest-api>
 
