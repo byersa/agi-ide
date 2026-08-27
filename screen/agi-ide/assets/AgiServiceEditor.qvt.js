@@ -298,6 +298,71 @@
             if (this.contextBus) this.contextBus.close();
         },
         methods: {
+
+            async loadServiceDefinition(uri, nameOverride) {
+                if (!uri) return;
+                const vm = this;
+                const targetName = nameOverride || this.serviceName || this.resolvedServiceName || '';
+                const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
+
+                try {
+                    const response = await axios.get('/rest/s1/agi-ide/getServiceBlueprint', {
+                        params: {
+                            artifactUri: uri,
+                            serviceName: targetName
+                        },
+                        headers: headers
+                    });
+
+                    const data = response.data || {};
+                    const serviceNode = data.serviceAst || null;
+                    if (!serviceNode) return;
+
+                    const attrs = serviceNode.attributes || {};
+                    const verb = attrs.verb || 'run';
+                    const noun = attrs.noun ? `#${attrs.noun}` : '';
+
+                    let pkgPath = '';
+                    if (uri.startsWith('component://')) {
+                        const clean = uri.replace(/^component:\/\//, '').replace(/\.xml$/, '').replace(/\.service\.xml$/, '');
+                        const parts = clean.split('/service/');
+                        if (parts.length > 1) {
+                            pkgPath = parts[1].replace(/\//g, '.') + '.';
+                        }
+                    }
+
+                    vm.resolvedServiceName = `${pkgPath}${verb}${noun}`;
+
+                    const inParamsNode = (serviceNode.children || []).find(c => c.name === 'in-parameters');
+                    vm.inParameters = inParamsNode ? (inParamsNode.children || [])
+                        .filter(c => c.name === 'parameter')
+                        .map(p => ({
+                            name: p.attributes?.name || '',
+                            type: p.attributes?.type || 'String',
+                            required: p.attributes?.required || 'false'
+                        })) : [];
+
+                    const outParamsNode = (serviceNode.children || []).find(c => c.name === 'out-parameters');
+                    vm.outParameters = outParamsNode ? (outParamsNode.children || [])
+                        .filter(c => c.name === 'parameter')
+                        .map(p => ({
+                            name: p.attributes?.name || '',
+                            type: p.attributes?.type || 'String'
+                        })) : [];
+
+                    const actionsNode = (serviceNode.children || []).find(c => c.name === 'actions');
+                    vm.actionSteps = actionsNode ? (actionsNode.children || []).map(step => ({
+                        name: step.name,
+                        attributes: { ...(step.attributes || {}) },
+                        children: step.children || [],
+                        text: step.text || ''
+                    })) : [];
+
+                } catch (err) {
+                    console.warn(`Could not load service blueprint for ${uri}:`, err);
+                }
+            },
+
             resolveCsrfToken() {
                 return window.AGI_SERVER_CSRF_TOKEN
                     || (window.moqui && window.moqui.moquiSessionToken)
@@ -347,70 +412,7 @@
                 list.push({ name: name, type: 'String', required: 'false' });
             },
 
-            async loadServiceDefinition(uri) {
-                if (!uri) return;
-                const vm = this;
-                const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
 
-                try {
-                    const response = await axios.get('/rest/s1/agi-ide/getServiceBlueprint', {
-                        params: { artifactUri: uri },
-                        headers: headers
-                    });
-
-                    const data = response.data || {};
-                    const rootAst = data.serviceAst || null;
-                    if (!rootAst) return;
-
-                    let serviceNode = rootAst;
-                    if (rootAst.name === 'services') {
-                        serviceNode = (rootAst.children || []).find(c => c.name === 'service') || rootAst;
-                    }
-
-                    const attrs = serviceNode.attributes || {};
-                    const verb = attrs.verb || 'run';
-                    const noun = attrs.noun ? `#${attrs.noun}` : '';
-
-                    let pkgPath = '';
-                    if (uri.startsWith('component://')) {
-                        const clean = uri.replace(/^component:\/\//, '').replace(/\.xml$/, '').replace(/\.service\.xml$/, '');
-                        const parts = clean.split('/service/');
-                        if (parts.length > 1) {
-                            pkgPath = parts[1].replace(/\//g, '.') + '.';
-                        }
-                    }
-
-                    vm.resolvedServiceName = `${pkgPath}${verb}${noun}`;
-
-                    const inParamsNode = (serviceNode.children || []).find(c => c.name === 'in-parameters');
-                    vm.inParameters = inParamsNode ? (inParamsNode.children || [])
-                        .filter(c => c.name === 'parameter')
-                        .map(p => ({
-                            name: p.attributes?.name || '',
-                            type: p.attributes?.type || 'String',
-                            required: p.attributes?.required || 'false'
-                        })) : [];
-
-                    const outParamsNode = (serviceNode.children || []).find(c => c.name === 'out-parameters');
-                    vm.outParameters = outParamsNode ? (outParamsNode.children || [])
-                        .filter(c => c.name === 'parameter')
-                        .map(p => ({
-                            name: p.attributes?.name || '',
-                            type: p.attributes?.type || 'String'
-                        })) : [];
-
-                    const actionsNode = (serviceNode.children || []).find(c => c.name === 'actions');
-                    vm.actionSteps = actionsNode ? (actionsNode.children || []).map(step => ({
-                        name: step.name,
-                        attributes: { ...(step.attributes || {}) },
-                        children: step.children || [],
-                        text: step.text || ''
-                    })) : [];
-
-                } catch (err) {
-                    console.warn(`Could not load service blueprint for ${uri}:`, err);
-                }
-            },
 
             async executeTransientTest() {
                 this.isTesting = true;

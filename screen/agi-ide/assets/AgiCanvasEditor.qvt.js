@@ -16,14 +16,13 @@
                     </div>
                 </div>
 
-                <!-- 🎯 NATIVE QMETA BLUEPRINT RENDERER ENGINE -->
-                <div id="canvas-elements-viewport" class="column no-wrap items-stretch full-width">
+                <!-- NATIVE QMETA BLUEPRINT RENDERER ENGINE -->
+                <div id="canvas-elements-viewport" class="column no-wrap items-stretch full-width" @click="handleCanvasClick">
                     <template v-if="effectiveTree">
-                        <!-- If root is a "screen" envelope, iterate and render its top-level widget children directly -->
                         <template v-if="canvasWidgetNodes && canvasWidgetNodes.length > 0">
                             <m-blueprint-node 
                                 v-for="(childNode, idx) in canvasWidgetNodes" 
-                                :key="childNode.mariaId || childNode.id || idx"
+                                :key="childNode.mariaId || idx"
                                 :node="childNode" 
                                 :context="{ 
                                     selectedMariaId: selectedMariaId,
@@ -33,7 +32,6 @@
                             ></m-blueprint-node>
                         </template>
                 
-                        <!-- Fallback for direct container / form nodes -->
                         <m-blueprint-node 
                             v-else
                             :node="effectiveTree" 
@@ -51,18 +49,6 @@
             screenPath: { type: String, required: true },
             layoutTree: { type: Object, default: () => null }
         },
-        watch: {
-            layoutTree: {
-                handler(newTree) {
-                    if (newTree) {
-                        console.info(`🔄 AgiCanvasEditor [${this.$options.name}] deeply sync'd localBlueprintTree to new workspace layout state.`);
-                        return;
-                    }
-                },
-                immediate: true,
-                deep: true
-            }
-        },
         data() {
             return {
                 selectedMariaId: '',
@@ -70,7 +56,6 @@
             };
         },
         computed: {
-            // 🎯 Ensure tree is parsed Map/Object
             parsedTree() {
                 if (!this.layoutTree) return null;
                 if (typeof this.layoutTree === 'string') {
@@ -79,85 +64,42 @@
                 return this.layoutTree;
             },
 
-            // 🎯 Extract visual root or children
             effectiveTree() {
                 return this.parsedTree;
             },
-
-            // 🎯 Locate actual visual nodes (unwrapping <screen> and <widgets>)
-            // In AgiCanvasEditor.qvt.js computed properties:
 
             canvasWidgetNodes() {
                 const rawTree = this.parsedTree;
                 if (!rawTree) return [];
 
-                // Helper to recursively normalize 'name' -> '_moquiTag'
-                // In AgiCanvasEditor.qvt.js normalizeAstNode helper:
-                const normalizeAstNode = (node, parentId = '') => {
-                    if (!node || typeof node !== 'object') return node;
-
-                    const tag = node._moquiTag || node.name || node.tag || 'container';
-                    const rawName = node.attributes?.name || node.name || node.id || '';
-
-                    // Formulate a distinct hierarchical ID if node lacks one
-                    let assignedId = node.mariaId || node.id;
-                    if (!assignedId) {
-                        assignedId = parentId ? `${parentId}#${rawName || tag}` : (rawName || tag);
-                    }
-
-                    const children = (node.children || []).map(child => normalizeAstNode(child, assignedId));
-
-                    return {
-                        ...node,
-                        mariaId: assignedId,
-                        _moquiTag: tag,
-                        children: children,
-                        attributes: node.attributes || {}
-                    };
-                };
-
                 const rootTag = rawTree._moquiTag || rawTree.name || rawTree.tag;
 
-                // 1. If root is <screen>, extract children of <widgets>
                 if (rootTag === 'screen' && Array.isArray(rawTree.children)) {
-                    const widgetsNode = rawTree.children.find(c => {
-                        const t = c._moquiTag || c.name || c.tag;
-                        return t === 'widgets';
-                    });
-
+                    const widgetsNode = rawTree.children.find(c => (c._moquiTag || c.name || c.tag) === 'widgets');
                     if (widgetsNode && Array.isArray(widgetsNode.children)) {
-                        return widgetsNode.children.map(normalizeAstNode);
+                        return widgetsNode.children;
                     }
-
-                    // Filter out non-visual elements
-                    return rawTree.children
-                        .filter(c => !['transition', 'actions', 'subscreens'].includes(c._moquiTag || c.name || c.tag))
-                        .map(normalizeAstNode);
+                    return rawTree.children.filter(c => !['transition', 'actions', 'subscreens'].includes(c._moquiTag || c.name || c.tag));
                 }
 
-                // 2. Direct <widgets> node
                 if (rootTag === 'widgets' && Array.isArray(rawTree.children)) {
-                    return rawTree.children.map(normalizeAstNode);
+                    return rawTree.children;
                 }
 
-                return [normalizeAstNode(rawTree)];
+                return [rawTree];
             },
 
             dynamicSubscreenPath() {
                 const tree = this.parsedTree;
                 if (!tree) return [];
-
                 const defaultSub = tree.subscreens?.defaultItem;
                 if (defaultSub && defaultSub.length > 0) return [defaultSub];
-
                 const subChildren = tree.subscreens?.children || [];
                 if (subChildren.length > 0 && subChildren[0].name) return [subChildren[0].name];
-
                 return [];
             }
         },
         mounted() {
-            // 1. Channel listener for cross-component / iframe broadcasts
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
             this.contextBus.onmessage = (msg) => {
                 if (msg.data?.event === 'element-selected-by-id') {
@@ -165,7 +107,6 @@
                 }
             };
 
-            // 2. Window listener fallback for same-window execution
             this.onWindowSelection = (e) => {
                 if (e.detail?.mariaId) {
                     this.onElementSelected(e.detail.mariaId);
@@ -189,14 +130,29 @@
                 this.scrollToNode(mariaId);
             },
             scrollToNode(mariaId) {
+                if (!mariaId) return;
+                const fieldName = mariaId.includes('#') ? mariaId.split('#').pop() : mariaId;
+
                 this.$nextTick(() => {
-                    const el = this.$el.querySelector(`[data-maria-id="${mariaId}"]`)
+                    // 1. Remove previous active classes
+                    const allSelected = this.$el.querySelectorAll('.agi-canvas-selected-node, .selected-highlight');
+                    allSelected.forEach(el => {
+                        el.classList.remove('agi-canvas-selected-node');
+                        el.classList.remove('selected-highlight');
+                    });
+
+                    // 2. Locate element by data-field-name, mariaid, or data-maria-id
+                    const el = this.$el.querySelector(`[data-field-name="${fieldName}"]`)
                         || this.$el.querySelector(`[mariaid="${mariaId}"]`)
-                        || document.querySelector(`[mariaid="${mariaId}"]`);
+                        || this.$el.querySelector(`[data-maria-id="${mariaId}"]`)
+                        || this.$el.querySelector(`[mariaid$="#${fieldName}"]`);
+
                     if (el) {
-                        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                        el.classList.add('pulse-highlight');
-                        setTimeout(() => el.classList.remove('pulse-highlight'), 1000);
+                        const targetWrapper = el.classList.contains('moqui-field-wrapper') ? el : (el.closest('.moqui-field-wrapper') || el);
+                        targetWrapper.classList.add('agi-canvas-selected-node');
+                        targetWrapper.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        targetWrapper.classList.add('pulse-highlight');
+                        setTimeout(() => targetWrapper.classList.remove('pulse-highlight'), 800);
                     }
                 });
             }
@@ -211,7 +167,6 @@
         if (window.moqui && window.moqui.webrootVueApp) {
             if (!window.moqui.webrootVueApp.component('agi-canvas-editor')) {
                 window.moqui.webrootVueApp.component('agi-canvas-editor', AgiCanvasEditor);
-                console.info("🚀 [AGI] Registered 'agi-canvas-editor' successfully.");
             }
         } else {
             setTimeout(registerAgiCanvasEditor, 50);

@@ -1,139 +1,196 @@
-                    .selected-highlight {
-                        outline: 2px solid #3b82f6 !important;
-                        box-shadow: 0 0 10px rgba(59, 130, 246, 0.6) !important;
-                        background-color: #dbeafe !important;
-                    }
+.selected-highlight {
+    outline: 2px solid #3b82f6 !important;
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.6) !important;
+    background-color: #dbeafe !important;
+}
 
-                    .pulse-highlight {
-                        animation: pulseGlow 1s infinite alternate;
-                    }
+.pulse-highlight {
+    animation: pulseGlow 1s infinite alternate;
+}
 
-                    @keyframes pulseGlow {
-                        from {
-                            box-shadow: 0 0 4px rgba(59, 130, 246, 0.4);
-                        }
+@keyframes pulseGlow {
+    from {
+        box-shadow: 0 0 4px rgba(59, 130, 246, 0.4);
+    }
 
-                        to {
-                            box-shadow: 0 0 12px rgba(59, 130, 246, 0.8);
-                        }
-                    }
+    to {
+        box-shadow: 0 0 12px rgba(59, 130, 246, 0.8);
+    }
+}
 
+.component-editor-container {
+    transition: border-color 0.5s ease, box-shadow 0.5s ease;
+    border: 2px solid transparent;
+    height: 100%;
+}
 
-                    .component-editor-container {
-                        transition: border-color 0.5s ease, box-shadow 0.5s ease;
-                        border: 2px solid transparent;
-                        height: 100%;
-                    }
+.screen-editor-container {
+    transition: border-color 0.5s ease, box-shadow 0.5s ease;
+    border: 2px solid transparent;
+    height: 100%;
+    overflow: hidden !important;
+    min-width: 0 !important;
+}
 
-                    .screen-editor-container {
-                        transition: border-color 0.5s ease, box-shadow 0.5s ease;
-                        border: 2px solid transparent;
-                        height: 100%;
-                    }
+.glow-active {
+    border-color: #3b82f6 !important;
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.7);
+    animation: borderFlash 1.5s ease;
+}
 
-                    .glow-active {
-                        border-color: #3b82f6 !important;
-                        box-shadow: 0 0 12px rgba(59, 130, 246, 0.7);
-                        animation: borderFlash 1.5s ease;
-                    }
+@keyframes borderFlash {
+    0% {
+        border-color: #3b82f6;
+    }
 
-                    @keyframes borderFlash {
-                        0% {
-                            border-color: #3b82f6;
-                        }
+    50% {
+        border-color: #60a5fa;
+    }
 
-                        50% {
-                            border-color: #60a5fa;
-                        }
+    100% {
+        border-color: #3b82f6;
+    }
+}
 
-                        100% {
-                            border-color: #3b82f6;
-                        }
-                    }
+.xml-textarea {
+    width: 100%;
+    height: 100%;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14px;
+    line-height: 18px;
+    color: #1e293b;
+    background-color: #f8fafc;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    resize: none;
+    outline: none;
+    padding: 8px;
+}
 
-                    .xml-textarea {
-                        width: 100%;
-                        height: 100%;
-                        font-family: 'Courier New', Courier, monospace;
-                        font-size: 14px;
-                        line-height: 18px;
-                        color: #1e293b;
-                        background-color: #f8fafc;
-                        border: 1px solid #cbd5e1;
-                        border-radius: 4px;
-                        resize: none;
-                        outline: none;
-                        padding: 8px;
-                    }
+/* Enforce dark text on inputs within menus/dropdowns */
+.q-menu .q-field__native,
+.q-item .q-field__native,
+.q-menu .q-field__input,
+.q-item .q-field__input {
+    color: rgba(0, 0, 0, 0.87) !important;
+}
 
-                    /* Enforce dark text on inputs within menus/dropdowns */
-                    .q-menu .q-field__native,
-                    .q-item .q-field__native,
-                    .q-menu .q-field__input,
-                    .q-item .q-field__input {
-                        color: rgba(0, 0, 0, 0.87) !important;
-                    }
+/* Ensure label color is visible when not focused */
+.q-menu .q-field__label,
+.q-item .q-field__label {
+    color: rgba(0, 0, 0, 0.6) !important;
+}
 
-                    /* Ensure label color is visible when not focused */
-                    .q-menu .q-field__label,
-                    .q-item .q-field__label {
-                        color: rgba(0, 0, 0, 0.6) !important;
-                    }
+/* Canvas Viewport Base Layout */
+#canvas-elements-viewport div[name="container-box"],
+#canvas-elements-viewport div[name="box-body"],
+#canvas-elements-viewport div[name="form-single"] {
+    display: flex;
+    flex-direction: column;
+    min-height: 48px;
+    width: 100%;
+    padding: 8px;
+    background: #ffffff;
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
 
-                    /* Add to AgiCanvasEditor style block or workspace theme */
-                    #canvas-elements-viewport div[name="container-box"],
-                    #canvas-elements-viewport div[name="box-body"],
-                    #canvas-elements-viewport div[name="form-single"] {
-                        display: flex;
-                        flex-direction: column;
-                        min-height: 48px;
-                        width: 100%;
-                        padding: 8px;
-                        background: #ffffff;
-                        border-radius: 4px;
-                        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-                    }
+#canvas-elements-viewport div[name="field"] {
+    display: flex;
+    align-items: center;
+    min-height: 36px;
+    margin-bottom: 8px;
+    padding: 4px 8px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 4px;
+    background: #f8fafc;
+}
 
-                    #canvas-elements-viewport div[name="field"] {
-                        display: flex;
-                        align-items: center;
-                        min-height: 36px;
-                        margin-bottom: 8px;
-                        padding: 4px 8px;
-                        border: 1px dashed #cbd5e1;
-                        border-radius: 4px;
-                        background: #f8fafc;
-                    }
+.pulse-highlight {
+    animation: agiPulse 1s ease-in-out;
+}
 
-                    .agi-canvas-selected-node {
-                        outline: 2px solid #1976D2 !important;
-                        outline-offset: 2px;
-                        box-shadow: 0 0 8px rgba(25, 118, 210, 0.4) !important;
-                        transition: outline 0.15s ease-in-out;
-                    }
+@keyframes agiPulse {
+    0% {
+        background-color: rgba(25, 118, 210, 0.25);
+    }
 
-                    .pulse-highlight {
-                        animation: agiPulse 1s ease-in-out;
-                    }
+    100% {
+        background-color: transparent;
+    }
+}
 
-                    @keyframes agiPulse {
-                        0% {
-                            background-color: rgba(25, 118, 210, 0.25);
-                        }
+/* ========================================================================= */
+/* PRECISE NODE SELECTION & HIGHLIGHTING (PREVENTS CASCADING)               */
+/* ========================================================================= */
 
-                        100% {
-                            background-color: transparent;
-                        }
-                    }
+/* Remove any global wildcards that style all fields simultaneously */
+#canvas-elements-viewport .selected-highlight {
+    outline: none !important;
+    box-shadow: none !important;
+    background-color: transparent !important;
+}
 
-                    /* Show action badge on hover or when element is selected */
-                    .agi-hover-container .agi-action-badge {
-                        opacity: 0;
-                        transition: opacity 0.15s ease-in-out;
-                    }
+/* Apply selection ONLY directly to the target node */
+#canvas-elements-viewport .agi-canvas-selected-node {
+    outline: 2px solid #1976D2 !important;
+    outline-offset: 1px !important;
+    box-shadow: 0 0 6px rgba(25, 118, 210, 0.4) !important;
+    background-color: rgba(219, 234, 254, 0.3) !important;
+    transition: outline 0.1s ease-in-out;
+}
 
-                    .agi-hover-container:hover>.agi-action-badge,
-                    .agi-hover-container.agi-canvas-selected-node>.agi-action-badge,
-                    .agi-action-badge.is-active {
-                        opacity: 1 !important;
-                    }
+/* Ensure inner children do not inherit the selection border */
+#canvas-elements-viewport .agi-canvas-selected-node div[name="field"] {
+    outline: none;
+    box-shadow: none;
+    background-color: #f8fafc;
+}
+
+/* If a specific field IS the selected node, highlight ONLY that field */
+#canvas-elements-viewport div[name="field"].agi-canvas-selected-node {
+    outline: 2px solid #1976D2 !important;
+    outline-offset: 1px !important;
+    box-shadow: 0 0 6px rgba(25, 118, 210, 0.4) !important;
+    background-color: #dbeafe !important;
+}
+
+/* Action Badges: only show on hover of the immediate item or if that exact item is selected */
+.agi-action-badge {
+    opacity: 0;
+    pointer-events: auto;
+    transition: opacity 0.15s ease-in-out;
+}
+
+.agi-hover-container:hover>.agi-action-badge,
+.agi-hover-container.agi-canvas-selected-node>.agi-action-badge {
+    opacity: 1 !important;
+}
+
+/* ========================================================================= */
+/* CODEMIRROR HOST & LINE WRAPPING ENFORCEMENT                               */
+/* ========================================================================= */
+
+.screen-editor-container .CodeMirror {
+    height: 100% !important;
+    width: 100% !important;
+    font-family: monospace !important;
+    font-size: 11px !important;
+    line-height: 16px !important;
+    clip-path: none !important;
+    position: relative !important;
+}
+
+.screen-editor-container .CodeMirror-wrap pre.CodeMirror-line,
+.screen-editor-container .CodeMirror-wrap pre.CodeMirror-line-like {
+    word-break: break-all !important;
+    overflow-wrap: anywhere !important;
+    white-space: pre-wrap !important;
+}
+
+.screen-editor-container .cm-selected-xml-node {
+    background-color: #1976d2 !important;
+    color: #ffffff !important;
+    font-weight: bold;
+    border-radius: 2px;
+}

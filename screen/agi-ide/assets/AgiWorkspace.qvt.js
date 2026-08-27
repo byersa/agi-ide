@@ -21,6 +21,7 @@
                 ignoredFrameworkComponents: ['agi-ide', 'agi-ai', 'moqui-usl', 'mantle-usl', 'webroot', 'tools'],
 
                 activeFocusedCoordinate: '',
+                activeServiceUri: '',
                 isDirty: false,
                 showUnsavedSwitchDialog: false,
                 pendingSwitchItem: null,
@@ -110,6 +111,15 @@
                     console.info("📡 [AgiWorkspace] Detected artifact mutation via ContextBus. Setting isDirty=true...");
                     vm.isDirty = true;
                     vm.hydrateWorkspaceBuffer();
+                }
+
+                if (event.data?.event === 'open-service-artifact') {
+                    vm.activeServiceUri = event.data.serviceUri || '';
+                    // Ensure AgiServiceEditor panel is visible and focused
+                    if (!vm.activeScreens.includes('AgiServiceEditor')) {
+                        vm.activeScreens.push('AgiServiceEditor');
+                    }
+                    vm.focusedPanel = 'AgiServiceEditor';
                 }
             };
 
@@ -275,6 +285,18 @@
                         >
                             <q-tooltip class="bg-grey-10 text-caption">Browse and focus workspace artifacts</q-tooltip>
                         </q-btn>
+                        <!-- In AgiWorkspace.qvt.js Toolbar -->
+                        <q-btn 
+                            color="negative" 
+                            flat
+                            icon="restart_alt" 
+                            label="Revert to Disk" 
+                            dense 
+                            class="q-px-sm font-mono text-caption"
+                            @click.stop="revertBufferToDisk"
+                        >
+                            <q-tooltip class="bg-grey-10 text-caption">Discard buffer draft and reload physical XML file from disk</q-tooltip>
+                        </q-btn>
                     </div>
                 </div>
 
@@ -421,7 +443,7 @@
                             </div>
                         </div>
 
-                        <!-- Service Pipeline Editor Panel -->
+                        <!-- Service Definition Editor Panel -->
                         <div 
                             v-if="isPanelVisible('AgiServiceEditor')" 
                             :class="[getPanelClass('AgiServiceEditor')]" 
@@ -432,7 +454,7 @@
                                 <div class="bg-black text-white q-pa-xs row items-center justify-between font-mono text-caption">
                                     <div class="row items-center q-gutter-x-xs">
                                         <q-icon name="miscellaneous_services" color="amber-4" />
-                                        <span class="text-weight-bold">Service Pipeline Editor</span>
+                                        <span class="text-weight-bold">Service Architecture Editor</span>
                                     </div>
                                     <div class="row items-center q-gutter-x-xs">
                                         <q-btn flat dense icon="west" size="xs" color="cyan-4" @click.stop="snapPanel('AgiServiceEditor', 'left')" />
@@ -444,14 +466,13 @@
                                     <component 
                                         v-if="editorConstructors.AgiServiceEditor"
                                         :is="editorConstructors.AgiServiceEditor" 
-                                        :service-uri="localScreenPath" 
+                                        :service-uri="activeServiceUri" 
                                         :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" 
                                         @trigger-save="handleChildEditorSave"
                                     ></component>
                                 </div>
                             </div>
                         </div>
-
                         <!-- Entity Model Editor Panel -->
                         <div 
                             v-if="isPanelVisible('AgiEntityEditor')" 
@@ -1005,6 +1026,31 @@
                         companionQvtLocation: this.companionQvtPath,
                         targetComponent: this.targetComponentName
                     });
+                }
+            },
+            async revertBufferToDisk() {
+                if (!this.localScreenPath) return;
+                if (!confirm(`Discard all unsaved draft changes and reload "${this.localScreenPath}" from disk?`)) return;
+
+                const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
+                try {
+                    await axios.post('/rest/s1/agi-ide/clearWorkspaceBuffer', {
+                        artifactUri: this.localScreenPath
+                    }, { headers });
+
+                    this.isDirty = false;
+                    if (this.$q) {
+                        this.$q.notify({
+                            type: 'info',
+                            message: 'Buffer discarded. Reloaded from disk.'
+                        });
+                    }
+
+                    // Force reload and re-parse from physical disk file
+                    await this.loadWorkspaceBuffer(this.localScreenPath, true);
+
+                } catch (err) {
+                    console.error("Failed to clear workspace buffer:", err);
                 }
             }
         }

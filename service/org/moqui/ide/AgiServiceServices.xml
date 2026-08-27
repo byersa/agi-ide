@@ -5,25 +5,38 @@
     <service verb="get" noun="ServiceBlueprint">
         <in-parameters>
             <parameter name="artifactUri" required="true"/>
+            <parameter name="serviceName" required="false"/>
         </in-parameters>
         <out-parameters>
             <parameter name="serviceAst" type="Map"/>
+            <parameter name="fullFileAst" type="Map"/>
             <parameter name="rawXmlContent" type="String"/>
+            <parameter name="isNewFile" type="Boolean"/>
+            <parameter name="isNewService" type="Boolean"/>
         </out-parameters>
         <actions>
             <script><![CDATA[
                 import org.moqui.resource.ResourceReference
                 import groovy.util.Node
-                import groovy.json.JsonOutput
 
                 if (!artifactUri) return
                 ResourceReference rr = ec.resource.getLocationReference(artifactUri)
-                if (!rr || !rr.exists) return
 
-                rawXmlContent = rr.getText()
-                groovy.xml.XmlParser parser = new XmlParser(false, false)
-                parser.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
-                Node rootNode = parser.parseText(rawXmlContent)
+                String targetVerb = ""
+                String targetNoun = ""
+                if (serviceName) {
+                    String cleanName = serviceName.trim()
+                    if (cleanName.contains("#")) {
+                        String[] parts = cleanName.split("#")
+                        targetNoun = parts[1]
+                        String left = parts[0]
+                        targetVerb = left.contains(".") ? left.split("\\.").last() : left
+                    } else if (cleanName.contains(".")) {
+                        targetVerb = cleanName.split("\\.").last()
+                    } else {
+                        targetVerb = cleanName
+                    }
+                }
 
                 def parseNodeToAst
                 parseNodeToAst = { Node n ->
@@ -43,7 +56,63 @@
                     return nodeMap
                 }
 
-                serviceAst = parseNodeToAst(rootNode)
+                def createSkeletonServiceNode = { String v, String n ->
+                    return [
+                        name      : "service",
+                        attributes: [ verb: (v ?: "intake"), noun: (n ?: "NewResident") ],
+                        children  : [
+                            [ name: "in-parameters", attributes: [:], children: [] ],
+                            [ name: "out-parameters", attributes: [:], children: [] ],
+                            [ name: "actions", attributes: [:], children: [] ]
+                        ]
+                    ]
+                }
+
+                if (rr != null && rr.exists) {
+                    rawXmlContent = rr.getText()
+                    groovy.xml.XmlParser parser = new groovy.xml.XmlParser(false, false)
+                    parser.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+                    Node rootNode = parser.parseText(rawXmlContent)
+                    Map fileAst = parseNodeToAst(rootNode)
+
+                    isNewFile = false
+                    fullFileAst = fileAst
+
+                    Map matchedServiceNode = null
+                    if (targetVerb || targetNoun) {
+                        matchedServiceNode = (fileAst.children ?: []).find {
+                            it.name == 'service' && 
+                            it.attributes?.verb == targetVerb && 
+                            ((it.attributes?.noun ?: "") == targetNoun)
+                        }
+                    }
+
+                    if (!matchedServiceNode) {
+                        matchedServiceNode = createSkeletonServiceNode(targetVerb, targetNoun)
+                        fileAst.children.add(matchedServiceNode)
+                        isNewService = true
+                    } else {
+                        isNewService = false
+                    }
+
+                    serviceAst = matchedServiceNode
+                    return
+                }
+
+                // File does not exist on disk
+                Map newServiceNode = createSkeletonServiceNode(targetVerb, targetNoun)
+                fullFileAst = [
+                    name      : "services",
+                    attributes: [
+                        "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+                        "xsi:noNamespaceSchemaLocation": "http://moqui.org/xsd/service-definition-3.xsd"
+                    ],
+                    children  : [ newServiceNode ]
+                ]
+                serviceAst = newServiceNode
+                isNewFile = true
+                isNewService = true
+                rawXmlContent = ""
             ]]></script>
         </actions>
     </service>

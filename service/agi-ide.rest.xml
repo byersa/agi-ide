@@ -263,5 +263,10 @@
         </method>
     </resource>
 
+    <resource name="clearWorkspaceBuffer">
+        <method type="post">
+            <service name="org.moqui.ide.AgiWorkspaceServices.clear#WorkspaceBuffer"/>
+        </method>
+    </resource>
 </rest-api>
 

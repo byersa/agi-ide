@@ -2,27 +2,37 @@
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
-    <!-- ===================================================================== -->
-    <!-- GET WORKSPACE BUFFER                                                  -->
+<!-- ===================================================================== -->
+    <!-- GET WORKSPACE BUFFER (With Disk Timestamp Invalidation)               -->
     <!-- ===================================================================== -->
     <service verb="get" noun="WorkspaceBuffer" type="inline">
-        <description>Retrieves active Meta-JSON layout tree, falling back to parsing the physical XML screen file on miss or stub detection.</description>
+        <description>Retrieves active Meta-JSON layout tree, falling back to disk or invalidating stale buffer if physical file was modified.</description>
         <in-parameters>
             <parameter name="artifactUri" required="true"/>
             <parameter name="userId"/>
+            <parameter name="forceReloadFromDisk" type="Boolean" default="false"/>
         </in-parameters>
         <out-parameters>
             <parameter name="workspaceBufferId"/>
             <parameter name="metaJsonBuffer"/>
+            <parameter name="isDiskNewer" type="Boolean"/>
         </out-parameters>
         <actions>
             <script><![CDATA[
                 import groovy.json.JsonSlurper
                 import groovy.json.JsonOutput
+                import org.moqui.resource.ResourceReference
                 
                 String activeUserId = userId ?: ec.user.getUserId() ?: "system_ide_user"
                 
-                // Search DB for latest record across current user OR system fallback user
+                // 1. Check physical file last modified timestamp
+                long diskLastModified = 0
+                ResourceReference rr = ec.resource.getLocationReference(artifactUri)
+                if (rr != null && rr.exists) {
+                    diskLastModified = rr.getLastModified()
+                }
+
+                // 2. Fetch existing WorkspaceBuffer record
                 def bufferList = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
                     .condition("artifactUri", artifactUri)
                     .condition("userId", activeUserId)
@@ -31,46 +41,41 @@
                     .list()
                 
                 def bufferRow = bufferList ? bufferList[0] : null
-                ec.logger.info("📄 [get#WorkspaceBuffer] bufferRow(1): ${bufferRow}")
-                
-                if (!bufferRow) {
-                    // Secondary check for system_ide_user or fallback
-                    def fallbackList = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
-                        .condition("artifactUri", artifactUri)
-                        .orderBy("-lastUpdatedStamp")
-                        .useCache(false)
-                        .list()
-                    bufferRow = fallbackList ? fallbackList[0] : null
-                ec.logger.info("📄 [get#WorkspaceBuffer] bufferRow(2): ${bufferRow}")
+
+                boolean forceReload = forceReloadFromDisk
+                if (bufferRow != null && diskLastModified > 0) {
+                    long bufferTime = bufferRow.lastUpdatedStamp ? bufferRow.lastUpdatedStamp.time : 0
+                    // If physical XML file on disk was modified AFTER the buffer was saved
+                    if (diskLastModified > bufferTime) {
+                        ec.logger.info("🔄 [get#WorkspaceBuffer] Disk file is newer than buffer (${diskLastModified} > ${bufferTime}). Invalidating stale buffer for: ${artifactUri}")
+                        forceReload = true
+                    }
                 }
-    
+
                 boolean isStubOrEmpty = false
-                if (bufferRow?.metaJsonBuffer) {
+                if (bufferRow?.metaJsonBuffer && !forceReload) {
                     String rawJson = bufferRow.metaJsonBuffer
-                    // Detect truncated stub trees
                     if (rawJson.contains('"children":[]') && !rawJson.contains('form-single') && !rawJson.contains('field')) {
                         isStubOrEmpty = true
-                        ec.logger.warn("⚠️ [get#WorkspaceBuffer] Detected truncated stub row [${bufferRow.workspaceBufferId}]. Forcing re-parse from disk.")
                     }
                 } else {
                     isStubOrEmpty = true
                 }
     
-                if (!isStubOrEmpty && bufferRow?.metaJsonBuffer) {
+                if (!isStubOrEmpty && bufferRow?.metaJsonBuffer && !forceReload) {
                     context.workspaceBufferId = bufferRow.workspaceBufferId
                     context.metaJsonBuffer = bufferRow.metaJsonBuffer
+                    context.isDiskNewer = false
                 } else {
                     // Fall back to reading physical XML file from disk
-                    ec.logger.info("📄 [get#WorkspaceBuffer] Reading physical XML file from disk for: ${artifactUri}")
+                    ec.logger.info("📄 [get#WorkspaceBuffer] Parsing fresh XML tree from disk for: ${artifactUri}")
                     Map parseResult = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.parse#XmlToTree")
                         .parameter("artifactUri", artifactUri)
                         .call()
-                ec.logger.info("📄 [get#WorkspaceBuffer] parseResult: ${parseResult}")
     
                     if (parseResult?.layoutTree) {
                         String jsonFromDisk = JsonOutput.toJson(parseResult.layoutTree)
     
-                        // Overwrite/Seed DB buffer with complete screen layout
                         Map storeResult = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer")
                             .parameters([
                                 workspaceBufferId: bufferRow?.workspaceBufferId,
@@ -82,6 +87,7 @@
     
                         context.workspaceBufferId = storeResult.workspaceBufferId
                         context.metaJsonBuffer = jsonFromDisk
+                        context.isDiskNewer = true
                     }
                 }
             ]]></script>
@@ -146,13 +152,13 @@
         </actions>
     </service>
 
-<!-- ===================================================================== -->
+    <!-- ===================================================================== -->
     <!-- COMPILE AST TREE TO MOQUI XML                                         -->
     <!-- ===================================================================== -->
     <service verb="compile" noun="TreeToXml" type="inline">
         <description>
             Recursively processes FreeMarker templates (.ftl) by expanding include directives,
-            or converts a layoutTree AST map (including subscreens) into standard Moqui screen XML.
+            or converts a layoutTree AST map into standard Moqui screen XML adhering to xml-screen-3.xsd.
         </description>
         <in-parameters>
             <parameter name="location" type="String" required="false"/>
@@ -220,25 +226,23 @@
                               .replace("'", "&apos;")
                 }
 
-                // Attribute exclusion block list for save compilation
                 def ignoredAttributes = [
                     '_moquiTag', 'tagName', 'type', '@type', 'mariaId', 'id', 'attributes', 
                     'ai-intent', 'children', 'widgets', 'subscreens', 'screen', 'location', 'pathIndex'
                 ]
 
-                // In AgiWorkspaceServices.xml -> compile#TreeToXml:
+                // Recursive XML node generator
                 def buildXmlNode
-                buildXmlNode = { Map nodeMap ->
+                buildXmlNode = { Map nodeMap, int indentLevel ->
                     if (!nodeMap) return ""
                 
-                    // 1. Tag Resolution
                     String rawTag = nodeMap._moquiTag ?: nodeMap.tag ?: nodeMap.tagName ?: nodeMap.type ?: nodeMap['@type']
                     if (!rawTag && nodeMap.name && (nodeMap.children || nodeMap.attributes || nodeMap.name.contains("-"))) {
                         rawTag = nodeMap.name
                     }
                     rawTag = (rawTag ?: "container").toString().replaceAll("^@", "")
                 
-                    // 2. Un-wrap root <screen> or <widgets>
+                    // Avoid duplicating root wrappers
                     if (rawTag == "screen" || rawTag == "widgets") {
                         StringBuilder rootSb = new StringBuilder()
                         List rootChildren = []
@@ -246,22 +250,22 @@
                         if (nodeMap.widgets instanceof List) rootChildren.addAll(nodeMap.widgets)
                 
                         rootChildren.each { Object child ->
-                            if (child instanceof Map) rootSb.append(buildXmlNode((Map) child))
+                            if (child instanceof Map) rootSb.append(buildXmlNode((Map) child, indentLevel))
                         }
                         return rootSb.toString()
                     }
                 
                     String tagName = rawTag
-                    StringBuilder sb = new StringBuilder("<${tagName}")
+                    String indent = "    " * indentLevel
+                    StringBuilder sb = new StringBuilder("${indent}<${tagName}")
                     List childrenList = []
                 
-                    // 3. Populate Attributes cleanly (Attributes map takes precedence)
+                    // Attributes map takes precedence
                     Map attrs = [:]
                     if (nodeMap.attributes instanceof Map) {
                         attrs.putAll(nodeMap.attributes as Map)
                     }
                 
-                    // Top-level properties that shouldn't overwrite explicit attributes
                     nodeMap.each { Object kObj, Object v ->
                         if (v == null) return
                         String k = kObj.toString()
@@ -270,7 +274,6 @@
                             if (v instanceof List) childrenList.addAll((List) v)
                             else if (v instanceof Map) childrenList.add((Map) v)
                         } else if (!ignoredAttributes.contains(k)) {
-                            // Never let top-level node tag name overwrite explicit attributes.name
                             if (k == 'name' && (v.toString() == rawTag || attrs.containsKey('name'))) {
                                 return
                             }
@@ -283,22 +286,20 @@
                         }
                     }
                 
-                    // 4. Render XML Attributes
                     attrs.each { String ak, Object av ->
                         if (av != null) {
                             sb.append(" ${ak}=\"${escapeXml(av.toString())}\"")
                         }
                     }
                 
-                    // 5. Render Children or Self-Close
                     if (childrenList) {
                         sb.append(">\n")
                         childrenList.each { Object child ->
                             if (child instanceof Map) {
-                                sb.append(buildXmlNode((Map) child))
+                                sb.append(buildXmlNode((Map) child, indentLevel + 1))
                             }
                         }
-                        sb.append("</${tagName}>\n")
+                        sb.append("${indent}</${tagName}>\n")
                     } else {
                         sb.append("/>\n")
                     }
@@ -332,17 +333,61 @@
                 if (location) {
                     xmlText = resolveFtlIncludes(location, new HashSet<String>())
                 } else if (layoutTree) {
+                    // 🎯 SCHEMA PARTITIONING: Extract top-level screen tags vs widget body
+                    List topTransitions = []
+                    List topActions     = []
+                    List widgetNodes    = []
+
+                    def collectNodes
+                    collectNodes = { Object nodeObj ->
+                        if (!(nodeObj instanceof Map)) return
+                        Map node = (Map) nodeObj
+                        String tag = node.name ?: (node._moquiTag ?: (node.tagName ?: node.type ?: "")).toString().replaceAll("^@", "")
+
+                        if (tag == "transition") {
+                            topTransitions.add(node)
+                        } else if (tag == "actions") {
+                            topActions.add(node)
+                        } else if (tag == "screen" || tag == "widgets") {
+                            List ch = []
+                            if (node.children instanceof List) ch.addAll(node.children)
+                            if (node.widgets instanceof List) ch.addAll(node.widgets)
+                            ch.each { collectNodes(it) }
+                        } else {
+                            widgetNodes.add(node)
+                        }
+                    }
+
+                    collectNodes(layoutTree)
+
+                    // 1. Render Top-level Transitions
+                    StringBuilder transitionsSb = new StringBuilder()
+                    topTransitions.each { Map tNode ->
+                        transitionsSb.append(buildXmlNode(tNode, 1))
+                    }
+
+                    // 2. Render Top-level Subscreens
                     String subscreensText = ""
                     if (layoutTree.subscreens instanceof Map) {
                         subscreensText = buildSubscreensXml(layoutTree.subscreens as Map)
                     }
 
-                    String rawWidgetsText = buildXmlNode(layoutTree)
-                    
+                    // 3. Render Top-level Actions (Screen Prepare/Actions)
+                    StringBuilder actionsSb = new StringBuilder()
+                    topActions.each { Map aNode ->
+                        actionsSb.append(buildXmlNode(aNode, 1))
+                    }
+
+                    // 4. Render Widgets Block
+                    StringBuilder widgetsSb = new StringBuilder()
+                    widgetNodes.each { Map wNode ->
+                        widgetsSb.append(buildXmlNode(wNode, 2))
+                    }
+
                     xmlText = """<?xml version="1.0" encoding="UTF-8"?>
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-${subscreensText}    <widgets>
-${rawWidgetsText}    </widgets>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+${transitionsSb.toString()}${subscreensText}${actionsSb.toString()}    <widgets>
+${widgetsSb.toString()}    </widgets>
 </screen>"""
                 } else {
                     xmlText = ""
@@ -397,7 +442,7 @@ ${rawWidgetsText}    </widgets>
                 if (rawXml && rawXml.trim().length() > 0) {
                     String prettyXml = rawXml
                     try {
-                        def parsedXml = new XmlParser(false, false).parseText(rawXml)
+                        def parsedXml = new groovy.xml.XmlParser(false, false).parseText(rawXml)
                         prettyXml = XmlUtil.serialize(parsedXml)
                     } catch (Exception formatEx) {
                         ec.logger.warn("⚠️ Could not pretty-print XML, writing raw output instead: ${formatEx.message}")
@@ -428,9 +473,11 @@ ${rawWidgetsText}    </widgets>
             <parameter name="layoutTree" type="Object"/>
         </out-parameters>
         <actions>
-            <script><![CDATA[
+        <script><![CDATA[
                 import groovy.json.JsonSlurper
+                import groovy.json.JsonOutput
                 import java.security.MessageDigest
+                import org.moqui.resource.ResourceReference
 
                 def generateFallbackId = { String uri, String xpath ->
                     String raw = "${uri}#${xpath}"
@@ -448,9 +495,7 @@ ${rawWidgetsText}    </widgets>
                     String explicitId = node.id ?: node.name ?: node.attributes?.name ?: node.attributes?.id
                     
                     String elementPath = "${currentPath}/${tagName}[${childIdx}]"
-                    if (explicitId) {
-                        elementPath += "@${explicitId}"
-                    }
+                    if (explicitId) elementPath += "@${explicitId}"
 
                     if (!node.mariaId) {
                         if (explicitId) {
@@ -472,30 +517,77 @@ ${rawWidgetsText}    </widgets>
                     }
                 }
 
-            try {
-                    // 1. Render screen widgets via QMETA FTL
+                // Helper for pure XML to AST parsing when FTL macro rendering truncates
+                def parseXmlNodeDirect
+                parseXmlNodeDirect = { groovy.util.Node xmlNode ->
+                    Map m = [
+                        _moquiTag : xmlNode.name()?.toString(),
+                        name      : xmlNode.name()?.toString(),
+                        attributes: xmlNode.attributes() ?: [:],
+                        children  : []
+                    ]
+                    xmlNode.children().each { child ->
+                        if (child instanceof groovy.util.Node) {
+                            m.children.add(parseXmlNodeDirect(child))
+                        }
+                    }
+                    return m
+                }
+
+                try {
+                    Map finalTree = null
                     String qmetaOutput = ""
-    
-                    // 1. Push rawJsonOnly flag to Moqui's context stack
-                    ec.contextStack.push()
+
+                    // 1. Try QMETA FTL Screen Macro Render
                     try {
+                        ec.contextStack.push()
                         ec.contextStack.put("rawJsonOnly", true)
-                
                         qmetaOutput = ec.screen.makeRender()
                             .rootScreen(artifactUri)
                             .renderMode("qmeta")
                             .macroTemplate("component://agi-ai/template/screen-macro/DefaultScreenMacros.qmeta.ftl")
                             .lastStandalone("0")
                             .render()
+                    } catch (Exception renderEx) {
+                        ec.logger.warn("⚠️ [parse#XmlToTree] QMETA macro render failed, falling back to direct XML parse: ${renderEx.message}")
                     } finally {
                         ec.contextStack.pop()
                     }
-                    ec.logger.info(" [parse#XmlToTree] qmetaOutput: ${qmetaOutput}")
 
-                    if (qmetaOutput && qmetaOutput.trim().length() > 0) {
+                    if (qmetaOutput && qmetaOutput.trim().startsWith('{')) {
                         Map rawTree = new JsonSlurper().parseText(qmetaOutput.trim()) as Map
+                        String jsonStr = JsonOutput.toJson(rawTree)
+                        // If output didn't truncate forms/fields, use it
+                        if (jsonStr.contains('form-single') || jsonStr.contains('field')) {
+                            finalTree = rawTree
+                        }
+                    }
 
-                        // 2. Programmatically inject <subscreens> via sDef.getSubscreensNode()
+                    // 2. Direct Declarative Fallback if QMETA output is empty or truncated
+                    if (finalTree == null) {
+                        ec.logger.info("📄 [parse#XmlToTree] Parsing direct XML AST from disk for: ${artifactUri}")
+                        ResourceReference rr = ec.resource.getLocationReference(artifactUri)
+                        if (rr != null && rr.exists) {
+                            groovy.xml.XmlParser parser = new groovy.xml.XmlParser(false, false)
+                            parser.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+                            groovy.util.Node rootXml = parser.parseText(rr.getText())
+
+                            List rootChildren = []
+                            rootXml.children().each { ch ->
+                                if (ch instanceof groovy.util.Node) rootChildren.add(parseXmlNodeDirect(ch))
+                            }
+
+                            finalTree = [
+                                _moquiTag : "screen",
+                                screen    : artifactUri.replaceAll('^component://[^/]+/screen/', '').replaceAll('\\.xml$', ''),
+                                location  : artifactUri,
+                                children  : rootChildren
+                            ]
+                        }
+                    }
+
+                    if (finalTree != null) {
+                        // 3. Populate <subscreens>
                         org.moqui.impl.screen.ScreenDefinition sDef = ec.screen.getScreenDefinition(artifactUri)
                         if (sDef) {
                             org.moqui.util.MNode subsNode = sDef.getSubscreensNode()
@@ -510,8 +602,7 @@ ${rawWidgetsText}    </widgets>
                                         menuTitle: subItemNode.attribute("menu-title") ?: subItemNode.attribute("name") ?: ""
                                     ])
                                 }
-                        
-                                rawTree.subscreens = [
+                                finalTree.subscreens = [
                                     _moquiTag: "subscreens",
                                     defaultItem: subsNode.attribute("default-item") ?: "",
                                     children: subItemsList
@@ -519,33 +610,17 @@ ${rawWidgetsText}    </widgets>
                             }
                         }
 
-                        // 3. Enrich AST with canonical mariaIds
-                        enrichAstNodes(rawTree, "", 0)
+                        // 4. Enrich with canonical mariaIds
+                        enrichAstNodes(finalTree, "", 0)
 
-                        // 4. Register or Sync Artifact Record in AgiArtifact table
-                        def artifactValue = ec.entity.find("org.moqui.ai.AgiArtifact")
-                            .condition("artifactPath", artifactUri)
-                            .one()
-                        if (!artifactValue) {
-                            artifactValue = ec.entity.makeValue("org.moqui.ai.AgiArtifact")
-                            artifactValue.artifactPath = artifactUri
-                            artifactValue.artifactTypeEnumId = "AatXmlScreen"
-                            artifactValue.lastDiskModified = ec.user.nowTimestamp
-                            artifactValue.setSequencedIdPrimary()
-                            artifactValue.create()
-                            ec.logger.info(" Registered new AgiArtifact [${artifactValue.agiArtifactId}] for: ${artifactUri}")
-                        } else {
-                            artifactValue.lastDiskModified = ec.user.nowTimestamp
-                            artifactValue.update()
-                        }
-
-                        context.layoutTree = rawTree
-                        ec.logger.info(" [parse#XmlToTree] Successfully compiled and stamped QMETA AST for: ${artifactUri}")
+                        context.layoutTree = finalTree
+                        ec.logger.info("✅ [parse#XmlToTree] Successfully parsed and stamped AST for: ${artifactUri}")
                     } else {
-                        ec.logger.error(" [parse#XmlToTree] QMETA rendering produced empty output for: ${artifactUri}")
+                        ec.logger.error("❌ [parse#XmlToTree] Failed to build AST for: ${artifactUri}")
                     }
+
                 } catch (Exception e) {
-                    ec.logger.error(" [parse#XmlToTree] Error executing QMETA screen render for ${artifactUri}", e)
+                    ec.logger.error("❌ [parse#XmlToTree] Error in parse#XmlToTree for ${artifactUri}", e)
                     throw e
                 }
             ]]></script>
@@ -557,9 +632,8 @@ ${rawWidgetsText}    </widgets>
     <!-- ===================================================================== -->
     <service verb="get" noun="KnownArtifacts" type="inline">
         <description>
-            Scans runtime component directories (or registered components) to discover 
-            all XML screens, Groovy services, entities, tests, and reports with fully preserved 
-            nested relative paths.
+            Scans runtime component directories to discover all XML screens, Groovy services,
+            entities, tests, and reports with fully preserved nested relative paths.
         </description>
         <in-parameters>
             <parameter name="targetComponent" default-value="nursinghome"/>
@@ -580,12 +654,10 @@ ${rawWidgetsText}    </widgets>
                 if (compDir.exists() && compDir.isDirectory()) {
                     Path compBasePath = compDir.toPath()
 
-                    // 1. Traverse all files recursively
                     compDir.eachFileRecurse(FileType.FILES) { File f ->
                         String filename = f.name
                         if (filename.startsWith('.')) return
 
-                        // Relative path from runtime/component/${compName}/
                         Path relPath = compBasePath.relativize(f.toPath())
                         String relPathStr = relPath.toString().replace('\\', '/')
 
@@ -678,4 +750,40 @@ ${rawWidgetsText}    </widgets>
         </actions>
     </service>
 
+    <!-- ===================================================================== -->
+    <!-- CLEAR / REVERT WORKSPACE BUFFER                                       -->
+    <!-- ===================================================================== -->
+    <service verb="clear" noun="WorkspaceBuffer" type="inline">
+        <description>Deletes the in-memory/DB workspace buffer for an artifact or all artifacts for the current user.</description>
+        <in-parameters>
+            <parameter name="artifactUri" required="false"/>
+            <parameter name="clearAll" type="Boolean" default="false"/>
+            <parameter name="userId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="status" type="String"/>
+            <parameter name="deletedCount" type="Integer"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                String activeUserId = userId ?: ec.user.getUserId() ?: "system_ide_user"
+                int count = 0
+
+                if (clearAll) {
+                    count = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
+                        .condition("userId", activeUserId)
+                        .deleteAll()
+                    ec.logger.info("🧹 [clear#WorkspaceBuffer] Cleared all (${count}) buffers for user: ${activeUserId}")
+                } else if (artifactUri) {
+                    count = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
+                        .condition("artifactUri", artifactUri)
+                        .deleteAll()
+                    ec.logger.info("🧹 [clear#WorkspaceBuffer] Deleted buffer record for: ${artifactUri}")
+                }
+
+                context.status = "SUCCESS"
+                context.deletedCount = count
+            ]]></script>
+        </actions>
+    </service>
 </services>
