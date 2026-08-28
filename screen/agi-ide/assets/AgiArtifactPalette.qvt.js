@@ -263,15 +263,53 @@
                         vm.fetchBufferForUri(event.data.artifactUri);
                     }
                 }
+                if (event.data?.event === 'artifact-deleted') {
+                    vm.onArtifactDeleted(event.data.artifactLocation);
+                }
             };
+            this.onWindowDelete = (e) => {
+                if (e.detail?.artifactLocation) {
+                    vm.onArtifactDeleted(e.detail.artifactLocation);
+                }
+            };
+            window.addEventListener('artifact-deleted', vm.onWindowDelete);
 
             this.loadHistoryFromStorage();
             this.loadKnownArtifacts();
         },
         beforeUnmount() {
             if (this.contextBus) this.contextBus.close();
+            if (this.onWindowDelete) {
+                window.removeEventListener('artifact-deleted', this.onWindowDelete);
+            }
         },
         methods: {
+            onArtifactDeleted(artifactLocation) {
+                if (!artifactLocation) return;
+
+                // 1. Remove from local memory artifacts list
+                if (this.artifacts && Array.isArray(this.artifacts)) {
+                    this.artifacts = this.artifacts.filter(a => a.artifactPath !== artifactLocation && a.value !== artifactLocation);
+                }
+
+                // 2. Remove from recentHistory array and sync to localStorage
+                if (this.recentHistory && Array.isArray(this.recentHistory)) {
+                    this.recentHistory = this.recentHistory.filter(h => h.value !== artifactLocation && h.artifactPath !== artifactLocation);
+                    try {
+                        localStorage.setItem('agi_recent_artifact_history', JSON.stringify(this.recentHistory));
+                    } catch (e) { }
+                }
+
+                // 3. Purge from buffer cache
+                if (this.bufferCache && this.bufferCache[artifactLocation]) {
+                    delete this.bufferCache[artifactLocation];
+                }
+
+                // 4. Reload known artifacts from server
+                if (typeof this.loadKnownArtifacts === 'function') {
+                    this.loadKnownArtifacts();
+                }
+            },
             getArtifactIcon(type) {
                 switch (type) {
                     case 'QVT': return 'javascript';

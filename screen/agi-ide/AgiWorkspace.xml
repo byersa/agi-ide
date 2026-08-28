@@ -7,6 +7,12 @@
         <set field="screenPath" from="context.screenPath ?: 'component://nursinghome/screen/nursinghome.xml'"/>
     </actions>
 
+    <transition name="deleteArtifact" read-only="false">
+        <service-call name="org.moqui.ide.AgiWorkspaceServices.delete#WorkspaceArtifact"
+                      in-map="[artifactLocation: ec.web.parameters.artifactLocation]"/>
+        <default-response type="none"/>
+    </transition>
+
     <subscreens>
         <subscreen name="AgiCanvasEditor" location="component://agi-ide/screen/agi-ide/AgiCanvasEditor.xml"/>
         <subscreen name="AgiScreenEditor" location="component://agi-ide/screen/agi-ide/AgiScreenEditor.xml"/>

@@ -27,13 +27,75 @@ def mutateNodeInTree(Map root, String targetName, Map newAttributes) {
     return false
 }
 
-// 1. Normalize and resolve the prompt text
+// =============================================================================
+// 1. Direct MCP Tool Execution Path (if slash command tool invocation)
+// =============================================================================
+if (mcpTool && !mcpTool.trim().isEmpty()) {
+    String cleanToolName = mcpTool.trim().replaceFirst("^/", "").replaceAll("/", "__").replaceAll("-", "_")
+    ec.logger.info("🛠️ [ExecuteStagedAgentTurn] Direct MCP tool execution requested: ${cleanToolName}")
+
+    try {
+        Map callResult = ec.service.sync().name("org.moqui.ai.mcp.McpToolServices.call#Tool").parameters([
+            name     : cleanToolName,
+            arguments: mcpParams ?: [:]
+        ]).call()
+
+        if (Boolean.TRUE.equals(callResult.isError)) {
+            context.status = "error"
+            context.message = callResult.content ? callResult.content[0]?.text : "MCP tool execution returned an error."
+            return
+        }
+
+        context.status = "SUCCESS"
+        context.isDraft = false
+        context.message = "Tool executed successfully: ${cleanToolName}"
+        context.completionText = callResult.content ? callResult.content[0]?.text : ""
+        context.createdArtifactUri = artifactUri
+        return
+    } catch (Exception toolEx) {
+        ec.logger.error("❌ [ExecuteStagedAgentTurn] Failed tool call: ${toolEx.message}", toolEx)
+        context.status = "error"
+        context.message = "Failed executing tool ${cleanToolName}: ${toolEx.message}"
+        return
+    }
+}
+
+// =============================================================================
+// 2. Normalize and Resolve Prompt Text
+// =============================================================================
 String effectivePrompt = userPrompt ?: originalPrompt ?: ""
 if (adHocPrompt && adHocPrompt.trim()) {
     effectivePrompt += "\n\n### AD-HOC DIRECTIVES & CONSTRAINTS:\n" + adHocPrompt.trim()
 }
 
-// 2. Parse and format selected RAG Context items
+// =============================================================================
+// 3. Resolve Selected Archetype Resources via McpResourceServices
+// =============================================================================
+StringBuilder archetypeBuilder = new StringBuilder()
+if (selectedArchetypes instanceof List && !selectedArchetypes.isEmpty()) {
+    archetypeBuilder.append("\n### SELECTED CANONICAL ARCHETYPE BLUEPRINTS:\n")
+    for (archUri in selectedArchetypes) {
+        if (!archUri) continue
+        try {
+            Map resResult = ec.service.sync().name("org.moqui.ai.mcp.McpResourceServices.get#ResourceContent")
+                .parameters([uri: archUri.toString()])
+                .call()
+            
+            String archXml = resResult.contents ? resResult.contents[0]?.text : null
+            if (archXml) {
+                archetypeBuilder.append("<!-- Archetype Blueprint: ${archUri} -->\n")
+                archetypeBuilder.append(archXml.trim())
+                archetypeBuilder.append("\n\n")
+            }
+        } catch (Exception archEx) {
+            ec.logger.warn("⚠️ [ExecuteStagedAgentTurn] Could not fetch archetype ${archUri}: ${archEx.message}")
+        }
+    }
+}
+
+// =============================================================================
+// 4. Parse and Format Staged RAG Context & Intent Records
+// =============================================================================
 List resolvedRagItems = []
 if (ragContext != null) {
     resolvedRagItems = ragContext
@@ -55,7 +117,7 @@ if (resolvedRagItems) {
     }
 }
 
-// 3. Append Selected Intent Node IDs if present
+// Append Selected Intent Node IDs if present
 if (selectedIntents) {
     ragBuilder.append("\n### ATTACHED INTENT WORK EFFORTS:\n")
     for (intentId in selectedIntents) {
@@ -63,18 +125,22 @@ if (selectedIntents) {
     }
 }
 
-// 4. Assemble composite proxy payload (Preserve focused target coordinate!)
+// =============================================================================
+// 5. Assemble Composite Payload for AI Proxy
+// =============================================================================
 Map proxyParams = [
     userPrompt          : effectivePrompt,
     targetComponent     : targetComponent ?: 'nursinghome',
     focusCoordinate     : focusCoordinate ?: artifactUri,
     focusCoordinateArray: focusCoordinateArray ?: [],
-    activeRagContext    : (activeRagContext ?: "") + ragBuilder.toString(),
+    activeRagContext    : (activeRagContext ?: "") + archetypeBuilder.toString() + ragBuilder.toString(),
     moquiSessionToken   : ec.web?.sessionToken ?: ""
 ]
 ec.logger.info("In ExecuteStagedAgentTurn, proxyParams: ${proxyParams}")
 
-// 5. Invoke Gemini AI Proxy Service
+// =============================================================================
+// 6. Invoke AI Gateway Proxy Service
+// =============================================================================
 Map proxyResult = ec.service.sync().name("org.moqui.ide.AgiMcpServices.run#OpenAiProxy").parameters(proxyParams).call()
 ec.logger.info("In ExecuteStagedAgentTurn, proxyResult: ${proxyResult}")
 
@@ -84,7 +150,9 @@ if (proxyResult.error || proxyResult.status == "error") {
     return
 }
 
-// 6. Slurp result payload (supporting single artifact or batch files manifest)
+// =============================================================================
+// 7. Parse Completion Payload
+// =============================================================================
 def completion = proxyResult.completionText
 def parsed = null
 if (completion instanceof String) {
@@ -101,13 +169,13 @@ if (completion instanceof String) {
 
 List filesGenerated = []
 
-// 7. Handle Batch File Manifest: { "files": [ { "artifactUri": "...", "content": "..." } ] }
+// 8. Handle Batch File Manifest: { "files": [ { "artifactUri": "...", "content": "..." } ] }
 if (parsed?.files instanceof List) {
     for (fileItem in parsed.files) {
         String fileUri = fileItem.artifactUri ?: fileItem.location
         String fileContent = fileItem.content ?: fileItem.rawXmlContent
         if (fileUri && fileContent != null) {
-            ec.service.sync().name("org.moqui.ide.AgiIdeServices.store#WorkspaceBuffer").parameters([
+            ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer").parameters([
                 artifactUri     : fileUri,
                 rawXmlContent   : fileContent,
                 userId          : ec.user?.userId ?: 'ANONYMOUS'
@@ -120,13 +188,12 @@ if (parsed?.files instanceof List) {
     context.message = "Successfully staged ${filesGenerated.size()} artifact files in buffer."
     context.createdArtifactUri = artifactUri
 } 
-// 8. Handle Single Artifact Creation / Mutation
+// 9. Handle Single Artifact Creation / Mutation
 else {
     String finalUri = parsed?.createdArtifactUri ?: proxyResult.createdArtifactUri ?: artifactUri
     String finalXml = parsed?.rawXmlContent ?: proxyResult.rawXmlContent
     def finalAstTree = parsed?.astTree ?: null
 
-    // If the completion returned an updated AST tree instead of raw XML, apply targeted mutation if present
     if (!finalXml && finalAstTree instanceof Map) {
         String targetElemName = focusCoordinate ? focusCoordinate.split('#').last() : null
         if (targetElemName && parsed.nodeMutation instanceof Map) {
@@ -136,9 +203,8 @@ else {
 
     String bufferJson = finalAstTree ? (finalAstTree instanceof String ? finalAstTree : JsonOutput.toJson(finalAstTree)) : null
 
-    // Write directly to WorkspaceBuffer (Database / Memory Draft) rather than physical disk
     if (finalUri && (finalXml || bufferJson)) {
-        ec.service.sync().name("org.moqui.ide.AgiIdeServices.store#WorkspaceBuffer").parameters([
+        ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer").parameters([
             artifactUri     : finalUri,
             metaJsonBuffer  : bufferJson,
             rawXmlContent   : finalXml,

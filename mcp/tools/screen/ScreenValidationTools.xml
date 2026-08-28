@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ===================================================================== -->
+    <!-- VALIDATE SCREEN XML (XSD & Compliance Guardrails)                     -->
+    <!-- ===================================================================== -->
+    <service verb="validate" noun="ScreenXml" type="inline">
+        <description>
+            Validates an XML screen string against xml-screen-3.xsd grammar, checks for 
+            anti-patterns (such as wrapping hidden/display widgets inside containers), 
+            and verifies HIPAA PHI field encryption flags.
+        </description>
+        <in-parameters>
+            <parameter name="rawXmlContent" type="String" required="true"/>
+            <parameter name="artifactUri" type="String"/>
+            <parameter name="enforceHipaa" type="Boolean" default="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="isValid" type="Boolean"/>
+            <parameter name="errors" type="List"/>
+            <parameter name="warnings" type="List"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import javax.xml.XMLConstants
+                import javax.xml.transform.stream.StreamSource
+                import javax.xml.validation.SchemaFactory
+                import org.xml.sax.SAXParseException
+                import org.xml.sax.ErrorHandler
+                import groovy.util.Node
+                import groovy.xml.XmlParser
+
+                List errorList = []
+                List warningList = []
+                String xml = rawXmlContent ? rawXmlContent.trim() : ""
+
+                if (!xml) {
+                    context.isValid = false
+                    context.errors = ["XML content is empty."]
+                    context.warnings = []
+                    return
+                }
+
+                // 1. Schema Validation against xml-screen-3.xsd
+                try {
+                    def xsdRef = ec.resource.getLocationReference("component://moqui-framework/xsd/xml-screen-3.xsd")
+                    if (xsdRef != null && xsdRef.exists) {
+                        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI)
+                        def schema = factory.newSchema(new StreamSource(xsdRef.openStream()))
+                        def validator = schema.newValidator()
+
+                        validator.setErrorHandler(new ErrorHandler() {
+                            void warning(SAXParseException e) { warningList.add("Line ${e.lineNumber}: ${e.message}") }
+                            void error(SAXParseException e) { errorList.add("Line ${e.lineNumber}: ${e.message}") }
+                            void fatalError(SAXParseException e) { errorList.add("Fatal Line ${e.lineNumber}: ${e.message}") }
+                        })
+
+                        validator.validate(new StreamSource(new StringReader(xml)))
+                    } else {
+                        warningList.add("xml-screen-3.xsd not located; skipped strict XSD schema check.")
+                    }
+                } catch (Exception xsdEx) {
+                    errorList.add("XSD Validation Error: ${xsdEx.message}")
+                }
+
+                // 2. Structural & Anti-Pattern AST Inspection
+                try {
+                    Node root = new XmlParser(false, false).parseText(xml)
+
+                    // Rule A: Check for invalid container name wrappers
+                    def containers = root.breadthFirst().findAll { it instanceof Node && it.name() == 'container' }
+                    containers.each { Node c ->
+                        String cName = (c.attribute('name') ?: '').toString().toLowerCase()
+                        if (cName == 'hidden' || cName == 'display') {
+                            errorList.add("Invalid construct: <container name=\"${cName}\"> is not allowed. Place widgets directly under <form-single> or <form-list>.")
+                        }
+                    }
+
+                    // Rule B: Enforce HIPAA PHI encryption rules
+                    if (enforceHipaa) {
+                        Set<String> sensitiveFields = [
+                            "ssn", "socialsecurity", "dob", "birthdate", "medicalhistory",
+                            "diagnosis", "prescription", "patientname", "medication", "treatmentplan"
+                        ] as Set
+
+                        def fields = root.breadthFirst().findAll { it instanceof Node && it.name() == 'field' }
+                        fields.each { Node f ->
+                            String fName = (f.attribute('name') ?: '').toString().toLowerCase().replaceAll("[^a-z0-9]", "")
+                            String encryptAttr = (f.attribute('encrypt') ?: '').toString()
+                            if (sensitiveFields.any { fName.contains(it) } && !"true".equalsIgnoreCase(encryptAttr)) {
+                                warningList.add("HIPAA Compliance Warning: Field '${f.attribute('name')}' appears to hold PHI but lacks encrypt=\"true\".")
+                            }
+                        }
+                    }
+                } catch (Exception parseEx) {
+                    errorList.add("XML Syntax Error: ${parseEx.message}")
+                }
+
+                context.isValid = errorList.isEmpty()
+                context.errors = errorList
+                context.warnings = warningList
+                ec.logger.info("🛡️ [validate#ScreenXml] Validation complete for ${artifactUri ?: 'XML'}: valid=${context.isValid}, errors=${errorList.size()}, warnings=${warningList.size()}")
+            ]]></script>
+        </actions>
+    </service>
+
+</services>

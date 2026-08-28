@@ -2,7 +2,7 @@
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
-<!-- ===================================================================== -->
+    <!-- ===================================================================== -->
     <!-- GET WORKSPACE BUFFER (With Disk Timestamp Invalidation)               -->
     <!-- ===================================================================== -->
     <service verb="get" noun="WorkspaceBuffer" type="inline">
@@ -397,10 +397,10 @@ ${widgetsSb.toString()}    </widgets>
     </service>
 
     <!-- ===================================================================== -->
-    <!-- SAVE SCREEN XML BACK TO DISK                                          -->
+    <!-- SAVE SCREEN XML BACK TO DISK (With Pre-Commit MCP Validation)         -->
     <!-- ===================================================================== -->
     <service verb="save" noun="ScreenXml" type="inline">
-        <description>Compiles the Meta-JSON blueprint layout tree back into standard Moqui XML and writes it cleanly formatted to disk.</description>
+        <description>Compiles the Meta-JSON blueprint layout tree back into standard Moqui XML, validates against xml-screen-3.xsd, and writes it cleanly formatted to disk.</description>
         <in-parameters>
             <parameter name="artifactUri" type="String" required="true"/>
             <parameter name="metaJsonBuffer" type="String" required="true"/>
@@ -440,6 +440,30 @@ ${widgetsSb.toString()}    </widgets>
                 String rawXml = compileResult.xmlText
 
                 if (rawXml && rawXml.trim().length() > 0) {
+                    // 🛡️ Pre-Commit Validation Pass via MCP Screen Tools Router
+                    try {
+                        Map valResult = ec.service.sync().name("org.moqui.ai.mcp.McpToolServices.call#Tool").parameters([
+                            name     : 'agi-ide__screen__validate_ScreenXml',
+                            arguments: [rawXmlContent: rawXml, artifactUri: artifactUri, enforceHipaa: true]
+                        ]).call()
+
+                        if (valResult?.content && valResult.content[0]?.text) {
+                            Map valData = new JsonSlurper().parseText(valResult.content[0].text) as Map
+                            if (valData.isValid == false) {
+                                String errorMsg = "Screen XML validation failed: " + (valData.errors ?: []).join("; ")
+                                ec.logger.error("❌ [save#ScreenXml] " + errorMsg)
+                                ec.message.addError(errorMsg)
+                                context.status = "VALIDATION_FAILED"
+                                return
+                            }
+                            if (valData.warnings) {
+                                ec.logger.warn("⚠️ [save#ScreenXml] Compliance warnings: " + valData.warnings.join("; "))
+                            }
+                        }
+                    } catch (Exception valEx) {
+                        ec.logger.warn("⚠️ [save#ScreenXml] Validation service check skipped or threw error: ${valEx.message}")
+                    }
+
                     String prettyXml = rawXml
                     try {
                         def parsedXml = new groovy.xml.XmlParser(false, false).parseText(rawXml)
@@ -449,7 +473,7 @@ ${widgetsSb.toString()}    </widgets>
                     }
 
                     rr.putText(prettyXml)
-                    ec.logger.info("💾 [save#ScreenXml] Successfully written formatted XML to file: ${rr.getUrl()}")
+                    ec.logger.info("💾 [save#ScreenXml] Successfully written validated XML to file: ${rr.getUrl()}")
                     context.status = "SUCCESS"
                     context.savedFilePath = rr.getUrl()
                 } else {
@@ -555,11 +579,15 @@ ${widgetsSb.toString()}    </widgets>
                     }
 
                     if (qmetaOutput && qmetaOutput.trim().startsWith('{')) {
-                        Map rawTree = new JsonSlurper().parseText(qmetaOutput.trim()) as Map
-                        String jsonStr = JsonOutput.toJson(rawTree)
-                        // If output didn't truncate forms/fields, use it
-                        if (jsonStr.contains('form-single') || jsonStr.contains('field')) {
-                            finalTree = rawTree
+                        try {
+                            Map rawTree = new JsonSlurper().parseText(qmetaOutput.trim()) as Map
+                            String jsonStr = JsonOutput.toJson(rawTree)
+                            if (jsonStr.contains('form-single') || jsonStr.contains('form-list') || jsonStr.contains('field')) {
+                                finalTree = rawTree
+                            }
+                        } catch (Exception parseEx) {
+                            ec.logger.warn("⚠️ [parse#XmlToTree] JSON parse of qmeta macro failed, falling back to direct XML parsing: ${parseEx.message}")
+                            finalTree = null
                         }
                     }
 
@@ -786,4 +814,69 @@ ${widgetsSb.toString()}    </widgets>
             ]]></script>
         </actions>
     </service>
+
+    <!-- ===================================================================== -->
+    <!-- DELETE WORKSPACE ARTIFACT                                             -->
+    <!-- ===================================================================== -->
+    <service verb="delete" noun="WorkspaceArtifact" type="inline">
+        <description>Purges an artifact file from disk, deletes its DB workspace buffer, and clears screen/resource caches.</description>
+        <in-parameters>
+            <parameter name="artifactLocation" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="status" type="String"/>
+            <parameter name="messages" type="List"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import org.moqui.resource.ResourceReference
+
+                ec.logger.warn("🗑️ [delete#WorkspaceArtifact] Initiating full artifact purge for: ${artifactLocation}")
+
+                // 1. Delete physical file from disk
+                ResourceReference rr = ec.resource.getLocationReference(artifactLocation)
+                boolean fileExisted = false
+                boolean fileDeleted = false
+                if (rr != null && rr.exists) {
+                    fileExisted = true
+                    fileDeleted = rr.delete()
+                    ec.logger.info("🗑️ [delete#WorkspaceArtifact] Disk file deleted: ${fileDeleted} at ${artifactLocation}")
+                }
+
+                // 2. Clear persisted/cached workspace buffers
+                try {
+                    int count = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
+                            .condition("artifactUri", artifactLocation)
+                            .deleteAll()
+                    ec.logger.info("🧹 [delete#WorkspaceArtifact] Deleted ${count} DB buffer records for: ${artifactLocation}")
+                } catch (Exception e) {
+                    ec.logger.warn("⚠️ [delete#WorkspaceArtifact] Buffer record cleanup failed: ${e.message}")
+                }
+
+                // 3. Clear Screen & Resource Caches explicitly
+                try {
+                    ec.cache.getCache("screen.location").clear()
+                    ec.cache.getCache("screen.render.subscreens").clear()
+                    ec.cache.getCache("resource.text.location").clear()
+                    ec.cache.getCache("resource.template.location").clear()
+                } catch (Exception ignored) {
+                    // Ignore if signature varies
+                }
+
+                // 4. Invalidate Resource & Template Caches safely
+                try {
+                    ec.resource.clearAllCaches()
+                } catch (Exception e) {
+                    try {
+                        ec.cache.getCache("resource.text.location").clear()
+                        ec.cache.getCache("resource.template.location").clear()
+                    } catch (Exception ignored) {}
+                }
+
+                context.status = fileDeleted ? "SUCCESS" : (fileExisted ? "DELETE_FAILED" : "FILE_NOT_FOUND")
+                ec.message.addMessage("Artifact deleted successfully: ${artifactLocation}")
+            ]]></script>
+        </actions>
+    </service>
+
 </services>

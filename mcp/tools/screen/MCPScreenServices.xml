@@ -871,4 +871,115 @@ ${scriptIncludeTag}
             ]]></script>
         </actions>
     </service>
+
+
+    <!-- ===================================================================== -->
+    <!-- MCP TOOL: GET SCREEN ARCHETYPE                                        -->
+    <!-- ===================================================================== -->
+    <service verb="get" noun="ScreenArchetype" type="inline">
+        <description>
+            MCP Tool for AI Assistants to retrieve canonical, verified Moqui XML Screen archetypes 
+            (e.g., 'lookup-modal', 'form-crud', 'master-detail') adhering strictly to xml-screen-3.xsd standards.
+        </description>
+        <in-parameters>
+            <parameter name="archetypeName" required="true">
+                <description>The archetype identifier, e.g., 'lookup-modal', 'form-crud', 'master-detail'.</description>
+            </parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="archetypeName"/>
+            <parameter name="templateXml"/>
+            <parameter name="status"/>
+            <parameter name="usageGuidelines"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import org.moqui.resource.ResourceReference
+
+                String safeName = archetypeName.replaceAll("[^a-zA-Z0-9_-]", "")
+                String templateLocation = "component://agi-ide/archetype/screen/${safeName}.xml"
+
+                ResourceReference rr = ec.resource.getLocationReference(templateLocation)
+                if (rr != null && rr.exists) {
+                    context.archetypeName = safeName
+                    context.templateXml = rr.getText()
+                    context.status = "SUCCESS"
+                    context.usageGuidelines = """
+                        1. Adhere strictly to xml-screen-3.xsd.
+                        2. Never wrap <hidden/> or <display/> in <container name="...">.
+                        3. For lookups, ensure default-menu-include="false" and standalone="true" on <screen>.
+                        4. Return selections using declarative parameter maps rather than inline JavaScript.
+                    """
+                    ec.logger.info("📐 [MCP:get#ScreenArchetype] Archetype dispatched to AI: ${templateLocation}")
+                } else {
+                    context.archetypeName = safeName
+                    context.templateXml = ""
+                    context.status = "NOT_FOUND"
+                    context.usageGuidelines = "Archetype not found. Available archetypes: lookup-modal"
+                    ec.logger.warn("⚠️ [MCP:get#ScreenArchetype] Archetype not found: ${templateLocation}")
+                }
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- ===================================================================== -->
+    <!-- GET DYNAMIC ARCHETYPE CATALOG (Filesystem-Driven)                     -->
+    <!-- ===================================================================== -->
+    <service verb="get" noun="ArchetypeCatalog" type="inline">
+        <description>
+            Dynamically scans all active components for archetype templates located 
+            under <component>/archetype/<archetypeType>/ and returns structured descriptors.
+        </description>
+        <in-parameters>
+            <parameter name="archetypeType" default-value="screen"/>
+            <parameter name="targetComponent"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="archetypes" type="List"/>
+            <parameter name="archetypeNames" type="List"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import java.io.File
+                import org.moqui.resource.ResourceReference
+
+                List results = []
+                List names = []
+                String searchType = archetypeType ?: "screen"
+
+                File compBase = new File("runtime/component")
+                if (compBase.exists() && compBase.isDirectory()) {
+                    compBase.eachDir { File compDir ->
+                        String cName = compDir.name
+                        if (targetComponent && cName != targetComponent) return
+
+                        File archetypeDir = new File(compDir, "archetype/${searchType}")
+                        if (archetypeDir.exists() && archetypeDir.isDirectory()) {
+                            archetypeDir.eachFile { File f ->
+                                if (f.isFile() && !f.name.startsWith(".") && (f.name.endsWith(".xml") || f.name.endsWith(".groovy"))) {
+                                    String baseName = f.name.replaceAll('\\.[a-zA-Z0-9]+$', '')
+                                    String uri = "component://${cName}/archetype/${searchType}/${f.name}"
+                                    
+                                    names.add(baseName)
+                                    results.add([
+                                        archetypeName : baseName,
+                                        label         : baseName,
+                                        fileName      : f.name,
+                                        archetypeType : searchType,
+                                        componentName : cName,
+                                        locationUri   : uri
+                                    ])
+                                }
+                            }
+                        }
+                    }
+                }
+
+                context.archetypes = results
+                context.archetypeNames = names.unique()
+                ec.logger.info("📐 [get#ArchetypeCatalog] Discovered ${results.size()} dynamic archetypes for type '${searchType}'")
+            ]]></script>
+        </actions>
+    </service>
+
 </services>

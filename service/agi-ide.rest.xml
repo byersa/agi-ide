@@ -1,104 +1,104 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<rest-api xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/rest-api-3.xsd"
+<resource xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/rest-api-3.xsd"
           name="agi-ide" version="s1" require-csrf="false" require-authentication="false">
-    
+
+    <!-- ========================================================= -->
+    <!-- SCREEN EDITOR & BLUEPRINT BASE SERVICES                  -->
+    <!-- ========================================================= -->
     <resource name="getBlueprint">
-        <method type="get" require-authentication="false">
+        <method type="get">
             <service name="org.moqui.ide.ScreenEditorServices.get#Blueprint"/>
         </method>
     </resource>
 
     <resource name="saveBlueprint">
-        <method type="post" require-authentication="false">
+        <method type="post">
             <service name="org.moqui.ide.ScreenEditorServices.save#Blueprint"/>
         </method>
     </resource>
 
     <resource name="registerClient">
-        <method type="get" require-authentication="false">
+        <method type="get">
             <service name="org.moqui.ide.ScreenEditorServices.register#Client"/>
         </method>
     </resource>
 
     <resource name="getUiMacros">
-        <method type="get" require-authentication="false">
+        <method type="get">
             <service name="org.moqui.ide.ScreenEditorServices.get#UiMacros"/>
         </method>
     </resource>
 
     <resource name="compileRawXmlToBlueprint">
-        <method type="post" require-authentication="false">
+        <method type="post">
             <service name="org.moqui.ide.ScreenEditorServices.compile#RawXmlToBlueprint"/>
         </method>
     </resource>
 
-    <!-- Secure rest channel hook for automated agent interactions -->
     <resource name="scaffoldComponent">
-        <method type="post" require-authentication="false">
+        <method type="post">
             <service name="org.moqui.ide.ScreenEditorServices.create#NewComponentScaffold"/>
         </method>
     </resource>
 
     <resource name="getAllTools">
-        <method type="get" require-authentication="false">
+        <method type="get">
             <service name="org.moqui.ide.AgiMcpServices.getAllTools"/>
         </method>
     </resource>
 
     <resource name="geminiProxy">
-        <method type="post" require-authentication="false">
+        <method type="post">
             <service name="org.moqui.ide.AgiMcpServices.executeAdkProxyLoop"/>
         </method>
     </resource>
 
     <resource name="openAiProxy">
-        <method type="post" require-authentication="false">
+        <method type="post">
             <service name="org.moqui.ide.AgiMcpServices.run#OpenAiProxy"/>
         </method>
     </resource>
 
     <!-- ========================================================= -->
-    <!--  AGI HARNESS & TELEMETRY REST ENDPOINTS                    -->
+    <!-- AGI HARNESS & TELEMETRY REST ENDPOINTS                    -->
     <!-- ========================================================= -->
-
-    <!-- Telemetry Summary for At-a-Glance Agent Context -->
     <resource name="telemetry">
         <resource name="summary">
-            <method type="get" require-authentication="false">
+            <method type="get">
                 <service name="org.moqui.ide.BlueprintServices.get#ArtifactTelemetrySummary"/>
             </method>
         </resource>
     </resource>
 
-    <!-- Blueprint WorkEffort Tree & Node Operations -->
     <resource name="blueprint">
         <resource name="tree">
-            <method type="post" require-authentication="false">
+            <method type="post">
                 <service name="org.moqui.ide.BlueprintServices.get#BlueprintArtifactTree"/>
             </method>
         </resource>
         <resource name="create-node">
-            <method type="post" require-authentication="false">
+            <method type="post">
                 <service name="org.moqui.ide.BlueprintServices.create#WorkEffortNode"/>
             </method>
         </resource>
         <resource name="update-status">
-            <method type="post" require-authentication="false">
+            <method type="post">
                 <service name="org.moqui.ide.BlueprintServices.update#WorkEffortStatus"/>
             </method>
         </resource>
         <resource name="link-artifact">
-            <method type="post" require-authentication="false">
+            <method type="post">
                 <service name="org.moqui.ide.BlueprintServices.associate#WorkEffortToArtifact"/>
             </method>
         </resource>
         <resource name="query-artifacts">
-            <method type="get" require-authentication="false">
+            <method type="get">
                 <service name="org.moqui.ide.BlueprintServices.get#ArtifactQueryList"/>
             </method>
         </resource>
         <resource name="compile-xml">
-            <method type="post" require-authentication="false">
+            <method type="post">
                 <service name="org.moqui.ide.BlueprintServices.compile#XmlFragment"/>
             </method>
         </resource>
@@ -114,118 +114,133 @@
 
     <resource name="screen">
         <resource name="create">
-            <method type="post">
-                <service name="org.moqui.ai.mcp.MCPScreenServices.create#Screen"/>
-            </method>
+            <service name="org.moqui.ai.mcp.MCPScreenServices.create#Screen"/>
         </resource>
     </resource>
 
-    <!-- Artifact Discovery & Palette REST Endpoint -->
     <resource name="palette">
-        <method type="get" require-authentication="false">
+        <method type="get">
             <service name="org.moqui.ai.mcp.MCPArtifactServices.get#ArtifactPalette"/>
         </method>
     </resource>
 
-    <!-- Composite Layout & Navigation MCP Tools -->
     <resource name="add-container">
-        <method type="post" require-authentication="false">
+        <method type="post">
             <service name="org.moqui.ai.mcp.MCPScreenServices.add#Container"/>
         </method>
     </resource>
 
     <resource name="bind-subscreen">
-        <method type="post" require-authentication="false">
+        <method type="post">
             <service name="org.moqui.ai.mcp.MCPScreenServices.bind#Subscreen"/>
         </method>
     </resource>
 
     <resource name="getRawXml">
-        <method type="get" require-authentication="false">
+        <method type="get">
             <service name="org.moqui.ai.mcp.MCPScreenServices.get#RawXml"/>
         </method>
     </resource>
 
     <resource name="getKnownArtifacts">
-        <method type="get" require-authentication="false">
+        <method type="get">
             <service name="org.moqui.ide.AgiWorkspaceServices.get#KnownArtifacts"/>
         </method>
     </resource>
 
+    <!-- ========================================================= -->
+    <!-- WORKSPACE BUFFER & AST OPERATIONS                        -->
+    <!-- ========================================================= -->
     <resource name="getWorkspaceBuffer">
         <method type="get">
             <service name="org.moqui.ide.AgiWorkspaceServices.get#WorkspaceBuffer"/>
-            <param name="artifactUri" type="String" required="true"/>
-            <param name="userId" type="String"/>
         </method>
     </resource>
+
     <resource name="storeWorkspaceBuffer">
         <method type="post">
             <service name="org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer"/>
         </method>
     </resource>
-    <resource name="compileTreeToXml" require-authentication="anonymous-all">
+
+    <resource name="clearWorkspaceBuffer">
+        <method type="post">
+            <service name="org.moqui.ide.AgiWorkspaceServices.clear#WorkspaceBuffer"/>
+        </method>
+    </resource>
+
+    <resource name="compileTreeToXml">
         <method type="post">
             <service name="org.moqui.ide.AgiWorkspaceServices.compile#TreeToXml"/>
-            <param name="layoutTree" type="Map" required="false"/>
         </method>
     </resource>
-    <resource name="saveScreenXml" require-authentication="anonymous-all">
+
+    <resource name="saveScreenXml">
         <method type="post">
             <service name="org.moqui.ide.AgiWorkspaceServices.save#ScreenXml"/>
-            <param name="artifactUri" type="String" required="true"/>
-            <param name="metaJsonBuffer" type="String" required="true"/>
         </method>
     </resource>
-    <!-- Preprocess RAG Context for Prompt Staging -->
-    <resource name="PreprocessRagContext">
+
+    <resource name="deleteArtifact">
+        <method type="post">
+            <service name="org.moqui.ide.AgiWorkspaceServices.delete#WorkspaceArtifact"/>
+        </method>
+    </resource>
+
+    <!-- ========================================================= -->
+    <!-- RAG & AGENT STAGING SERVICES                              -->
+    <!-- ========================================================= -->
+    <resource name="preprocessRagContext">
         <method type="post">
             <service name="org.moqui.ide.AgiRagServices.preprocess#RagContext"/>
         </method>
     </resource>
 
-    <!-- Execute Staged Agent Turn (Batch & Single) -->
-    <resource name="ExecuteStagedAgentTurn">
+    <resource name="executeStagedAgentTurn">
         <method type="post">
             <service name="org.moqui.ide.AgiRagServices.execute#StagedAgentTurn"/>
         </method>
     </resource>
 
-    <!-- Wiki Tree Nodes & Persistence -->
+    <!-- ========================================================= -->
+    <!-- WIKI & THEME ARTIFACTS                                    -->
+    <!-- ========================================================= -->
     <resource name="getWikiTreeNodes">
-        <method type="get" require-authentication="false">
+        <method type="get">
             <service name="org.moqui.ide.AgiWikiTreeServices.get#WikiTreeNodes"/>
         </method>
-        <method type="post" require-authentication="false">
+        <method type="post">
             <service name="org.moqui.ide.AgiWikiTreeServices.get#WikiTreeNodes"/>
         </method>
     </resource>
 
     <resource name="saveWikiNode">
-        <method type="post" require-authentication="false">
+        <method type="post">
             <service name="org.moqui.ide.AgiWikiTreeServices.save#WikiNode"/>
         </method>
     </resource>
 
-    <!-- Save Theme JSON Resource -->
     <resource name="saveThemeJson">
         <method type="post">
             <service name="org.moqui.ide.AgiWorkspaceServices.save#ThemeJson"/>
         </method>
     </resource>
 
-    <!-- Get Theme JSON Resource -->
     <resource name="getThemeJson">
         <method type="get">
             <service name="org.moqui.ide.AgiWorkspaceServices.get#ThemeJson"/>
         </method>
     </resource>
+
+    <!-- ========================================================= -->
+    <!-- SERVICE & ENTITY BLUEPRINT ENDPOINTS                      -->
+    <!-- ========================================================= -->
     <resource name="getScreenEntityGrounding">
         <method type="get">
             <service name="org.moqui.ide.AgiEntityServices.get#ScreenEntityGrounding"/>
         </method>
     </resource>
-    <!-- Service Blueprint & Execution Endpoints -->
+
     <resource name="getServiceBlueprint">
         <method type="get">
             <service name="org.moqui.ide.AgiServiceServices.get#ServiceBlueprint"/>
@@ -244,7 +259,6 @@
         </method>
     </resource>
 
-<!-- Entity Blueprint & Data Endpoints -->
     <resource name="getEntityBlueprint">
         <method type="get">
             <service name="org.moqui.ide.AgiEntityServices.get#EntityBlueprint"/>
@@ -263,10 +277,54 @@
         </method>
     </resource>
 
-    <resource name="clearWorkspaceBuffer">
+    <!-- ========================================================= -->
+    <!-- MCP PROTOCOL REST API                                     -->
+    <!-- Endpoints:                                                -->
+    <!--   GET    /rest/s1/agi-ide/mcp/resources                   -->
+    <!--   GET    /rest/s1/agi-ide/mcp/resources/content           -->
+    <!--   POST   /rest/s1/agi-ide/mcp/resources/facet             -->
+    <!--   DELETE /rest/s1/agi-ide/mcp/resources/facet             -->
+    <!--   GET    /rest/s1/agi-ide/mcp/tools                       -->
+    <!--   POST   /rest/s1/agi-ide/mcp/tools/call                  -->
+    <!-- ========================================================= -->
+    <resource name="mcp">
+        <resource name="resources">
+            <method type="get">
+                <service name="org.moqui.ai.mcp.McpResourceServices.get#ResourceList"/>
+            </method>
+
+            <resource name="content">
+                <method type="get">
+                    <service name="org.moqui.ai.mcp.McpResourceServices.get#ResourceContent"/>
+                </method>
+            </resource>
+
+            <resource name="facet">
+                <method type="post">
+                    <service name="org.moqui.ai.mcp.McpResourceServices.set#ResourceFacet"/>
+                </method>
+                <method type="delete">
+                    <service name="org.moqui.ai.mcp.McpResourceServices.delete#ResourceFacet"/>
+                </method>
+            </resource>
+        </resource>
+
+        <resource name="tools">
+            <method type="get">
+                <service name="org.moqui.ai.mcp.McpToolServices.get#ToolList"/>
+            </method>
+
+            <resource name="call">
+                <method type="post">
+                    <service name="org.moqui.ai.mcp.McpToolServices.call#Tool"/>
+                </method>
+            </resource>
+        </resource>
+    </resource>
+
+    <resource name="validateScreenXml">
         <method type="post">
-            <service name="org.moqui.ide.AgiWorkspaceServices.clear#WorkspaceBuffer"/>
+            <service name="validate#ScreenXml"/>
         </method>
     </resource>
-</rest-api>
-
+</resource>

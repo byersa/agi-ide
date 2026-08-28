@@ -78,6 +78,21 @@
                     rawMeta: parsed
                 };
             },
+            removeArtifact(artifactUri) {
+                if (!artifactUri) return;
+                if (this.buffers && this.buffers[artifactUri]) {
+                    delete this.buffers[artifactUri];
+                }
+                if (this.recentHistory && Array.isArray(this.recentHistory)) {
+                    this.recentHistory = this.recentHistory.filter(item => (item.artifactPath || item) !== artifactUri);
+                }
+                if (this.activeArtifactUri === artifactUri) {
+                    this.activeArtifactUri = '';
+                }
+                try {
+                    localStorage.removeItem(`agi_buffer_${artifactUri}`);
+                } catch (e) { }
+            },
         }
     });
 

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-include="false" standalone="true">
+
+    <actions>
+        <!-- Archetype action placeholder: Default parameter handling & queries -->
+        <set field="statusFilter" from="statusFilter ?: 'Active'"/>
+
+        <entity-find entity-name="mantle.facility.Facility" list="lookupItemList">
+            <econdition field-name="parentFacilityId" from="facilityId" ignore-if-empty="true"/>
+            <econdition field-name="statusId" from="statusFilter" ignore-if-empty="true"/>
+            <order-by field-name="facilityName,facilityId"/>
+        </entity-find>
+    </actions>
+
+    <widgets>
+        <parameter name="facilityId"/>
+        <parameter name="statusFilter"/>
+
+        <container style="q-pa-md">
+            <label type="h5" text="Item Lookup"/>
+
+            <form-single name="FilterLookupForm" transition="." pass-through-parameters="true">
+                <field name="facilityId"><default-field><hidden/></default-field></field>
+                <field name="statusFilter">
+                    <default-field title="Status">
+                        <drop-down allow-empty="false">
+                            <option key="Active" text="Active Only"/>
+                            <option key="All" text="All"/>
+                        </drop-down>
+                    </default-field>
+                </field>
+                <field name="submitButton">
+                    <default-field title="Filter"><submit text="Search" icon="search"/></default-field>
+                </field>
+            </form-single>
+
+            <form-list name="LookupGrid" list="lookupItemList" skip-form="true">
+                <field name="facilityId">
+                    <header-field title="ID" show-order-by="true"/>
+                    <default-field><display/></default-field>
+                </field>
+                <field name="facilityName">
+                    <header-field title="Name / Description" show-order-by="true"/>
+                    <default-field><display/></default-field>
+                </field>
+                <field name="statusId">
+                    <header-field title="Status"/>
+                    <default-field>
+                        <display-entity entity-name="moqui.basic.StatusItem" key-field-name="statusId" text="${description}"/>
+                    </default-field>
+                </field>
+                <field name="selectItem">
+                    <header-field title="Select"/>
+                    <default-field>
+                        <link text="Select" btn-type="primary" icon="check" url="#"
+                              parameter-map="[targetId: facilityId, targetName: (facilityName ?: facilityId)]"/>
+                    </default-field>
+                </field>
+            </form-list>
+        </container>
+    </widgets>
+</screen>

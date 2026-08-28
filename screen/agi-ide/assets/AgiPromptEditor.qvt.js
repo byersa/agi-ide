@@ -33,18 +33,15 @@
         },
         template: `
             <q-dialog v-model="isOpen" position="top" @hide="onDialogClosed">
-                <q-card class="agi-prompt-editor-card bg-slate-900 text-white shadow-24 q-mt-sm column no-wrap" style="width: 1200px; max-width: 96vw; height: 88vh;">
+                <q-card class="agi-prompt-editor-card bg-slate-900 shadow-24 q-mt-sm column no-wrap" style="width: 1240px; max-width: 96vw; height: 90vh;">
                     
-                    <!-- 1. STUDIO HEADER: HIERARCHICAL BREADCRUMB FOCUS COORDINATE -->
+                    <!-- 1. STUDIO HEADER: BREADCRUMB FOCUS COORDINATE -->
                     <q-card-section class="q-pa-xs bg-slate-950 row items-center justify-between border-bottom-dark" style="border-bottom: 1px solid #334155;">
-                        
-                        <!-- Left: Studio Title -->
                         <div class="row items-center q-gutter-x-sm">
                             <q-icon name="psychology" color="primary" size="sm" />
                             <span class="text-subtitle2 text-weight-bold font-mono">AGI COMMAND STUDIO</span>
                         </div>
                     
-                        <!-- Center: Clean Breadcrumb Hierarchy -->
                         <div class="col q-mx-md row items-center no-wrap overflow-hidden">
                             <q-breadcrumbs active-color="purple-3" class="text-caption font-mono text-grey-4" separator-color="grey-6">
                                 <template v-slot:separator>
@@ -61,7 +58,6 @@
                             </q-breadcrumbs>
                         </div>
                     
-                        <!-- Right: Palette & Close Actions -->
                         <div class="row items-center q-gutter-x-xs">
                             <q-btn flat dense round icon="manage_search" size="xs" color="cyan-4" @click="showPalette = !showPalette">
                                 <q-tooltip>Browse / Switch Focus Artifact</q-tooltip>
@@ -90,11 +86,11 @@
                                     v-model="userPrompt" 
                                     type="textarea"
                                     rows="2"
-                                    placeholder="Type task prompt or '/' for MCP tools (e.g. 'Add validation indicator and helper placeholder to lastName')..." 
+                                    placeholder="Type task prompt or '/' for MCP tools (e.g. 'Generate room lookup screen using lookup-modal archetype')..." 
                                     outlined 
                                     dense 
                                     bg-color="slate-900"
-                                    input-class="text-white font-mono text-caption"
+                                    input-class="font-mono text-caption"
                                     :disable="isExecuting"
                                     @update:model-value="onPromptInput"
                                     @keydown.ctrl.enter="handleDirectDispatch"
@@ -119,7 +115,7 @@
                             </div>
                         </div>
 
-                        <!-- Dynamic Tool Parameters (If /tool selected) -->
+                        <!-- Dynamic Tool Parameters -->
                         <q-slide-transition>
                             <div v-if="selectedCommand" class="q-mt-xs q-pa-xs bg-slate-900 rounded-borders border-dark row items-center q-gutter-x-sm" style="border: 1px solid #334155;">
                                 <q-chip color="primary" text-color="white" dense size="sm" icon="build" removable @remove="clearSelectedCommand">
@@ -153,7 +149,7 @@
                                     clickable 
                                     v-ripple 
                                     @click="selectCommand(cmd)"
-                                    class="rounded-borders q-my-xs text-white"
+                                    class="rounded-borders q-my-xs"
                                     style="background-color: #0f172a;"
                                 >
                                     <q-item-section avatar min-width="24px">
@@ -172,7 +168,7 @@
                     <div class="col row no-wrap overflow-hidden bg-slate-900">
                         
                         <!-- ========================================================================= -->
-                        <!-- LEFT PANE: GROUNDING CONTROLS (40% Width)                                 -->
+                        <!-- LEFT PANE: GROUNDING CONTROLS (42% Width)                                 -->
                         <!-- ========================================================================= -->
                         <div class="col-5 column no-wrap border-right-dark bg-slate-950 q-pa-sm" style="border-right: 1px solid #334155; overflow-y: auto;">
                             
@@ -190,13 +186,12 @@
                                     <div class="row items-center justify-between q-mb-xs">
                                         <q-checkbox 
                                             v-model="includeTargetCoordinate" 
-                                            label="Include Target AST in Staging Buffer" 
+                                            label="Include Target AST Slice" 
                                             dense dark color="secondary" 
                                             @update:model-value="syncControlsToAssemblyBuffer"
                                         />
                                     </div>
 
-                                    <!-- Segment breakdown chips -->
                                     <div class="row items-center q-gutter-xs q-mt-xs">
                                         <q-chip 
                                             v-for="(seg, sIdx) in parsedCoordinateArray" 
@@ -212,16 +207,62 @@
                                 </div>
                             </div>
 
-                            <!-- B. DATA GROUNDING & ENTITY MODEL (DATA) -->
+                            <!-- B. ARCHETYPES & MCP RESOURCES (STRUCTURE) -->
                             <q-expansion-item 
                                 default-opened dense
                                 header-class="bg-slate-900 text-cyan-4 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
+                                icon="architecture"
+                                label="2. CANONICAL ARCHETYPES (STRUCTURE)"
+                            >
+                                <div class="q-pa-xs font-mono text-caption">
+                                    <div class="row items-center justify-between q-mb-xs">
+                                        <span class="text-caption text-grey-4 text-weight-bold">CANONICAL BLUEPRINTS</span>
+                                        <q-btn flat dense icon="refresh" size="xs" color="cyan-4" label="Rescan" @click="fetchMcpArchetypes" />
+                                    </div>
+
+                                    <div class="row q-gutter-xs items-center q-mb-xs">
+                                        <q-chip 
+                                            v-for="arch in availableArchetypes" 
+                                            :key="arch.uri"
+                                            v-model:selected="arch.selected"
+                                            clickable
+                                            dense
+                                            color="slate-800"
+                                            text-color="white"
+                                            :class="{ 'bg-cyan-9 text-white': arch.selected }"
+                                            icon="code"
+                                            @click="toggleArchetype(arch)"
+                                        >
+                                            {{ arch.name }} ({{ arch.component }})
+                                        </q-chip>
+                                        <div v-if="availableArchetypes.length === 0" class="text-caption text-grey-5 italic">
+                                            No archetypes found under mcp/resources/screen/archetype/
+                                        </div>
+                                    </div>
+
+                                    <!-- Quick Archetype Preview Drawer -->
+                                    <q-expansion-item 
+                                        v-if="selectedArchetypePreview" 
+                                        dense 
+                                        header-class="bg-slate-950 text-caption text-amber-4 rounded-borders q-pa-xs"
+                                        :label="'Blueprint: ' + selectedArchetypePreview.name"
+                                        default-opened
+                                    >
+                                        <pre class="q-pa-xs bg-slate-950 text-grey-3 rounded-borders overflow-auto" style="font-size: 10px; max-height: 120px; border: 1px solid #1e293b;">{{ selectedArchetypePreview.xml }}</pre>
+                                    </q-expansion-item>
+                                </div>
+                            </q-expansion-item>
+
+                            <!-- C. DATA GROUNDING & ENTITY MODEL (DATA) -->
+                            <q-expansion-item 
+                                default-opened dense
+                                header-class="bg-slate-900 text-teal-4 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
                                 icon="storage"
-                                label="2. DATA GROUNDING (DATA)"
+                                label="3. DATA GROUNDING (DATA)"
                             >
                                 <div class="q-pa-xs q-gutter-y-xs font-mono text-caption">
                                     <div class="text-caption text-grey-4 text-weight-bold q-mb-xs">DETECTED ENTITIES &amp; SCHEMAS</div>
-                                    <q-list dense separator class="bg-black rounded-borders max-h-36 overflow-y-auto">
+                                    <q-list dense separator class="bg-black rounded-borders max-h-32 overflow-y-auto">
                                         <q-item v-for="(ent, idx) in detectedEntities" :key="idx" tag="label" class="q-pa-xs" v-ripple>
                                             <q-item-section side top>
                                                 <q-checkbox v-model="ent.enabled" dense color="secondary" @update:model-value="syncControlsToAssemblyBuffer" />
@@ -251,14 +292,14 @@
                                 </div>
                             </q-expansion-item>
 
-                            <!-- C. BUSINESS INTENT HIERARCHY (WHY) -->
+                            <!-- D. BUSINESS INTENT HIERARCHY (WHY) -->
                             <q-expansion-item 
                                 default-opened dense
-                                header-class="bg-slate-900 text-cyan-4 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
+                                header-class="bg-slate-900 text-purple-3 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
                                 icon="account_tree"
-                                label="3. BUSINESS INTENT (WHY)"
+                                label="4. BUSINESS INTENT &amp; THREADS (WHY)"
                             >
-                                <div class="q-pa-xs bg-black rounded-borders" style="min-height: 140px; max-height: 200px; overflow-y: auto; border: 1px solid #1e293b;">
+                                <div class="q-pa-xs bg-black rounded-borders" style="min-height: 140px; max-height: 180px; overflow-y: auto; border: 1px solid #1e293b;">
                                     <discussion-tree 
                                         :key="blueprintTreeKey"
                                         wiki-space-id="AGI_INTENT"
@@ -287,12 +328,12 @@
                                 </div>
                             </q-expansion-item>
 
-                            <!-- D. GOVERNANCE & COMPLIANCE RULES (RULES) -->
+                            <!-- E. GOVERNANCE RULES -->
                             <q-expansion-item 
                                 default-opened dense
-                                header-class="bg-slate-900 text-cyan-4 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
+                                header-class="bg-slate-900 text-amber-4 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
                                 icon="gavel"
-                                label="4. GOVERNANCE RULES"
+                                label="5. GOVERNANCE &amp; COMPLIANCE"
                             >
                                 <div class="q-pa-xs q-gutter-y-xs font-mono text-caption">
                                     <q-list dense separator class="bg-black rounded-borders">
@@ -309,14 +350,14 @@
                                 </div>
                             </q-expansion-item>
 
-                            <!-- E. PROVENANCE & RECENT TURNS (HISTORY) -->
+                            <!-- F. PROVENANCE & HISTORY -->
                             <q-expansion-item 
                                 dense
                                 header-class="bg-slate-900 text-grey-4 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
                                 icon="history"
-                                label="5. PROVENANCE & HISTORY"
+                                label="6. PROVENANCE &amp; HISTORY"
                             >
-                                <div class="q-pa-xs bg-black rounded-borders max-h-36 overflow-y-auto">
+                                <div class="q-pa-xs bg-black rounded-borders max-h-32 overflow-y-auto">
                                     <q-list separator dense v-if="promptHistory.length > 0">
                                         <q-item v-for="(hist, idx) in promptHistory" :key="idx" class="q-pa-xs">
                                             <q-item-section>
@@ -335,7 +376,7 @@
                         </div>
 
                         <!-- ========================================================================= -->
-                        <!-- RIGHT PANE: STAGED RAG ASSEMBLY BUFFER (60% Width - EDITABLE)             -->
+                        <!-- RIGHT PANE: STAGED RAG ASSEMBLY BUFFER (58% Width - EDITABLE)             -->
                         <!-- ========================================================================= -->
                         <div class="col-7 column no-wrap bg-slate-900 q-pa-sm justify-between">
                             
@@ -359,7 +400,8 @@
                             <div class="q-mt-xs q-pa-xs bg-slate-950 rounded-borders row items-center justify-between text-caption font-mono text-grey-4" style="border: 1px solid #1e293b;">
                                 <div class="row items-center q-gutter-x-sm">
                                     <q-badge color="purple-8">{{ includeTargetCoordinate && focusedElementId ? 'Target: <' + displayTargetTag + '>' : 'Root Target' }}</q-badge>
-                                    <q-badge color="cyan-9">{{ activeEntitiesCount }} Entities</q-badge>
+                                    <q-badge color="cyan-9">{{ activeArchetypesCount }} Archetypes</q-badge>
+                                    <q-badge color="teal-9">{{ activeEntitiesCount }} Entities</q-badge>
                                     <q-badge color="deep-purple-8">{{ selectedIntents.length }} Intents</q-badge>
                                     <q-badge color="secondary">{{ activeRulesCount }} Rules</q-badge>
                                 </div>
@@ -392,6 +434,11 @@
                 promptHistory: [],
                 registeredCommands: [],
 
+                // Archetypes & MCP Resources
+                availableArchetypes: [],
+                selectedArchetypePreview: null,
+                archetypeContentCache: {},
+
                 // Left Pane Grounding Controls State
                 includeTargetCoordinate: true,
                 includeFullAst: false,
@@ -399,9 +446,9 @@
                 detectedEntities: [],
                 selectedIntents: [],
                 governanceRules: [
-                    { title: 'HIPAA Data Encryption', snippet: 'Enforce encrypt="true" on PHI/PII fields; enable-audit-log="true" on medical entities', enabled: true },
-                    { title: 'UDM Entity Reuse First', snippet: 'Extend Mantle UDM entities before defining custom tables', enabled: true },
-                    { title: 'Declarative xml-screen-3.xsd', snippet: 'Generate declarative form-single and standard widget macros', enabled: true }
+                    { title: 'HIPAA PHI Encryption', snippet: 'Enforce encrypt="true" on PHI/PII fields; enable-audit-log="true" on sensitive entities', enabled: true },
+                    { title: 'UDM Reuse First', snippet: 'Extend Mantle UDM entities before defining custom tables', enabled: true },
+                    { title: 'Strict xml-screen-3.xsd', snippet: 'Never wrap <hidden/> or <display/> in <container name="...">; use declarative forms', enabled: true }
                 ],
 
                 // Right Pane Editable Assembly Buffer
@@ -418,7 +465,6 @@
             parsedCoordinateArray() {
                 const segs = [];
 
-                // 1. Process screen location
                 if (this.activeArtifactLocation) {
                     let clean = this.activeArtifactLocation.replace(/^component:\/\//, '');
                     const rawParts = clean.split('/').filter(p => p && p !== 'screen');
@@ -429,7 +475,6 @@
                     });
                 }
 
-                // 2. Process focused element coordinate hierarchy
                 if (this.focusedElementId) {
                     if (!this.focusedElementId.includes('AgiWorkspace') && !this.focusedElementId.includes('agi-workspace-root')) {
                         const subParts = this.focusedElementId.split('#').filter(Boolean);
@@ -481,6 +526,9 @@
                 if (!this.selectedCommand || !this.selectedCommand.params) return [];
                 return this.selectedCommand.params.filter(p => !p.internal);
             },
+            activeArchetypesCount() {
+                return this.availableArchetypes.filter(a => a.selected).length;
+            },
             activeEntitiesCount() {
                 return this.detectedEntities.filter(e => e.enabled).length;
             },
@@ -519,6 +567,7 @@
 
                     vm.isOpen = true;
                     vm.fetchDynamicTools();
+                    vm.fetchMcpArchetypes();
                     if (vm.activeArtifactLocation) {
                         vm.fetchActiveRagContext(vm.activeArtifactLocation);
                     } else {
@@ -528,6 +577,7 @@
             };
 
             this.fetchDynamicTools();
+            this.fetchMcpArchetypes();
         },
         beforeUnmount() {
             if (this.contextBus) this.contextBus.close();
@@ -586,20 +636,21 @@
                 this.commandParamValues = {};
             },
 
+            // 🛠️ Fetch Dynamic MCP Tools via REST
             async fetchDynamicTools() {
                 const vm = this;
                 const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
 
                 try {
-                    const response = await axios.get('/rest/s1/agi-ai/tools', { headers });
+                    const response = await axios.get('/rest/s1/agi-ide/mcp/tools', { headers });
                     const data = response.data || {};
-                    const rawTools = data.tools || data.toolsList || [];
+                    const rawTools = data.tools || [];
 
                     vm.registeredCommands = rawTools.map(t => ({
-                        command: t.name ? '/' + t.name.replace(/_/g, '-') : '/tool',
+                        command: t.name ? '/' + t.name.replace(/__/g, '/').replace(/_/g, '-') : '/tool',
                         rawName: t.name,
-                        serviceName: t.serviceName,
-                        description: t.description || t.title || 'MCP Tool',
+                        serviceName: t.serviceCallName || t.name,
+                        description: t.description || 'MCP Tool',
                         params: t.inputSchema?.properties ? Object.keys(t.inputSchema.properties).map(pKey => ({
                             name: pKey,
                             type: t.inputSchema.properties[pKey].type || 'string',
@@ -609,6 +660,67 @@
                 } catch (err) {
                     console.warn("Could not load dynamic MCP tools:", err);
                 }
+            },
+
+            // 📐 Fetch MCP Archetype Resources via REST
+            async fetchMcpArchetypes() {
+                const vm = this;
+                const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
+
+                try {
+                    const response = await axios.get('/rest/s1/agi-ide/mcp/resources', {
+                        params: { category: 'screen', subCategory: 'archetype' },
+                        headers: headers
+                    });
+
+                    const resList = response.data?.resources || [];
+                    vm.availableArchetypes = resList.map(r => ({
+                        ...r,
+                        selected: r.name === 'lookup-modal' // Default selected for search/lookup workflows
+                    }));
+
+                    // Preload default archetype content
+                    const defaultArch = vm.availableArchetypes.find(a => a.selected);
+                    if (defaultArch) {
+                        await vm.loadArchetypeContent(defaultArch);
+                    }
+                    vm.syncControlsToAssemblyBuffer();
+                } catch (err) {
+                    console.warn("Could not load MCP archetypes:", err);
+                }
+            },
+
+            async loadArchetypeContent(arch) {
+                if (this.archetypeContentCache[arch.uri]) {
+                    this.selectedArchetypePreview = {
+                        name: arch.name,
+                        xml: this.archetypeContentCache[arch.uri]
+                    };
+                    return this.archetypeContentCache[arch.uri];
+                }
+
+                try {
+                    const resp = await axios.get('/rest/s1/agi-ide/mcp/resources/content', {
+                        params: { uri: arch.uri },
+                        headers: { 'moquiSessionToken': this.resolveCsrfToken() }
+                    });
+
+                    const xmlText = resp.data?.contents?.[0]?.text || '';
+                    this.archetypeContentCache[arch.uri] = xmlText;
+                    this.selectedArchetypePreview = {
+                        name: arch.name,
+                        xml: xmlText
+                    };
+                    return xmlText;
+                } catch (err) {
+                    console.error("Could not fetch archetype content:", err);
+                    return '';
+                }
+            },
+
+            async toggleArchetype(arch) {
+                await this.loadArchetypeContent(arch);
+                this.syncControlsToAssemblyBuffer();
             },
 
             async fetchActiveRagContext(artifactUri) {
@@ -652,16 +764,16 @@
                     console.warn("Could not introspect screen entities, using standard fallback:", err);
                     vm.detectedEntities = [
                         {
-                            entityName: 'nursinghome.patient.Patient',
+                            entityName: 'nursinghome.facility.Room',
                             isPrimary: true,
                             enabled: true,
                             fields: {
-                                patientId: { type: 'id', isPk: true },
-                                partyId: { type: 'id', isPk: false },
-                                medicalRecordNum: { type: 'text-short', encrypt: true },
-                                admissionDate: { type: 'date-time' }
+                                facilityId: { type: 'id', isPk: true },
+                                parentFacilityId: { type: 'id' },
+                                facilityName: { type: 'text-medium' },
+                                statusId: { type: 'id' }
                             },
-                            relationships: [{ relatedEntity: 'mantle.party.Person', type: 'one' }]
+                            relationships: [{ relatedEntity: 'mantle.facility.Facility', type: 'one' }]
                         }
                     ];
                 }
@@ -669,7 +781,7 @@
                 vm.syncControlsToAssemblyBuffer();
             },
 
-            // 🎯 SYNTHESIS ENGINE: Generates the Editable Assembly Buffer from Left Controls
+            // 🎯 SYNTHESIS ENGINE: Synthesizes Archetypes, Schemas, Entities, and AST into Assembly Buffer
             syncControlsToAssemblyBuffer() {
                 const lines = [];
 
@@ -713,10 +825,28 @@
                     lines.push("");
                 }
 
-                // 2. Data Grounding & Schemas Section
+                // 2. Canonical Archetypes (Blueprints)
+                const activeArchs = this.availableArchetypes.filter(a => a.selected);
+                if (activeArchs.length > 0) {
+                    lines.push("/* ========================================================================= */");
+                    lines.push(`/* [2. CANONICAL ARCHETYPE BLUEPRINTS]: ${activeArchs.length} Selected               */`);
+                    lines.push("/* ========================================================================= */");
+                    activeArchs.forEach(arch => {
+                        const cachedXml = this.archetypeContentCache[arch.uri] || "";
+                        lines.push(`/* Archetype: ${arch.name} (${arch.uri}) */`);
+                        if (cachedXml) {
+                            lines.push(cachedXml);
+                        } else {
+                            lines.push(`/* Archetype URI: ${arch.uri} */`);
+                        }
+                        lines.push("");
+                    });
+                }
+
+                // 3. Data Grounding & Schemas Section
                 const activeEntities = (this.detectedEntities || []).filter(e => e.enabled);
                 lines.push("/* ========================================================================= */");
-                lines.push(`/* [2. DATA GROUNDING & SCHEMAS]: ${activeEntities.length} Entities Selected             */`);
+                lines.push(`/* [3. DATA GROUNDING & SCHEMAS]: ${activeEntities.length} Entities Selected             */`);
                 lines.push("/* ========================================================================= */");
 
                 activeEntities.forEach(ent => {
@@ -740,10 +870,10 @@
                     lines.push("");
                 }
 
-                // 3. Business Intent Grounding
+                // 4. Business Intent Grounding
                 if (this.selectedIntents.length > 0) {
                     lines.push("/* ========================================================================= */");
-                    lines.push(`/* [3. BUSINESS INTENT SPECIFICATIONS]: ${this.selectedIntents.length} attached            */`);
+                    lines.push(`/* [4. BUSINESS INTENT SPECIFICATIONS]: ${this.selectedIntents.length} attached            */`);
                     lines.push("/* ========================================================================= */");
                     this.selectedIntents.forEach(id => {
                         lines.push(`- Intent Node: ${id}`);
@@ -751,11 +881,11 @@
                     lines.push("");
                 }
 
-                // 4. Governance Rules
+                // 5. Governance Rules
                 const activeRules = this.governanceRules.filter(r => r.enabled);
                 if (activeRules.length > 0) {
                     lines.push("/* ========================================================================= */");
-                    lines.push("/* [4. GOVERNANCE & COMPLIANCE DIRECTIVES]                                   */");
+                    lines.push("/* [5. GOVERNANCE & COMPLIANCE DIRECTIVES]                                   */");
                     lines.push("/* ========================================================================= */");
                     activeRules.forEach(r => {
                         lines.push(`* ${r.title}: ${r.snippet}`);
@@ -763,9 +893,9 @@
                     lines.push("");
                 }
 
-                // 5. Ad-hoc Directives Workspace
+                // 6. Ad-hoc Directives Workspace
                 lines.push("/* ========================================================================= */");
-                lines.push("/* [5. AD-HOC SYSTEM DIRECTIVES & NOTES] (Type custom notes below)           */");
+                lines.push("/* [6. AD-HOC SYSTEM DIRECTIVES & NOTES] (Type custom notes below)           */");
                 lines.push("/* ========================================================================= */");
 
                 this.stagedAssemblyBuffer = lines.join("\n");
@@ -801,6 +931,7 @@
                     adHocPrompt: this.stagedAssemblyBuffer,
                     mcpTool: this.selectedCommand ? this.selectedCommand.command : null,
                     mcpParams: this.selectedCommand ? this.commandParamValues : null,
+                    selectedArchetypes: this.availableArchetypes.filter(a => a.selected).map(a => a.uri),
                     selectedIntents: this.selectedIntents,
                     ragContext: [...this.governanceRules.filter(r => r.enabled), ...activeEntityRag],
                     rawXmlContent: this.includeRawXml ? this.rawXmlSource : null,
@@ -813,7 +944,7 @@
                 };
 
                 try {
-                    const response = await axios.post('/rest/s1/agi-ide/ExecuteStagedAgentTurn', payload, { headers });
+                    const response = await axios.post('/rest/s1/agi-ide/executeStagedAgentTurn', payload, { headers });
                     this.isExecuting = false;
                     const res = response.data || {};
 
