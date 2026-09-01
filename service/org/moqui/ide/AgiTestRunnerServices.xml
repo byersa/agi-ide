@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ===================================================================== -->
+    <!-- GET / DISCOVER TEST MANIFESTS                                         -->
+    <!-- ===================================================================== -->
+    <service verb="get" noun="TestManifests" type="inline">
+        <description><![CDATA[
+            Scans runtime/component/agi-ide/test/manifest/ for declarative test scenarios.
+            Accepts optional suiteName or fileName to target a specific test suite.
+        ]]></description>
+        <in-parameters>
+            <parameter name="suiteName" type="String"/>
+            <parameter name="fileName" type="String"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="testSuites" type="List"/>
+            <parameter name="testSuite" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import java.io.File
+                import groovy.json.JsonSlurper
+
+                List manifests = []
+                Map singleMatch = null
+                File manifestDir = new File("runtime/component/agi-ide/test/manifest")
+
+                String targetSuite = suiteName ? suiteName.trim().toLowerCase() : null
+                String targetFile  = fileName ? fileName.trim().toLowerCase() : null
+
+                if (manifestDir.exists() && manifestDir.isDirectory()) {
+                    manifestDir.eachFile { File f ->
+                        if (f.isFile() && f.name.endsWith(".json")) {
+                            try {
+                                Map parsed = new JsonSlurper().parse(f) as Map
+                                String sName = (parsed.suiteName ?: f.name.replace(".json", "")).toString()
+                                String fName = f.name
+
+                                Map suiteItem = [
+                                    fileName    : fName,
+                                    suiteName   : sName,
+                                    description : parsed.description ?: "Declarative UI Test Scenario",
+                                    stepCount   : (parsed.steps ?: []).size(),
+                                    manifest    : parsed
+                                ]
+
+                                boolean isMatch = true
+                                if (targetFile && !fName.toLowerCase().contains(targetFile) && fName.toLowerCase() != targetFile) {
+                                    isMatch = false
+                                }
+                                if (targetSuite && !sName.toLowerCase().contains(targetSuite) && sName.toLowerCase() != targetSuite) {
+                                    isMatch = false
+                                }
+
+                                if (isMatch) {
+                                    manifests.add(suiteItem)
+                                    if (singleMatch == null) singleMatch = suiteItem
+                                }
+                            } catch (Exception ex) {
+                                ec.logger.warn("⚠️ [get#TestManifests] Could not parse test file ${f.name}: ${ex.message}")
+                            }
+                        }
+                    }
+                }
+
+                context.testSuites = manifests
+                context.testSuite  = singleMatch
+                ec.logger.info("🧪 [get#TestManifests] Discovered ${manifests.size()} test suite(s) (Target suiteName: '${suiteName}', fileName: '${fileName}')")
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- ===================================================================== -->
+    <!-- ASSERT ARTIFACT STATE                                                 -->
+    <!-- ===================================================================== -->
+    <service verb="assert" noun="ArtifactState" type="inline">
+        <description><![CDATA[
+            Evaluates disk, DB buffer, and AgiArtifact state against test assertions.
+        ]]></description>
+        <in-parameters>
+            <parameter name="artifactUri" required="true"/>
+            <parameter name="expectFileExists" type="Boolean"/>
+            <parameter name="expectBufferExists" type="Boolean"/>
+            <parameter name="expectAgiArtifactExists" type="Boolean"/>
+            <parameter name="expectedStatus"/>
+            <parameter name="astNodeMatch" type="Map"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="passed" type="Boolean"/>
+            <parameter name="failures" type="List"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import java.io.File
+                import org.moqui.resource.ResourceReference
+                import groovy.json.JsonSlurper
+
+                List failureList = []
+                String relPath = artifactUri.replace("component://", "")
+                File diskFile = new File("runtime/component/" + relPath)
+
+                // 1. File existence assertion
+                if (expectFileExists != null) {
+                    boolean actualExists = diskFile.exists()
+                    if (actualExists != expectFileExists) {
+                        failureList.add("Physical file on disk existence mismatch. Expected: ${expectFileExists}, Actual: ${actualExists} at ${diskFile.path}")
+                    }
+                }
+
+                // 2. Buffer existence assertion
+                if (expectBufferExists != null) {
+                    def buffers = ec.entity.find("org.moqui.ai.WorkspaceBuffer").condition("artifactUri", artifactUri).list()
+                    boolean actualBuffer = !buffers.isEmpty()
+                    if (actualBuffer != expectBufferExists) {
+                        failureList.add("WorkspaceBuffer existence mismatch. Expected: ${expectBufferExists}, Actual: ${actualBuffer} for ${artifactUri}")
+                    }
+                }
+
+                // 3. AgiArtifact DB existence & status assertion
+                if (expectAgiArtifactExists != null) {
+                    def art = ec.entity.find("org.moqui.ai.AgiArtifact").condition("artifactPath", artifactUri).one()
+                    boolean actualArt = (art != null)
+                    if (actualArt != expectAgiArtifactExists) {
+                        failureList.add("AgiArtifact record existence mismatch. Expected: ${expectAgiArtifactExists}, Actual: ${actualArt} for ${artifactUri}")
+                    }
+                    if (art != null && expectedStatus && art.artifactStatusEnumId != expectedStatus) {
+                        failureList.add("AgiArtifact status mismatch. Expected: ${expectedStatus}, Actual: ${art.artifactStatusEnumId}")
+                    }
+                }
+
+                context.passed = failureList.isEmpty()
+                context.failures = failureList
+            ]]></script>
+        </actions>
+    </service>
+
+</services>

@@ -1,0 +1,87 @@
+{
+    "suiteName": "Screen Lifecycle & Relocation Suite",
+    "description": "Verifies atomic lifecycle integrity: creation, AST buffer staging, relocation, ghost prevention, and disk persistence.",
+    "targetComponent": "nursinghome",
+    "steps": [
+        {
+            "stepId": "01_CREATE_SCREEN",
+            "title": "Scaffold Initial Screen Shell",
+            "action": "INVOKE_TOOL",
+            "artifactUri": "component://nursinghome/screen/nursinghome/test/LifecycleRoomLookup.xml",
+            "serviceName": "org.moqui.ai.mcp.McpScreenServices.create#Screen",
+            "parameters": {
+                "targetComponent": "nursinghome",
+                "screenPath": "nursinghome/test/LifecycleRoomLookup",
+                "title": "Lifecycle Room Lookup",
+                "overwrite": true
+            },
+            "assertions": {
+                "expectFileExists": true,
+                "expectAgiArtifactExists": true,
+                "expectedStatus": "AasDraft"
+            }
+        },
+        {
+            "stepId": "02_STAGE_AST_BUFFER",
+            "title": "Stage Lookup AST into WorkspaceBuffer",
+            "action": "MUTATE_BUFFER",
+            "artifactUri": "component://nursinghome/screen/nursinghome/test/LifecycleRoomLookup.xml",
+            "astMutation": {
+                "_moquiTag": "container",
+                "id": "lookupContainer",
+                "children": [
+                    {
+                        "_moquiTag": "label",
+                        "type": "h4",
+                        "text": "Staged Room Lookup Grid"
+                    }
+                ]
+            },
+            "assertions": {
+                "expectBufferExists": true
+            }
+        },
+        {
+            "stepId": "03_RELOCATE_ARTIFACT",
+            "title": "Relocate Screen to ./common/",
+            "action": "INVOKE_TOOL",
+            "serviceName": "org.moqui.ai.mcp.McpScreenServices.move#Artifact",
+            "parameters": {
+                "sourceArtifactUri": "component://nursinghome/screen/nursinghome/test/LifecycleRoomLookup.xml",
+                "targetArtifactUri": "component://nursinghome/screen/nursinghome/test/common/LifecycleRoomLookup.xml",
+                "targetComponent": "nursinghome"
+            },
+            "assertions": {
+                "sourceUri": "component://nursinghome/screen/nursinghome/test/LifecycleRoomLookup.xml",
+                "targetUri": "component://nursinghome/screen/nursinghome/test/common/LifecycleRoomLookup.xml",
+                "expectSourceFileExists": false,
+                "expectSourceBufferExists": false,
+                "expectTargetFileExists": true,
+                "expectTargetAgiArtifactExists": true
+            }
+        },
+        {
+            "stepId": "04_SAVE_TARGET_SCREEN",
+            "title": "Compile & Save Relocated Buffer to Disk",
+            "action": "SAVE_BUFFER",
+            "artifactUri": "component://nursinghome/screen/nursinghome/test/common/LifecycleRoomLookup.xml",
+            "assertions": {
+                "expectTargetFileExists": true,
+                "expectSourceFileExists": false
+            }
+        },
+        {
+            "stepId": "05_CLEANUP",
+            "title": "Purge Test Artifacts",
+            "action": "INVOKE_SERVICE",
+            "serviceName": "org.moqui.ide.AgiWorkspaceServices.delete#WorkspaceArtifact",
+            "parameters": {
+                "artifactLocation": "component://nursinghome/screen/nursinghome/test/common/LifecycleRoomLookup.xml"
+            },
+            "assertions": {
+                "expectTargetFileExists": false,
+                "expectBufferExists": false
+            }
+        }
+    ]
+}

@@ -114,31 +114,31 @@
 
     <resource name="screen">
         <resource name="create">
-            <service name="org.moqui.ai.mcp.MCPScreenServices.create#Screen"/>
+            <service name="org.moqui.ai.mcp.McpScreenServices.create#Screen"/>
         </resource>
     </resource>
 
     <resource name="palette">
         <method type="get">
-            <service name="org.moqui.ai.mcp.MCPArtifactServices.get#ArtifactPalette"/>
+            <service name="org.moqui.ai.mcp.McpArtifactServices.get#ArtifactPalette"/>
         </method>
     </resource>
 
     <resource name="add-container">
         <method type="post">
-            <service name="org.moqui.ai.mcp.MCPScreenServices.add#Container"/>
+            <service name="org.moqui.ai.mcp.McpScreenServices.add#Container"/>
         </method>
     </resource>
 
     <resource name="bind-subscreen">
         <method type="post">
-            <service name="org.moqui.ai.mcp.MCPScreenServices.bind#Subscreen"/>
+            <service name="org.moqui.ai.mcp.McpScreenServices.bind#Subscreen"/>
         </method>
     </resource>
 
     <resource name="getRawXml">
         <method type="get">
-            <service name="org.moqui.ai.mcp.MCPScreenServices.get#RawXml"/>
+            <service name="org.moqui.ai.mcp.McpScreenServices.get#RawXml"/>
         </method>
     </resource>
 
@@ -320,11 +320,29 @@
                 </method>
             </resource>
         </resource>
+        <resource name="runService">
+            <method type="post"><service name="org.moqui.ide.AgiServiceServices.run#Service"/></method>
+        </resource>
     </resource>
 
     <resource name="validateScreenXml">
         <method type="post">
             <service name="validate#ScreenXml"/>
+        </method>
+    </resource>
+
+    <!-- ===================================================================== -->
+    <!-- IN-APP TEST RUNNER ENDPOINTS                                          -->
+    <!-- ===================================================================== -->
+    <resource name="getTestManifests">
+        <method type="get">
+            <service name="org.moqui.ide.AgiTestRunnerServices.get#TestManifests"/>
+        </method>
+    </resource>
+
+    <resource name="assertArtifactState">
+        <method type="get">
+            <service name="org.moqui.ide.AgiTestRunnerServices.assert#ArtifactState"/>
         </method>
     </resource>
 </resource>

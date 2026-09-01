@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+
+    <entity entity-name="McpResourceFacet" package="org.moqui.ai.mcp" table-name="MCP_RESOURCE_FACET"
+            enable-audit-log="true">
+        <description>
+            Stores structured metadata, tags, security classifications, version pinning, 
+            and vector embeddings associated with an MCP Resource URI.
+        </description>
+
+        <field name="resourceFacetId" type="id" is-pk="true"/>
+        <field name="resourceUri" type="text-medium" required="true">
+            <description>Canonical MCP URI, e.g. mcp://nursinghome/resources/screen/archetype/lookup-modal.xml</description>
+        </field>
+
+        <!-- Optional link to Moqui WikiPage for dynamic intent/discussion documents -->
+        <field name="wikiPageId" type="id"/>
+        <field name="wikiPageHistoryId" type="id"/>
+
+        <field name="facetTypeEnumId" type="id" required="true">
+            <description>Enumeration ID classifying the facet type (e.g. McpFacetMeta, McpFacetTag, McpFacetSecurity)</description>
+        </field>
+        <field name="facetKey" type="text-medium" required="true">
+            <description>Key name, e.g. mimeType, targetComponent, targetScreen, hipaaPhi, version</description>
+        </field>
+        <field name="facetValue" type="text-very-long">
+            <description>Value associated with the key</description>
+        </field>
+
+        <!-- Semantic & Vector Retrieval Link -->
+        <field name="vectorEmbeddingId" type="id"/>
+
+        <!-- Relationships -->
+        <relationship type="one" related="moqui.resource.wiki.WikiPage"/>
+        <relationship type="one" title="FacetType" related="moqui.basic.Enumeration">
+            <key-map field-name="facetTypeEnumId" related="enumId"/>
+        </relationship>
+
+        <!-- Indexes -->
+        <index name="MCP_FACET_URI">
+            <index-field name="resourceUri"/>
+        </index>
+        <index name="MCP_FACET_WPID">
+            <index-field name="wikiPageId"/>
+        </index>
+    </entity>
+
+</entities>

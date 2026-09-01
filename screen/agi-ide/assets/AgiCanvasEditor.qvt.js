@@ -101,6 +101,9 @@
                 if (msg.data?.event === 'element-selected-by-id') {
                     this.onElementSelected(msg.data.mariaId);
                 }
+                if (msg.data?.event === 'artifact-relocated' || msg.data?.event === 'open-screen-artifact') {
+                    this.selectedMariaId = '';
+                }
             };
             this.onWindowSelection = (e) => {
                 if (e.detail?.mariaId) {
@@ -140,7 +143,6 @@
                     .then(resp => {
                         console.info("🗑️ Artifact deleted successfully:", resp.data);
 
-                        // 1. Immediately purge from localStorage synchronously before any reload/event
                         try {
                             const rawHistory = localStorage.getItem('agi_recent_artifact_history');
                             if (rawHistory) {
@@ -153,7 +155,6 @@
                             console.warn("Could not sync localStorage after delete:", storageErr);
                         }
 
-                        // 2. Broadcast deletion to Palette, Store, and Workspace
                         if (this.contextBus) {
                             this.contextBus.postMessage({
                                 event: 'artifact-deleted',
@@ -164,7 +165,6 @@
                             detail: { artifactLocation: targetPath }
                         }));
 
-                        // 3. Fallback switch: Clear the deleted artifact without hard reloading
                         if (this.contextBus) {
                             this.contextBus.postMessage({
                                 event: 'open-screen-artifact',

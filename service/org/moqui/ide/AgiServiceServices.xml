@@ -224,4 +224,34 @@
         </actions>
     </service>
 
+    <!-- 4. DIRECT DYNAMIC SERVICE RUNNER (FOR TEST RUNNER & MCP HARNESS) -->
+    <service verb="run" noun="Service">
+        <description>Dynamically calls a target Moqui service with passed parameters and commits the transaction.</description>
+        <in-parameters>
+            <parameter name="serviceName" required="true"/>
+            <parameter name="parameters" type="Map"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="results" type="Map"/>
+            <parameter name="status" type="String"/>
+            <parameter name="errorMessage" type="String"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                Map inParams = parameters ?: [:]
+                try {
+                    Map res = ec.service.sync().name(serviceName).parameters(inParams).call()
+                    context.results = res
+                    context.status = ec.message.hasError() ? "ERROR" : "SUCCESS"
+                    if (ec.message.hasError()) {
+                        context.errorMessage = ec.message.getErrorsString()
+                    }
+                } catch (Throwable t) {
+                    context.status = "ERROR"
+                    context.errorMessage = t.getMessage() ?: t.toString()
+                    ec.logger.error("❌ [run#Service] Error executing service [${serviceName}]: ${context.errorMessage}", t)
+                }
+            ]]></script>
+        </actions>
+    </service>
 </services>

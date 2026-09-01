@@ -492,31 +492,37 @@
             <parameter name="workEffortId"/>
         </out-parameters>
         <actions>
-        <script><![CDATA[
+            <script><![CDATA[
                 String targetArtifactId = agiArtifactId
                 if (!targetArtifactId && sourceReferenceId) {
                     def artRow = ec.entity.find("org.moqui.ai.AgiArtifact").condition("artifactPath", sourceReferenceId).one()
                     if (artRow) targetArtifactId = artRow.agiArtifactId
                 }
 
-                // 🎯 FIX: Sanitize empty string to null for foreign key integrity
+                // Sanitize empty string to null for foreign key integrity
                 String cleanParentId = (parentWorkEffortId != null && parentWorkEffortId.trim().length() > 0) 
                     ? parentWorkEffortId.trim() 
                     : null
 
+                // Generate deterministic hash-bounded safe IDs (<= 55 chars)
                 String safeMariaId = org.moqui.ide.ScreenEditorServices.generateMariaId(sourceReferenceId, targetMariaId)
 
-                // Truncate or hash sourceReferenceId if stored in standard id field (VARCHAR 63)
                 String safeSourceRef = sourceReferenceId
                 if (safeSourceRef && safeSourceRef.length() > 60) {
                     safeSourceRef = org.moqui.ide.ScreenEditorServices.generateMariaId(sourceReferenceId, "src")
                 }
 
+                // Ensure workEffortName does not exceed standard varchar(255) / varchar(60) limits
+                String safeWeName = workEffortName ?: "Intent Node"
+                if (safeWeName.length() > 60) {
+                    safeWeName = safeWeName.substring(0, 60)
+                }
+
                 def newWe = ec.entity.makeValue("mantle.work.effort.WorkEffort")
-                newWe.workEffortName = workEffortName
+                newWe.workEffortName = safeWeName
                 newWe.parentWorkEffortId = cleanParentId
                 newWe.agiArtifactId = targetArtifactId
-                newWe.sourceReferenceId = sourceReferenceId
+                newWe.sourceReferenceId = safeSourceRef
                 newWe.workEffortTypeEnumId = workEffortTypeEnumId
                 newWe.targetMariaId = safeMariaId
                 newWe.statusId = "WeInPlanning"

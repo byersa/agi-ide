@@ -552,6 +552,18 @@
                     return;
                 }
 
+                // Handle external artifact relocation
+                if (event.data.event === 'artifact-relocated') {
+                    const oldUri = event.data.oldUri;
+                    const newUri = event.data.newUri;
+
+                    if (vm.activeArtifactLocation === oldUri || !vm.activeArtifactLocation) {
+                        vm.activeArtifactLocation = newUri;
+                        vm.fetchActiveRagContext(newUri);
+                    }
+                    return;
+                }
+
                 if (event.data.event === 'force-open-command-palette' || event.data.event === 'open-prompt-editor') {
                     vm.targetComponent = event.data.targetComponent || 'nursinghome';
                     vm.activeArtifactLocation = event.data.artifactLocation || vm.activeArtifactLocation || '';
@@ -572,6 +584,10 @@
                         vm.fetchActiveRagContext(vm.activeArtifactLocation);
                     } else {
                         vm.syncControlsToAssemblyBuffer();
+                    }
+
+                    if (vm.contextBus) {
+                        vm.contextBus.postMessage({ event: 'refresh-artifact-palette' });
                     }
                 }
             };
@@ -636,7 +652,7 @@
                 this.commandParamValues = {};
             },
 
-            // 🛠️ Fetch Dynamic MCP Tools via REST
+            // Fetch Dynamic MCP Tools via REST
             async fetchDynamicTools() {
                 const vm = this;
                 const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
@@ -662,7 +678,7 @@
                 }
             },
 
-            // 📐 Fetch MCP Archetype Resources via REST
+            // Fetch MCP Archetype Resources via REST
             async fetchMcpArchetypes() {
                 const vm = this;
                 const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
@@ -676,10 +692,9 @@
                     const resList = response.data?.resources || [];
                     vm.availableArchetypes = resList.map(r => ({
                         ...r,
-                        selected: r.name === 'lookup-modal' // Default selected for search/lookup workflows
+                        selected: r.name === 'lookup-modal'
                     }));
 
-                    // Preload default archetype content
                     const defaultArch = vm.availableArchetypes.find(a => a.selected);
                     if (defaultArch) {
                         await vm.loadArchetypeContent(defaultArch);
@@ -907,7 +922,7 @@
 
                 this.isExecuting = true;
                 const tkn = this.resolveCsrfToken();
-                const currentFileUri = this.activeArtifactLocation || '';
+                const previousFileUri = this.activeArtifactLocation || '';
                 const executedPromptText = this.userPrompt.trim();
 
                 const headers = {
@@ -923,7 +938,7 @@
                 }));
 
                 const payload = {
-                    artifactUri: currentFileUri,
+                    artifactUri: previousFileUri,
                     targetComponent: this.targetComponent || 'nursinghome',
                     focusCoordinate: this.includeTargetCoordinate ? (this.focusedElementId || null) : null,
                     focusCoordinateArray: this.includeTargetCoordinate ? this.parsedCoordinateArray : [],
@@ -936,7 +951,7 @@
                     ragContext: [...this.governanceRules.filter(r => r.enabled), ...activeEntityRag],
                     rawXmlContent: this.includeRawXml ? this.rawXmlSource : null,
                     activeRagContext: JSON.stringify({
-                        artifactUri: currentFileUri,
+                        artifactUri: previousFileUri,
                         targetComponent: this.targetComponent,
                         focusCoordinate: this.focusedElementId,
                         astTree: this.rawAstObject
@@ -953,14 +968,39 @@
                         try { parsedRes = JSON.parse(res.completionText); } catch (e) { }
                     }
 
-                    const newUri = parsedRes.createdArtifactUri || res.createdArtifactUri || currentFileUri;
+                    const newUri = parsedRes.createdArtifactUri
+                        || parsedRes.targetArtifactUri
+                        || parsedRes.targetScreenUri
+                        || parsedRes.artifactUri
+                        || res.createdArtifactUri
+                        || previousFileUri;
                     const updatedXml = parsedRes.rawXmlContent || '';
 
+                    // Detect relocation/move and broadcast
+                    if (previousFileUri && newUri && previousFileUri !== newUri && this.contextBus) {
+                        this.contextBus.postMessage({
+                            event: 'artifact-relocated',
+                            oldUri: previousFileUri,
+                            newUri: newUri
+                        });
+                    }
+
                     if (newUri && this.contextBus) {
+                        this.contextBus.postMessage({
+                            event: 'open-screen-artifact',
+                            artifactUri: newUri
+                        });
                         this.contextBus.postMessage({
                             event: 'artifact-state-mutated',
                             artifactUri: newUri,
                             rawXmlText: updatedXml
+                        });
+                        this.contextBus.postMessage({
+                            event: 'reload-blueprint-tree',
+                            artifactUri: newUri
+                        });
+                        this.contextBus.postMessage({
+                            event: 'refresh-artifact-palette'
                         });
                     }
 

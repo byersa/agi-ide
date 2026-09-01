@@ -1,22 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-          xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-3.0.xsd">
+          xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
-    <!-- ===================================================================== -->
+<!-- ===================================================================== -->
     <!-- CREATE SCREEN MCP TOOL SERVICE                                        -->
     <!-- ===================================================================== -->
     <service verb="create" noun="Screen" type="inline">
-        <description>
+        <description><![CDATA[
             MCP Tool: Scaffolds a new XML screen file on disk under the target component,
             auto-registers the artifact in AgiArtifact, seeds the WorkspaceBuffer AST,
             and links it to a root intent node. Optionally creates companion QVT assets.
-        </description>
+        ]]></description>
         <in-parameters>
             <parameter name="targetComponent" type="String" default-value="nursinghome" internal="true"/>
             <parameter name="screenPath" type="String" required="true"/>
             <parameter name="title" type="String"/>
             <parameter name="editorType" type="String" default-value="AgiScreenEditor"/>
             <parameter name="parentWorkEffortId" type="String" internal="true"/>
+            <parameter name="overwrite" type="Boolean" default="false"/>
         </in-parameters>
         <out-parameters>
             <parameter name="artifactUri" type="String" required="true"/>
@@ -50,7 +51,7 @@
                 String physicalFilePath = "runtime/component/${compName}/screen/${relPath}.xml"
 
                 File targetFile = new File(physicalFilePath)
-                if (targetFile.exists()) {
+                if (targetFile.exists() && !overwrite) {
                     ec.message.addError("Screen file already exists at: ${physicalFilePath}")
                     return
                 }
@@ -147,7 +148,7 @@ ${scriptIncludeTag}
                     ? parentWorkEffortId.trim() 
                     : null
 
-                String safeMariaId = org.moqui.ide.ScreenEditorServices.generateMariaId(sourceReferenceId, targetMariaId)
+                String safeMariaId = org.moqui.ide.ScreenEditorServices.generateMariaId(fullArtifactUri, rootContainerId)
                 ec.logger.info("📦 [MCP /create#Screen] safeMariaId: ${safeMariaId}, length: ${safeMariaId.length()} ")
 
                 Map weResult = ec.service.sync().name("org.moqui.ide.BlueprintServices.create#WorkEffortNode").parameters([
@@ -171,10 +172,10 @@ ${scriptIncludeTag}
     <!-- MOVE / REFACTOR ARTIFACT MCP TOOL SERVICE                             -->
     <!-- ===================================================================== -->
     <service verb="move" noun="Artifact" type="inline">
-        <description>
+        <description><![CDATA[
             MCP Tool: Relocates or renames an existing screen file on disk and updates all 
             AgiArtifact, WorkspaceBuffer, and WorkEffort entity references in the database.
-        </description>
+        ]]></description>
         <in-parameters>
             <parameter name="sourceArtifactUri" type="String" required="true"/>
             <parameter name="targetArtifactUri" type="String" required="true"/>
@@ -189,11 +190,19 @@ ${scriptIncludeTag}
                 String compName = targetComponent.trim().toLowerCase().replaceAll("[^a-z0-9-]", "")
 
                 def normalizeUri = { String rawUri ->
-                    String cleaned = rawUri.trim()
+                    String cleaned = rawUri.trim().replace('\\', '/')
+                    // Strip filesystem prefixes if the model passed a raw path
+                    cleaned = cleaned.replaceAll("^(\\./)?runtime/component/", "")
+                    cleaned = cleaned.replaceAll("^component://", "")
+                
                     if (!cleaned.endsWith(".xml")) cleaned += ".xml"
-                    if (cleaned.startsWith("component://")) return cleaned
-
-                    if (cleaned.startsWith("screen/")) {
+                    
+                    // Ensure standard component://<comp>/screen/... format
+                    if (cleaned.startsWith("${compName}/screen/")) {
+                        return "component://${cleaned}"
+                    } else if (cleaned.startsWith("${compName}/")) {
+                        return "component://${compName}/screen/" + cleaned.substring(compName.length() + 1)
+                    } else if (cleaned.startsWith("screen/")) {
                         return "component://${compName}/${cleaned}"
                     } else {
                         return "component://${compName}/screen/${cleaned}"
@@ -264,6 +273,24 @@ ${scriptIncludeTag}
                     we.update()
                 }
 
+                // 🎯 1. Clear old buffer row explicitly to prevent resurrection on save
+                try {
+                    ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.clear#WorkspaceBuffer")
+                        .parameter("artifactUri", srcUri)
+                        .call()
+                } catch (Exception clearEx) {
+                    ec.logger.warn("⚠️ [move#Artifact] Could not clear old WorkspaceBuffer for ${srcUri}: ${clearEx.message}")
+                }
+
+                // 🎯 2. Invalidate framework caches for old and new screen locations
+                try {
+                    ec.cache.getCache("screen.location")?.clear()
+                    ec.cache.getCache("screen.render.subscreens")?.clear()
+                    ec.cache.getCache("resource.text.location")?.clear()
+                    ec.cache.getCache("resource.template.location")?.clear()
+                    ec.resource.clearAllCaches()
+                } catch (Exception ignored) {}
+
                 context.artifactUri = tgtUri
             ]]></script>
         </actions>
@@ -273,10 +300,10 @@ ${scriptIncludeTag}
     <!-- ATTACH QVT ASSET MCP TOOL SERVICE                                     -->
     <!-- ===================================================================== -->
     <service verb="attach" noun="QvtAsset" type="inline">
-        <description>
+        <description><![CDATA[
             MCP Tool: Attaches a companion Vue/QVT component script to an existing XML screen,
             scaffolds the .qvt.js file, injects the script tag, and converts editor to AgiComponentEditor.
-        </description>
+        ]]></description>
         <in-parameters>
             <parameter name="artifactUri"/>
             <parameter name="screenPath"/>
@@ -399,17 +426,29 @@ ${scriptIncludeTag}
     <!-- ADD CONTAINER LAYOUT WIDGET (AST WorkspaceBuffer Mutator)             -->
     <!-- ===================================================================== -->
     <service verb="add" noun="Container" authenticate="anonymous-all">
-        <description>
+        <description><![CDATA[
             Injects a container layout widget into the active Meta-JSON AST in WorkspaceBuffer,
             persists the buffer, and re-compiles the clean XML back to disk.
-        </description>
+        ]]></description>
         <in-parameters>
-            <parameter name="artifactUri" required="true"><description>Full component URI (e.g. component://nursinghome/screen/nursinghome.xml)</description></parameter>
-            <parameter name="containerType" default-value="container"><description>Tag name: container, container-row, container-box, or section</description></parameter>
-            <parameter name="containerId"><description>Optional ID attribute for the new container</description></parameter>
-            <parameter name="styleClass"><description>Optional CSS class string (e.g. row items-center justify-between q-pa-sm)</description></parameter>
-            <parameter name="parentContainerId"><description>Target parent container ID or mariaId inside the screen AST</description></parameter>
-            <parameter name="conditionScript"><description>Optional Moqui Groovy condition for role/permission gating</description></parameter>
+            <parameter name="artifactUri" required="true">
+                <description><![CDATA[Full component URI (e.g. component://nursinghome/screen/nursinghome.xml)]]></description>
+            </parameter>
+            <parameter name="containerType" default-value="container">
+                <description><![CDATA[Tag name: container, container-row, container-box, or section]]></description>
+            </parameter>
+            <parameter name="containerId">
+                <description><![CDATA[Optional ID attribute for the new container]]></description>
+            </parameter>
+            <parameter name="styleClass">
+                <description><![CDATA[Optional CSS class string (e.g. row items-center justify-between q-pa-sm)]]></description>
+            </parameter>
+            <parameter name="parentContainerId">
+                <description><![CDATA[Target parent container ID or mariaId inside the screen AST]]></description>
+            </parameter>
+            <parameter name="conditionScript">
+                <description><![CDATA[Optional Moqui Groovy condition for role/permission gating]]></description>
+            </parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="artifactUri"/>
@@ -468,7 +507,6 @@ ${scriptIncludeTag}
 
                 Map targetNode = parentContainerId ? findTargetNode(layoutTree) : null
                 if (!targetNode) {
-                    // Fallback to top-level widgets or root node
                     targetNode = layoutTree
                 }
 
@@ -498,7 +536,7 @@ ${scriptIncludeTag}
                             .condition("workEffortTypeEnumId", "WetIntent")
                             .one()
 
-                    String safeMariaId = org.moqui.ide.ScreenEditorServices.generateMariaId(sourceReferenceId, targetMariaId)
+                    String safeMariaId = org.moqui.ide.ScreenEditorServices.generateMariaId(artifactUri, newId)
                     ec.logger.info("📦 [MCP /add-container] safeMariaId: ${safeMariaId}, length: ${safeMariaId.length()} ")
 
                     ec.service.sync().name("org.moqui.ide.BlueprintServices.create#WorkEffortNode").parameters([
@@ -518,10 +556,10 @@ ${scriptIncludeTag}
     <!-- BIND SUBSCREEN TO PARENT SCREEN (AST WorkspaceBuffer Mutator)         -->
     <!-- ===================================================================== -->
     <service verb="bind" noun="Subscreen" authenticate="anonymous-all">
-        <description>
+        <description><![CDATA[
             Mounts child subscreens directly into the parent screen's Meta-JSON AST in WorkspaceBuffer,
             persists the buffer, and re-compiles the clean XML back to disk.
-        </description>
+        ]]></description>
         <in-parameters>
             <parameter name="artifactUri" required="true"/>
             <parameter name="subscreenName" required="true"/>
@@ -639,10 +677,10 @@ ${scriptIncludeTag}
     <!-- GET RAW XML / ASSET SOURCE SERVICE                                    -->
     <!-- ===================================================================== -->
     <service verb="get" noun="RawXml" authenticate="anonymous-all">
-        <description>
+        <description><![CDATA[
             Retrieves the raw text content of an XML screen or companion QVT script asset on disk.
             Accepts either 'artifactUri' or 'screenPath' parameters.
-        </description>
+        ]]></description>
         <in-parameters>
             <parameter name="artifactUri"/>
             <parameter name="screenPath"/>
@@ -703,10 +741,10 @@ ${scriptIncludeTag}
     <!-- ADD ACTION TO SCREEN AST (AST WorkspaceBuffer Mutator)                -->
     <!-- ===================================================================== -->
     <service verb="add" noun="ActionToScreen" authenticate="anonymous-all">
-        <description>
+        <description><![CDATA[
             Injects an action block (e.g. entity-find, service-call) into the screen's AST
             and persists the updated buffer to disk.
-        </description>
+        ]]></description>
         <in-parameters>
             <parameter name="artifactUri" required="true"/>
             <parameter name="actionType" required="true"/>
@@ -784,10 +822,10 @@ ${scriptIncludeTag}
     <!-- SCAFFOLD SUBSCREEN HUB (Header Tabs + Body Active Layout)             -->
     <!-- ===================================================================== -->
     <service verb="scaffold" noun="SubscreenHub" authenticate="anonymous-all">
-        <description>
+        <description><![CDATA[
             Restructures an active screen into a standard navigation hub layout:
             Creates a top Header Container with subscreens-tabs and a center Body Container with subscreens-active.
-        </description>
+        ]]></description>
         <in-parameters>
             <parameter name="artifactUri" required="true"/>
             <parameter name="headerTitle"/>
@@ -868,116 +906,6 @@ ${scriptIncludeTag}
     
                 ec.logger.info("📐 [scaffold#SubscreenHub] Successfully scaffolded Header + Content layout in ${artifactUri}")
                 context.artifactUri = artifactUri
-            ]]></script>
-        </actions>
-    </service>
-
-
-    <!-- ===================================================================== -->
-    <!-- MCP TOOL: GET SCREEN ARCHETYPE                                        -->
-    <!-- ===================================================================== -->
-    <service verb="get" noun="ScreenArchetype" type="inline">
-        <description>
-            MCP Tool for AI Assistants to retrieve canonical, verified Moqui XML Screen archetypes 
-            (e.g., 'lookup-modal', 'form-crud', 'master-detail') adhering strictly to xml-screen-3.xsd standards.
-        </description>
-        <in-parameters>
-            <parameter name="archetypeName" required="true">
-                <description>The archetype identifier, e.g., 'lookup-modal', 'form-crud', 'master-detail'.</description>
-            </parameter>
-        </in-parameters>
-        <out-parameters>
-            <parameter name="archetypeName"/>
-            <parameter name="templateXml"/>
-            <parameter name="status"/>
-            <parameter name="usageGuidelines"/>
-        </out-parameters>
-        <actions>
-            <script><![CDATA[
-                import org.moqui.resource.ResourceReference
-
-                String safeName = archetypeName.replaceAll("[^a-zA-Z0-9_-]", "")
-                String templateLocation = "component://agi-ide/archetype/screen/${safeName}.xml"
-
-                ResourceReference rr = ec.resource.getLocationReference(templateLocation)
-                if (rr != null && rr.exists) {
-                    context.archetypeName = safeName
-                    context.templateXml = rr.getText()
-                    context.status = "SUCCESS"
-                    context.usageGuidelines = """
-                        1. Adhere strictly to xml-screen-3.xsd.
-                        2. Never wrap <hidden/> or <display/> in <container name="...">.
-                        3. For lookups, ensure default-menu-include="false" and standalone="true" on <screen>.
-                        4. Return selections using declarative parameter maps rather than inline JavaScript.
-                    """
-                    ec.logger.info("📐 [MCP:get#ScreenArchetype] Archetype dispatched to AI: ${templateLocation}")
-                } else {
-                    context.archetypeName = safeName
-                    context.templateXml = ""
-                    context.status = "NOT_FOUND"
-                    context.usageGuidelines = "Archetype not found. Available archetypes: lookup-modal"
-                    ec.logger.warn("⚠️ [MCP:get#ScreenArchetype] Archetype not found: ${templateLocation}")
-                }
-            ]]></script>
-        </actions>
-    </service>
-
-    <!-- ===================================================================== -->
-    <!-- GET DYNAMIC ARCHETYPE CATALOG (Filesystem-Driven)                     -->
-    <!-- ===================================================================== -->
-    <service verb="get" noun="ArchetypeCatalog" type="inline">
-        <description>
-            Dynamically scans all active components for archetype templates located 
-            under <component>/archetype/<archetypeType>/ and returns structured descriptors.
-        </description>
-        <in-parameters>
-            <parameter name="archetypeType" default-value="screen"/>
-            <parameter name="targetComponent"/>
-        </in-parameters>
-        <out-parameters>
-            <parameter name="archetypes" type="List"/>
-            <parameter name="archetypeNames" type="List"/>
-        </out-parameters>
-        <actions>
-            <script><![CDATA[
-                import java.io.File
-                import org.moqui.resource.ResourceReference
-
-                List results = []
-                List names = []
-                String searchType = archetypeType ?: "screen"
-
-                File compBase = new File("runtime/component")
-                if (compBase.exists() && compBase.isDirectory()) {
-                    compBase.eachDir { File compDir ->
-                        String cName = compDir.name
-                        if (targetComponent && cName != targetComponent) return
-
-                        File archetypeDir = new File(compDir, "archetype/${searchType}")
-                        if (archetypeDir.exists() && archetypeDir.isDirectory()) {
-                            archetypeDir.eachFile { File f ->
-                                if (f.isFile() && !f.name.startsWith(".") && (f.name.endsWith(".xml") || f.name.endsWith(".groovy"))) {
-                                    String baseName = f.name.replaceAll('\\.[a-zA-Z0-9]+$', '')
-                                    String uri = "component://${cName}/archetype/${searchType}/${f.name}"
-                                    
-                                    names.add(baseName)
-                                    results.add([
-                                        archetypeName : baseName,
-                                        label         : baseName,
-                                        fileName      : f.name,
-                                        archetypeType : searchType,
-                                        componentName : cName,
-                                        locationUri   : uri
-                                    ])
-                                }
-                            }
-                        }
-                    }
-                }
-
-                context.archetypes = results
-                context.archetypeNames = names.unique()
-                ec.logger.info("📐 [get#ArchetypeCatalog] Discovered ${results.size()} dynamic archetypes for type '${searchType}'")
             ]]></script>
         </actions>
     </service>

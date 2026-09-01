@@ -81,8 +81,9 @@
         mounted() {
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
             this.contextBus.onmessage = (msg) => {
-                if (msg.data && msg.data.event === 'reload-qvt-script') {
-                    this.resolveAndFetchQvtScript(this.screenPath);
+                if (msg.data && (msg.data.event === 'reload-qvt-script' || msg.data.event === 'artifact-relocated')) {
+                    const path = msg.data.newUri || this.screenPath;
+                    this.resolveAndFetchQvtScript(path);
                 }
             };
         },
@@ -101,7 +102,6 @@
                 var vm = this;
                 let qvtUri = path;
 
-                // If path is ManagePatients.xml -> derive component://.../assets/ManagePatients.qvt.js
                 if (path.endsWith('.xml')) {
                     const lastSlash = path.lastIndexOf('/');
                     const dir = path.substring(0, lastSlash);
@@ -112,12 +112,10 @@
                 vm.targetQvtUri = qvtUri;
                 const headers = { 'moquiSessionToken': window.AGI_SERVER_CSRF_TOKEN || "" };
 
-                // Fetch raw script text from server
                 axios.get('/rest/s1/agi-ide/getRawXml', {
                     params: { artifactUri: qvtUri },
                     headers: headers
                 }).then(response => {
-                    // Extract raw text from the REST out-parameter payload
                     const content = response.data?.rawXmlContent || response.data || '';
                     if (content && typeof content === 'string' && !content.includes('404')) {
                         vm.rawJsSource = content;
@@ -141,7 +139,7 @@
 
                 try {
                     await axios.post('/rest/s1/agi-ide/mcp/run', {
-                        serviceName: 'org.moqui.ai.mcp.MCPScreenServices.attach#QvtAsset',
+                        serviceName: 'org.moqui.ai.mcp.McpScreenServices.attach#QvtAsset',
                         parameters: { screenPath: vm.screenPath, targetComponent: 'nursinghome' }
                     }, { headers });
 

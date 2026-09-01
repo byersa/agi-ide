@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ===================================================================== -->
+    <!-- GET ARTIFACT PALETTE SERVICE                                          -->
+    <!-- ===================================================================== -->
+    <service verb="get" noun="ArtifactPalette" authenticate="anonymous-all">
+        <description><![CDATA[
+            Queries registered AgiArtifact database records (including uncommitted drafts) 
+            and scans runtime/component/ directories to construct a unified list of component 
+            screens, services, entities, and QVT scripts for the Artifact Palette.
+        ]]></description>
+        <in-parameters>
+            <parameter name="targetComponent" default-value="nursinghome"/>
+            <parameter name="searchTerm"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="flatList" type="List"/>
+            <parameter name="artifactTree" type="List"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                String comp = (targetComponent ?: "nursinghome").trim().toLowerCase()
+                String term = searchTerm ? searchTerm.trim().toLowerCase() : null
+
+                Map<String, Map> resultMap = [:]
+
+                // 1. Fetch all registered DB Artifacts for this component (including drafts not yet on disk)
+                def dbArtifacts = ec.entity.find("org.moqui.ai.AgiArtifact").list()
+                dbArtifacts.each { art ->
+                    String path = art.artifactPath ?: ""
+                    if (path.startsWith("component://${comp}/")) {
+                        String relPath = path.replace("component://${comp}/", "")
+                        String fName = relPath.substring(relPath.lastIndexOf('/') + 1)
+                        
+                        if (!term || relPath.toLowerCase().contains(term) || path.toLowerCase().contains(term) || fName.toLowerCase().contains(term)) {
+                            resultMap[path] = [
+                                label: relPath,
+                                value: path,
+                                screenPath: relPath.replace("screen/", "").replace(".xml", "").replace(".qvt.js", ""),
+                                fileName: fName,
+                                isComponent: fName.endsWith(".qvt.js"),
+                                agiArtifactId: art.agiArtifactId,
+                                status: art.artifactStatusEnumId ?: "AasDraft"
+                            ]
+                        }
+                    }
+                }
+
+                // 2. Scan physical files on disk to capture untracked files
+                def scanDir = { File dir ->
+                    if (!dir.exists()) return
+                    dir.eachFileRecurse(groovy.io.FileType.FILES) { file ->
+                        String fName = file.name
+                        if (fName.endsWith(".xml") || fName.endsWith(".qvt.js") || fName.endsWith(".groovy")) {
+                            String relPath = file.path.replace("runtime/component/${comp}/", "").replace("\\", "/")
+                            String uri = "component://${comp}/${relPath}"
+
+                            if (!resultMap.containsKey(uri)) {
+                                if (!term || relPath.toLowerCase().contains(term) || uri.toLowerCase().contains(term) || fName.toLowerCase().contains(term)) {
+                                    resultMap[uri] = [
+                                        label: relPath,
+                                        value: uri,
+                                        screenPath: relPath.replace("screen/", "").replace(".xml", "").replace(".qvt.js", ""),
+                                        fileName: fName,
+                                        isComponent: fName.endsWith(".qvt.js"),
+                                        agiArtifactId: null,
+                                        status: "AasActive"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+
+                String baseComponentDir = "runtime/component/${comp}"
+                scanDir(new File(baseComponentDir))
+
+                List finalResults = new ArrayList(resultMap.values())
+                context.flatList = finalResults
+                context.artifactTree = finalResults
+                ec.logger.info("🎨 [get#ArtifactPalette] Returned ${finalResults.size()} artifacts for component: ${comp}")
+            ]]></script>
+        </actions>
+    </service>
+
+</services>

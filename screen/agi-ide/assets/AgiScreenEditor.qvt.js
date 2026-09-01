@@ -154,6 +154,9 @@
                 if (msg.data?.event === 'element-selected-by-id') {
                     this.highlightAndScrollToSourceElement(msg.data.mariaId, msg.data.node);
                 }
+                if (msg.data?.event === 'artifact-relocated') {
+                    this.clearHighlight();
+                }
             };
 
             this.onWindowSelection = (e) => {
@@ -182,7 +185,6 @@
                     return;
                 }
 
-                // Ensure XML mode script is loaded
                 if (!CodeMirror.modes || !CodeMirror.modes.xml) {
                     if (!document.getElementById('cm-xml-mode-script')) {
                         const script = document.createElement('script');
@@ -205,7 +207,7 @@
                         htmlMode: false,
                         theme: 'material-darker',
                         lineNumbers: true,
-                        lineWrapping: true // Enables automatic line wrapping within the panel width
+                        lineWrapping: true
                     });
 
                     this.cmInstance.on('change', (cm, change) => {
@@ -277,10 +279,7 @@
                 let uri = '';
                 const rawName = svc.serviceName.trim();
 
-                // Example rawName: "nursinghome.service.nursinghome.NursingHomeDataServices.intake#NewResident"
-                // Or: "nursinghome.patient.PatientServices.intake#NewResident"
                 if (rawName.includes('#')) {
-                    // Strip verb#noun from the end
                     const beforeVerb = rawName.substring(0, rawName.lastIndexOf('.'));
                     const parts = beforeVerb.split('.').filter(p => p !== 'service');
                     const comp = parts[0] || 'nursinghome';

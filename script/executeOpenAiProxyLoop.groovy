@@ -36,7 +36,6 @@ rawTools.each { tool ->
         tool.inputSchema.properties.each { pKey, pVal ->
             if (pVal.internal == true) return
             
-            // 🎯 FIXED: Support nested maps, arrays, and proper primitives instead of forcing "string"
             String explicitType = (pVal.type ?: "string").toLowerCase()
             Map propMap = [
                 type: explicitType,
@@ -76,25 +75,19 @@ ec.logger.info("🔧 [PROXY LOOP TOOLS] Registered ${openAiTools.size()} active 
 // STEP 2: CONSTRUCT SYSTEM INSTRUCTIONS & INITIAL MESSAGES
 // =====================================================================================
 String systemInstruction = """You are the AI Orchestrator for the Moqui AI IDE System.
-Your goal is to scaffold screens, refactor assets, or update UI components for the target component '${targetComponent}'.
+Your goal is to scaffold screens, refactor assets, move artifacts, or update UI components for the target component '${targetComponent}'.
 
 CRITICAL RULES & TOOL CONTRACT:
 - Top-level domain screens belong under screenPath '${targetComponent}/<ScreenName>'.
 - Subscreens belong under their parent directory (e.g. '${targetComponent}/PatientManagement/AddPatient').
+- When asked to 'Move' or 'Rename' an artifact, call 'move_artifact' with:
+    1. 'sourceArtifactUri': Full current URI (e.g. 'component://${targetComponent}/screen/${targetComponent}/RoomLookup.xml')
+    2. 'targetArtifactUri': Full destination URI (e.g. 'component://${targetComponent}/screen/${targetComponent}/common/RoomLookup.xml')
 - When asked to 'Fill in', 'Build', or 'Update' a screen, call 'modify_blueprint' with BOTH required arguments:
     1. 'artifactUri': The full target URI (e.g. 'component://${targetComponent}/screen/${targetComponent}/PatientManagement/AddPatient.xml')
-    2. 'metaJsonData': A valid JSON string containing the complete AST tree object:
-       {
-         "name": "screen",
-         "attributes": {
-           "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
-           "xsi:noNamespaceSchemaLocation": "http://moqui.org/xsd/xml-screen-3.xsd",
-           "default-menu-title": "<Title>"
-         },
-         "children": [ ... ]
-       }
-- NEVER call 'modify_blueprint' with empty or null arguments.
-- Sibling field schemas and compliance rules in the staged context must be directly incorporated into the AST.
+    2. 'metaJsonData': A valid JSON string containing the complete AST tree object.
+- NEVER call tools with empty or null required arguments.
+- If a tool reports an error or validation failure, read the error message, correct your parameters, and call the tool again.
 """
 
 StringBuilder userPromptBuilder = new StringBuilder()
@@ -111,7 +104,7 @@ List messages = [
 ]
 
 // =====================================================================================
-// STEP 3: MULTI-TURN ORCHESTRATION LOOP
+// STEP 3: MULTI-TURN ORCHESTRATION LOOP (With Strict Error Feedback)
 // =====================================================================================
 int currentTurn = 0
 int MAX_TURNS = 6
@@ -200,15 +193,6 @@ try {
                     ec.logger.warn("⚠️ Could not parse tool arguments JSON: ${rawArgsStr}")
                 }
 
-                // 🔍 DEBUG LOG: Inspect exactly what the LLM generated for this tool call
-                ec.logger.info("""🛠️ [AGI PROXY LOOP DEBUG Turn: ${currentTurn}] 
-                  - Called Function Name: ${calledName}
-                  - Raw Arguments String from LLM: ${rawArgsStr}
-                  - Parsed Map Arguments size: ${toolArgs?.size()}
-                  - Argument Keys Present: ${toolArgs?.keySet()}
-                  - metaJsonData value preview: ${toolArgs?.metaJsonData ? toolArgs.metaJsonData.toString().take(200) + '...' : 'NULL/MISSING'}
-                """)
-
                 if (!readOnlyTools.contains(calledName)) {
                     onlyReadOnlyTools = false
                 }
@@ -266,6 +250,7 @@ try {
 
                 Map toolResult = [:]
                 boolean executionFailed = false
+                String caughtExceptionMsg = null
 
                 try {
                     ec.transaction.runRequireNew(0, "Executing isolated agent tool ${calledName}", {
@@ -276,11 +261,13 @@ try {
                     })
                 } catch (Exception ex) {
                     executionFailed = true
+                    caughtExceptionMsg = ex.message
                     ec.logger.warn("⚠️ Exception during isolated tool execution: ${ex.message}", ex)
                 }
 
-                if (executionFailed || ec.message.hasError()) {
-                    String serviceErrors = ec.message.getErrorsString()
+                // 🎯 STEP 3 ENHANCEMENT: Strict Error Feedback to Model
+                if (executionFailed || ec.message.hasError() || toolResult?.status == "error") {
+                    String serviceErrors = ec.message.getErrorsString() ?: caughtExceptionMsg ?: toolResult?.error ?: "Unknown tool execution error"
                     ec.message.clearAll()
                     turnHadErrors = true
 
@@ -292,13 +279,15 @@ try {
                         name: calledName,
                         content: JsonOutput.toJson([
                             status: "error",
-                            validationError: serviceErrors,
-                            message: "Tool execution failed. Please correct parameters and retry."
+                            error: serviceErrors,
+                            message: "Tool '${calledName}' execution failed: ${serviceErrors}. Check file paths or parameters and try again."
                         ])
                     ])
                 } else {
                     if (toolResult?.artifactUri) {
                         finalArtifactUri = toolResult.artifactUri
+                    } else if (toolResult?.targetArtifactUri) {
+                        finalArtifactUri = toolResult.targetArtifactUri
                     } else if (toolArgs.artifactUri && !readOnlyTools.contains(calledName)) {
                         finalArtifactUri = toolArgs.artifactUri
                     }
@@ -317,7 +306,7 @@ try {
                 }
             }
 
-            // Only complete the loop if mutations occurred without errors; if read-only, loop for next turn
+            // Only complete loop if mutation succeeded with NO errors; otherwise prompt model again
             if (!turnHadErrors && !onlyReadOnlyTools) {
                 executionSuccess = true
                 finalMessage = "Successfully executed dynamic tool sequence."

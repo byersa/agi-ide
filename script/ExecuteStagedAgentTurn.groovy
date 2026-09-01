@@ -187,38 +187,66 @@ if (parsed?.files instanceof List) {
     context.isDraft = true
     context.message = "Successfully staged ${filesGenerated.size()} artifact files in buffer."
     context.createdArtifactUri = artifactUri
-} 
+} else {
+
 // 9. Handle Single Artifact Creation / Mutation
-else {
-    String finalUri = parsed?.createdArtifactUri ?: proxyResult.createdArtifactUri ?: artifactUri
-    String finalXml = parsed?.rawXmlContent ?: proxyResult.rawXmlContent
-    def finalAstTree = parsed?.astTree ?: null
+String finalUri = parsed?.createdArtifactUri ?: parsed?.targetArtifactUri ?: parsed?.targetScreenUri ?: parsed?.workspaceBuffer?.artifactUri ?: proxyResult.createdArtifactUri ?: proxyResult.targetArtifactUri ?: artifactUri
+String finalXml = parsed?.rawXmlContent ?: proxyResult.rawXmlContent ?: parsed?.workspaceBuffer?.rawXmlContent
+def finalAstTree = parsed?.astTree ?: parsed?.workspaceBuffer?.metaJsonBuffer ?: null
 
-    if (!finalXml && finalAstTree instanceof Map) {
-        String targetElemName = focusCoordinate ? focusCoordinate.split('#').last() : null
-        if (targetElemName && parsed.nodeMutation instanceof Map) {
-            mutateNodeInTree(finalAstTree as Map, targetElemName, parsed.nodeMutation as Map)
+if (finalAstTree instanceof String && finalAstTree.trim().startsWith('{')) {
+    try {
+        finalAstTree = new JsonSlurper().parseText(finalAstTree)
+    } catch (Exception ignored) {}
+}
+
+if (!finalXml && finalAstTree instanceof Map) {
+    String targetElemName = focusCoordinate ? focusCoordinate.split('#').last() : null
+    if (targetElemName && parsed?.nodeMutation instanceof Map) {
+        mutateNodeInTree(finalAstTree as Map, targetElemName, parsed.nodeMutation as Map)
+    }
+}
+
+String bufferJson = finalAstTree ? (finalAstTree instanceof String ? finalAstTree : JsonOutput.toJson(finalAstTree)) : null
+
+if (finalUri && (finalXml || bufferJson)) {
+    ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer").parameters([
+        artifactUri     : finalUri,
+        metaJsonBuffer  : bufferJson,
+        rawXmlContent   : finalXml,
+        userId          : ec.user?.userId ?: 'ANONYMOUS'
+    ]).call()
+    filesGenerated.add([artifactUri: finalUri, status: "BUFFERED_DRAFT"])
+
+    // 🎯 Ensure AgiArtifact DB record exists so it appears in the Artifact Palette
+    try {
+        def existingArt = ec.entity.find("org.moqui.ai.AgiArtifact")
+            .condition("artifactPath", finalUri)
+            .one()
+        if (!existingArt) {
+            def newArt = ec.entity.makeValue("org.moqui.ai.AgiArtifact")
+            newArt.set("artifactPath", finalUri)
+            newArt.set("artifactTypeEnumId", "AatXmlScreen")
+            newArt.set("artifactStatusEnumId", "AasDraft")
+            newArt.set("totalIntentCount", 1)
+            newArt.set("completedIntentCount", 0)
+            newArt.set("completionPercentage", 0.0)
+            newArt.setSequencedIdPrimary()
+            newArt.create()
+            ec.logger.info("📦 [ExecuteStagedAgentTurn] Auto-registered new AgiArtifact for: ${finalUri}")
         }
+    } catch (Exception artEx) {
+        ec.logger.warn("⚠️ [ExecuteStagedAgentTurn] Could not register AgiArtifact: ${artEx.message}")
     }
+}
 
-    String bufferJson = finalAstTree ? (finalAstTree instanceof String ? finalAstTree : JsonOutput.toJson(finalAstTree)) : null
-
-    if (finalUri && (finalXml || bufferJson)) {
-        ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer").parameters([
-            artifactUri     : finalUri,
-            metaJsonBuffer  : bufferJson,
-            rawXmlContent   : finalXml,
-            userId          : ec.user?.userId ?: 'ANONYMOUS'
-        ]).call()
-        filesGenerated.add([artifactUri: finalUri, status: "BUFFERED_DRAFT"])
-    }
-
-    context.createdArtifactUri = finalUri
-    context.rawXmlContent      = finalXml
-    context.mutatedTree        = finalAstTree
-    context.isDraft            = true
-    context.status             = "SUCCESS"
-    context.message            = parsed?.message ?: proxyResult.message ?: "Staged turn applied to workspace buffer (Unsaved Draft)."
+context.completionText     = (completion instanceof String) ? completion : JsonOutput.toJson(parsed)
+context.createdArtifactUri = finalUri
+context.rawXmlContent      = finalXml
+context.mutatedTree        = finalAstTree
+context.isDraft            = true
+context.status             = "SUCCESS"
+context.message            = parsed?.message ?: proxyResult.message ?: "Staged turn applied to workspace buffer (Unsaved Draft)."
 }
 
 context.filesGenerated = filesGenerated

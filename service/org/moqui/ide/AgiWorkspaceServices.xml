@@ -396,11 +396,15 @@ ${widgetsSb.toString()}    </widgets>
         </actions>
     </service>
 
-    <!-- ===================================================================== -->
+<!-- ===================================================================== -->
     <!-- SAVE SCREEN XML BACK TO DISK (With Pre-Commit MCP Validation)         -->
     <!-- ===================================================================== -->
     <service verb="save" noun="ScreenXml" type="inline">
-        <description>Compiles the Meta-JSON blueprint layout tree back into standard Moqui XML, validates against xml-screen-3.xsd, and writes it cleanly formatted to disk.</description>
+        <description><![CDATA[
+            Compiles the Meta-JSON blueprint layout tree back into standard Moqui XML, 
+            validates against xml-screen-3.xsd, and writes it cleanly formatted to disk 
+            (auto-creating missing parent directories and new files).
+        ]]></description>
         <in-parameters>
             <parameter name="artifactUri" type="String" required="true"/>
             <parameter name="metaJsonBuffer" type="String" required="true"/>
@@ -414,11 +418,26 @@ ${widgetsSb.toString()}    </widgets>
                 import groovy.json.JsonSlurper
                 import groovy.xml.XmlUtil
                 import groovy.xml.XmlParser
+                import java.io.File
+                import org.moqui.resource.ResourceReference
 
-                org.moqui.resource.ResourceReference rr = ec.resource.getLocationReference(artifactUri)
-                if (rr == null || !rr.exists) {
-                    ec.logger.error("❌ Cannot write XML file: ResourceLocation ${artifactUri} does not exist.")
-                    context.status = "FILE_NOT_FOUND"
+                if (!artifactUri || !artifactUri.startsWith("component://")) {
+                    ec.logger.error("❌ Cannot write XML file: Invalid artifactUri: ${artifactUri}")
+                    context.status = "INVALID_URI"
+                    return
+                }
+
+                // 1. Auto-create physical parent directory structure on disk if this is a new file
+                String relPath = artifactUri.replace("component://", "")
+                File physicalFile = new File("runtime/component/" + relPath)
+                if (!physicalFile.exists()) {
+                    physicalFile.getParentFile().mkdirs()
+                }
+
+                ResourceReference rr = ec.resource.getLocationReference(artifactUri)
+                if (rr == null || !rr.supportsWrite()) {
+                    ec.logger.error("❌ Cannot write XML file: ResourceLocation ${artifactUri} is not writable.")
+                    context.status = "NOT_WRITABLE"
                     return
                 }
 
@@ -655,16 +674,18 @@ ${widgetsSb.toString()}    </widgets>
         </actions>
     </service>
 
-    <!-- ===================================================================== -->
-    <!-- GET KNOWN ARTIFACTS LIST                                              -->
+<!-- ===================================================================== -->
+    <!-- GET KNOWN ARTIFACTS LIST (DB + Disk Merge)                            -->
     <!-- ===================================================================== -->
     <service verb="get" noun="KnownArtifacts" type="inline">
-        <description>
-            Scans runtime component directories to discover all XML screens, Groovy services,
-            entities, tests, and reports with fully preserved nested relative paths.
-        </description>
+        <description><![CDATA[
+            Discovers all registered AgiArtifact DB records (including uncommitted 
+            WorkspaceBuffer drafts) and scans runtime component directories for XML screens, 
+            Groovy services, entities, tests, and reports.
+        ]]></description>
         <in-parameters>
             <parameter name="targetComponent" default-value="nursinghome"/>
+            <parameter name="searchTerm"/>
         </in-parameters>
         <out-parameters>
             <parameter name="artifacts" type="List"/>
@@ -675,10 +696,35 @@ ${widgetsSb.toString()}    </widgets>
                 import java.nio.file.Paths
                 import groovy.io.FileType
 
-                List resultList = []
-                String compName = targetComponent ?: 'nursinghome'
-                File compDir = new File("runtime/component/${compName}")
+                String compName = (targetComponent ?: 'nursinghome').trim()
+                String term = searchTerm ? searchTerm.trim().toLowerCase() : null
+                Map<String, Map> artifactMap = [:]
 
+                // 1. Fetch DB-registered artifacts first (captures staged WorkspaceBuffer drafts)
+                def dbArtifacts = ec.entity.find("org.moqui.ai.AgiArtifact").list()
+                dbArtifacts.each { art ->
+                    String path = art.artifactPath ?: ""
+                    if (path.startsWith("component://${compName}/")) {
+                        String relPath = path.replace("component://${compName}/", "")
+                        String fName = relPath.substring(relPath.lastIndexOf('/') + 1)
+                        
+                        if (!term || relPath.toLowerCase().contains(term) || path.toLowerCase().contains(term) || fName.toLowerCase().contains(term)) {
+                            artifactMap[path] = [
+                                screenName   : fName,
+                                label        : relPath,
+                                artifactPath : path,
+                                value        : path,
+                                componentName: compName,
+                                agiArtifactId: art.agiArtifactId,
+                                status       : art.artifactStatusEnumId ?: "AasDraft",
+                                type         : fName.endsWith(".qvt.js") ? 'QVT' : 'XML'
+                            ]
+                        }
+                    }
+                }
+
+                // 2. Scan physical files on disk for any untracked files
+                File compDir = new File("runtime/component/${compName}")
                 if (compDir.exists() && compDir.isDirectory()) {
                     Path compBasePath = compDir.toPath()
 
@@ -688,6 +734,9 @@ ${widgetsSb.toString()}    </widgets>
 
                         Path relPath = compBasePath.relativize(f.toPath())
                         String relPathStr = relPath.toString().replace('\\', '/')
+                        String fullUri = "component://${compName}/${relPathStr}"
+
+                        if (artifactMap.containsKey(fullUri)) return
 
                         String artifactType = null
                         if (filename.endsWith('.xml') && relPathStr.startsWith('screen/')) {
@@ -705,20 +754,24 @@ ${widgetsSb.toString()}    </widgets>
                         }
 
                         if (artifactType) {
-                            String fullComponentUri = "component://${compName}/${relPathStr}"
-                            resultList.add([
-                                screenName   : filename,
-                                label        : filename,
-                                artifactPath : fullComponentUri,
-                                value        : fullComponentUri,
-                                componentName: compName,
-                                type         : artifactType
-                            ])
+                            if (!term || relPathStr.toLowerCase().contains(term) || fullUri.toLowerCase().contains(term) || filename.toLowerCase().contains(term)) {
+                                artifactMap[fullUri] = [
+                                    screenName   : filename,
+                                    label        : relPathStr,
+                                    artifactPath : fullUri,
+                                    value        : fullUri,
+                                    componentName: compName,
+                                    agiArtifactId: null,
+                                    status       : "AasActive",
+                                    type         : artifactType
+                                ]
+                            }
                         }
                     }
                 }
 
-                context.artifacts = resultList
+                context.artifacts = new ArrayList(artifactMap.values())
+                ec.logger.info("📦 [get#KnownArtifacts] Returned ${context.artifacts.size()} artifacts for ${compName}")
             ]]></script>
         </actions>
     </service>

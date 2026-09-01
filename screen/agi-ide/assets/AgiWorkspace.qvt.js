@@ -65,6 +65,7 @@
                     AgiWorkEffortDetail: false,
                     AgiNewComponentWizard: false,
                     AgiIntentDetail: false,
+                    AgiTestRunner: false,
                 },
                 editorConstructors: {
                     AgiCanvasEditor: null,
@@ -79,6 +80,7 @@
                     AgiWorkEffortDetail: null,
                     AgiNewComponentWizard: null,
                     AgiIntentDetail: null,
+                    AgiTestRunner: null,
                 }
             };
         },
@@ -96,9 +98,28 @@
             const vm = this;
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
 
-            // 🎯 1. Listen for local broadcast mutations from AgiPromptEditor / Canvas
+            // 🎯 Listen for local broadcast mutations from AgiPromptEditor, Move Tools, or Canvas
             this.contextBus.onmessage = function (event) {
                 if (!event.data) return;
+
+                // Handle external artifact relocation
+                if (event.data.event === 'artifact-relocated') {
+                    const oldUri = event.data.oldUri;
+                    const newUri = event.data.newUri;
+
+                    if (vm.localScreenPath === oldUri || !vm.localScreenPath) {
+                        console.info(`🚚 [AgiWorkspace] Switching active artifact path from ${oldUri} -> ${newUri}`);
+                        vm.executeArtifactSwitch({ value: newUri });
+                    }
+                    return;
+                }
+
+                if (event.data.event === 'open-screen-artifact' && event.data.artifactUri) {
+                    if (vm.localScreenPath !== event.data.artifactUri) {
+                        vm.executeArtifactSwitch({ value: event.data.artifactUri });
+                    }
+                    return;
+                }
 
                 if (event.data.event === 'element-selected-by-id' && event.data.mariaId) {
                     if (!event.data.mariaId.includes('agi-workspace-root') && !event.data.mariaId.includes('AgiWorkspace')) {
@@ -115,7 +136,6 @@
 
                 if (event.data?.event === 'open-service-artifact') {
                     vm.activeServiceUri = event.data.serviceUri || '';
-                    // Ensure AgiServiceEditor panel is visible and focused
                     if (!vm.activeScreens.includes('AgiServiceEditor')) {
                         vm.activeScreens.push('AgiServiceEditor');
                     }
@@ -126,7 +146,7 @@
             this.loadRequiredComponents();
             this.resolveTargetComponentAndPath();
 
-            // 🎯 2. Keyboard Handlers (Save Ctrl+S, Snapping Super+Arrows)
+            // Keyboard Handlers (Save Ctrl+S, Snapping Super+Arrows)
             this._keyHandler = (e) => {
                 if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
                     e.preventDefault();
@@ -137,7 +157,7 @@
             };
             window.addEventListener('keydown', this._keyHandler);
 
-            // 🎯 3. Prevent accidental tab closure if unsaved draft exists
+            // Prevent accidental tab closure if unsaved draft exists
             this._unloadHandler = (e) => {
                 if (vm.isDirty) {
                     e.preventDefault();
@@ -188,7 +208,7 @@
                                     DOMAIN APP
                                 </q-badge>
                                 <q-badge v-if="isDirty" color="amber-10" text-color="black" class="q-ml-sm text-caption font-mono text-weight-bold animate-pulse">
-                                    <q-icon name="warning" size="xs" class="q-mr-xs" /> UNSAVED DRAFT (*)
+                                    <q-icon name="warning" size="xs" class="q-mr-xs" /> 
                                 </q-badge>
                             </div>
                         </div>
@@ -236,7 +256,6 @@
                             @update:model-value="handleDisplayModeChange"
                         ></q-select>
                 
-                        <!-- Active Canvas Editors multi-select -->
                         <q-select
                             v-model="activeScreens"
                             :options="availableScreensOptions"
@@ -285,7 +304,6 @@
                         >
                             <q-tooltip class="bg-grey-10 text-caption">Browse and focus workspace artifacts</q-tooltip>
                         </q-btn>
-                        <!-- In AgiWorkspace.qvt.js Toolbar -->
                         <q-btn 
                             color="negative" 
                             flat
@@ -296,6 +314,16 @@
                             @click.stop="revertBufferToDisk"
                         >
                             <q-tooltip class="bg-grey-10 text-caption">Discard buffer draft and reload physical XML file from disk</q-tooltip>
+                        </q-btn>
+                        <q-btn 
+                            color="teal-8" 
+                            icon="science" 
+                            label="Tests" 
+                            dense 
+                            class="q-px-sm font-mono"
+                            @click.stop="triggerTestRunnerOverlay"
+                        >
+                            <q-tooltip class="bg-grey-10 text-caption">Run in-app test suites and verify invariants</q-tooltip>
                         </q-btn>
                     </div>
                 </div>
@@ -508,6 +536,7 @@
                 </div>
                 
                 <component :is="editorConstructors.AgiPromptEditor" v-if="loadedComponents.AgiPromptEditor"></component>
+                <component :is="editorConstructors.AgiTestRunner" v-if="loadedComponents.AgiTestRunner"></component>
                 <component :is="editorConstructors.AgiNewComponentWizard" v-if="loadedComponents.AgiNewComponentWizard"></component>
 
                 <!-- ARTIFACT PALETTE MODAL -->
@@ -666,6 +695,7 @@
                     { name: 'AgiIntentDetail', url: '/agi-ide-assets/AgiIntentDetail.qvt.js', globalVar: 'AgiIntentDetail' },
                     { name: 'AgiPromptEditor', url: '/agi-ide-assets/AgiPromptEditor.qvt.js', globalVar: 'AgiPromptEditor' },
                     { name: 'AgiInstructions', url: '/agi-ide-assets/AgiInstructions.qvt.js', globalVar: 'AgiInstructions' },
+                    { name: 'AgiTestRunner', url: '/agi-ide-assets/util/AgiTestRunner.qvt.js', globalVar: 'AgiTestRunner' },
                 ];
 
                 assets.forEach(asset => {
@@ -869,40 +899,30 @@
                 }
             },
 
-            // 🎯 REVERT BUFFER TO DISK
             async revertBufferToDisk() {
+                if (!this.localScreenPath) return;
+                if (!confirm(`Discard all unsaved draft changes and reload "${this.localScreenPath}" from disk?`)) return;
+
+                const headers = { 'moquiSessionToken': window.AGI_SERVER_CSRF_TOKEN || '' };
                 try {
-                    const headers = { 'X-CSRF-Token': window.AGI_SERVER_CSRF_TOKEN };
-                    const resp = await axios.post('/rest/s1/agi-ide/revertWorkspaceBuffer', {
+                    await axios.post('/rest/s1/agi-ide/clearWorkspaceBuffer', {
                         artifactUri: this.localScreenPath
                     }, { headers });
 
-                    if (resp.data?.status === 'SUCCESS' || resp.data?.metaJsonBuffer) {
-                        this.activeWorkspaceBuffer.metaJsonBuffer = resp.data.metaJsonBuffer;
-                        this.isDirty = false;
-
-                        const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
-                        if (ideStore && typeof ideStore.updateActiveBlueprint === 'function') {
-                            ideStore.updateActiveBlueprint({
-                                artifactUri: this.localScreenPath,
-                                blueprintTree: resp.data.metaJsonBuffer
-                            });
-                        }
-
-                        this.$q?.notify({
+                    this.isDirty = false;
+                    if (this.$q) {
+                        this.$q.notify({
                             type: 'info',
-                            message: 'Workspace buffer reverted to saved file on disk.'
+                            message: 'Buffer discarded. Reloaded from disk.'
                         });
                     }
+
+                    await this.hydrateWorkspaceBuffer();
                 } catch (err) {
-                    this.$q?.notify({
-                        type: 'negative',
-                        message: 'Failed to revert workspace buffer.'
-                    });
+                    console.error("Failed to clear workspace buffer:", err);
                 }
             },
 
-            // 🎯 MANUAL SAVE TO DISK (Ctrl+S)
             async handleChildEditorSave() {
                 const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
                 const activeBlueprint = ideStore ? ideStore.getActiveBlueprint : this.activeWorkspaceBuffer.metaJsonBuffer;
@@ -963,7 +983,6 @@
                 }
             },
 
-            // 🎯 ARTIFACT SELECTION & UNSAVED NAVIGATION GUARD
             onArtifactSelectedFromWorkspace(item) {
                 if (this.isDirty) {
                     this.pendingSwitchItem = item;
@@ -1028,32 +1047,14 @@
                     });
                 }
             },
-            async revertBufferToDisk() {
-                if (!this.localScreenPath) return;
-                if (!confirm(`Discard all unsaved draft changes and reload "${this.localScreenPath}" from disk?`)) return;
-
-                const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
-                try {
-                    await axios.post('/rest/s1/agi-ide/clearWorkspaceBuffer', {
-                        artifactUri: this.localScreenPath
-                    }, { headers });
-
-                    this.isDirty = false;
-                    if (this.$q) {
-                        this.$q.notify({
-                            type: 'info',
-                            message: 'Buffer discarded. Reloaded from disk.'
-                        });
-                    }
-
-                    // Force reload and re-parse from physical disk file
-                    await this.loadWorkspaceBuffer(this.localScreenPath, true);
-
-                } catch (err) {
-                    console.error("Failed to clear workspace buffer:", err);
+            triggerTestRunnerOverlay() {
+                if (this.contextBus) {
+                    this.contextBus.postMessage({
+                        event: 'open-test-runner'
+                    });
                 }
-            }
-        }
+            },
+        },
     };
 
     window.AgiWorkspace = AgiWorkspace;
