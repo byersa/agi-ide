@@ -2,7 +2,7 @@
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
-<!-- ===================================================================== -->
+    <!-- ===================================================================== -->
     <!-- CREATE SCREEN MCP TOOL SERVICE                                        -->
     <!-- ===================================================================== -->
     <service verb="create" noun="Screen" type="inline">
@@ -254,11 +254,32 @@ ${scriptIncludeTag}
                 }
 
                 // Cascade update all database references
-                def art = ec.entity.find("org.moqui.ai.AgiArtifact").condition("artifactPath", srcUri).one()
-                if (art) {
-                    art.artifactPath = tgtUri
-                    art.update()
-                    context.agiArtifactId = art.agiArtifactId
+                def existingTargetArt = ec.entity.find("org.moqui.ai.AgiArtifact").condition("artifactPath", tgtUri).one()
+                def srcArt = ec.entity.find("org.moqui.ai.AgiArtifact").condition("artifactPath", srcUri).one()
+
+                if (srcArt) {
+                    if (existingTargetArt && existingTargetArt.agiArtifactId != srcArt.agiArtifactId) {
+                        // 1. Unlink many-to-many junction entries
+                        ec.entity.find("org.moqui.ai.AgiArtifactWorkEffort")
+                            .condition("agiArtifactId", existingTargetArt.agiArtifactId)
+                            .deleteAll()
+
+                        // 2. Unlink foreign keys on WorkEffort
+                        def attachedWeList = ec.entity.find("mantle.work.effort.WorkEffort")
+                            .condition("agiArtifactId", existingTargetArt.agiArtifactId)
+                            .list()
+                        attachedWeList.each { we ->
+                            we.agiArtifactId = null
+                            we.update()
+                        }
+
+                        // 3. Delete stale target row to resolve unique index conflict
+                        existingTargetArt.delete()
+                    }
+
+                    srcArt.artifactPath = tgtUri
+                    srcArt.update()
+                    context.agiArtifactId = srcArt.agiArtifactId
                 }
 
                 def buffers = ec.entity.find("org.moqui.ai.WorkspaceBuffer").condition("artifactUri", srcUri).list()

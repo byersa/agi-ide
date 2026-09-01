@@ -186,7 +186,7 @@
                         let responseData = null;
 
                         if (step.action === 'INVOKE_TOOL' || step.action === 'INVOKE_SERVICE') {
-                            const resp = await axios.post('/rest/s1/agi-ide/mcp/runService', {
+                            const resp = await axios.post('/rest/s1/agi-ai/mcp/runService', {
                                 serviceName: step.serviceName,
                                 parameters: step.parameters || {}
                             }, { headers });

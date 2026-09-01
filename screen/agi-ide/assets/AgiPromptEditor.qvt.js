@@ -658,7 +658,7 @@
                 const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
 
                 try {
-                    const response = await axios.get('/rest/s1/agi-ide/mcp/tools', { headers });
+                    const response = await axios.get('/rest/s1/agi-ai/mcp/tools', { headers });
                     const data = response.data || {};
                     const rawTools = data.tools || [];
 
@@ -684,7 +684,7 @@
                 const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
 
                 try {
-                    const response = await axios.get('/rest/s1/agi-ide/mcp/resources', {
+                    const response = await axios.get('/rest/s1/agi-ai/mcp/resources', {
                         params: { category: 'screen', subCategory: 'archetype' },
                         headers: headers
                     });
@@ -715,7 +715,7 @@
                 }
 
                 try {
-                    const resp = await axios.get('/rest/s1/agi-ide/mcp/resources/content', {
+                    const resp = await axios.get('/rest/s1/agi-ai/mcp/resources/content', {
                         params: { uri: arch.uri },
                         headers: { 'moquiSessionToken': this.resolveCsrfToken() }
                     });
@@ -959,7 +959,7 @@
                 };
 
                 try {
-                    const response = await axios.post('/rest/s1/agi-ide/executeStagedAgentTurn', payload, { headers });
+                    const response = await axios.post('/rest/s1/agi-ai/executeStagedAgentTurn', payload, { headers });
                     this.isExecuting = false;
                     const res = response.data || {};
 
