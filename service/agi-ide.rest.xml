@@ -345,4 +345,7 @@
             <service name="org.moqui.ide.AgiTestRunnerServices.assert#ArtifactState"/>
         </method>
     </resource>
+    <resource name="deleteArtifactCascade">
+        <method type="post"><service name="org.moqui.ide.BlueprintServices.delete#ArtifactCascade"/></method>
+    </resource>
 </resource>

@@ -547,26 +547,23 @@
     <!-- UPDATE WORK EFFORT STATUS & RECALCULATE ROLLUPS                      -->
     <!-- ===================================================================== -->
     <service verb="update" noun="WorkEffortStatus" type="inline">
-        <description>Updates statusId on a WorkEffort node and triggers automatic parent rollup updates.</description>
         <in-parameters>
-            <parameter name="workEffortId" required="true"/>
+            <parameter name="workEffortId"/>
             <parameter name="statusId" required="true"/>
+            <parameter name="agiArtifactId"/>
         </in-parameters>
         <actions>
-            <script><![CDATA[
-                def weVal = ec.entity.find("mantle.work.effort.WorkEffort").condition("workEffortId", workEffortId).one()
-                if (weVal) {
-                    weVal.statusId = statusId
-                    weVal.update()
-
-                    // Trigger automatic telemetry recalculation for attached artifact
-                    if (weVal.agiArtifactId) {
-                        ec.service.sync().name("org.moqui.ide.BlueprintServices.get#ArtifactTelemetrySummary")
-                            .parameter("agiArtifactId", weVal.agiArtifactId)
-                            .call()
-                    }
-                }
-            ]]></script>
+            <if condition="!workEffortId">
+                <return/>
+            </if>
+            
+            <entity-find-one entity-name="mantle.work.effort.WorkEffort" value-field="weVal">
+                <field-map field-name="workEffortId"/>
+            </entity-find-one>
+            <if condition="!weVal"><return/></if>
+    
+            <set field="weVal.statusId" from="statusId"/>
+            <entity-update value-field="weVal"/>
         </actions>
     </service>
 
@@ -759,6 +756,95 @@
                 }
 
                 context.qmetaAst = convertToUiNode(widgetsNode)
+            ]]></script>
+        </actions>
+    </service>
+
+    <service verb="delete" noun="ArtifactCascade" type="inline" authenticate="anonymous-all">
+        <description>
+            Completely removes an AgiArtifact by URI/ID, cascading deletions through AgiPayloadFacet, 
+            AgiPayload, AgiArtifactWorkEffort, WorkEffort, and deleting the physical file on disk.
+        </description>
+        <in-parameters>
+            <parameter name="artifactUri" required="true"/>
+            <parameter name="deletePhysicalFile" type="Boolean" default="true"/>
+        </in-parameters>
+        <actions>
+            <script><![CDATA[
+                // 1. Locate the AgiArtifact record
+                def art = ec.entity.find("org.moqui.ai.AgiArtifact")
+                    .condition("artifactPath", artifactUri)
+                    .one()
+                
+                String artId = art?.agiArtifactId
+    
+                // Collect all target WorkEffort IDs linked to this artifact
+                Set<String> targetWeIds = new HashSet<>()
+    
+                if (artId) {
+                    // 2. Cascade delete child AgiPayloadFacet records
+                    def pldList = ec.entity.find("org.moqui.ai.payload.AgiPayload")
+                        .condition("agiArtifactId", artId)
+                        .list()
+    
+                    pldList.each { pld ->
+                        ec.entity.find("org.moqui.ai.payload.AgiPayloadFacet")
+                            .condition("agiPayloadId", pld.agiPayloadId)
+                            .deleteAll()
+                    }
+    
+                    // 3. Delete AgiPayload records
+                    ec.entity.find("org.moqui.ai.payload.AgiPayload")
+                        .condition("agiArtifactId", artId)
+                        .deleteAll()
+    
+                    // Collect from join table
+                    def weAssocList = ec.entity.find("org.moqui.ai.AgiArtifactWorkEffort")
+                        .condition("agiArtifactId", artId)
+                        .list()
+                    weAssocList.each { if (it.workEffortId) targetWeIds.add(it.workEffortId) }
+                }
+    
+                // Collect from sourceReferenceId
+                def weBySource = ec.entity.find("mantle.work.effort.WorkEffort")
+                    .condition("sourceReferenceId", artifactUri)
+                    .list()
+                weBySource.each { if (it.workEffortId) targetWeIds.add(it.workEffortId) }
+    
+                // 4. Delete ALL join table references pointing to ANY of these WorkEfforts first
+                if (targetWeIds) {
+                    ec.entity.find("org.moqui.ai.AgiArtifactWorkEffort")
+                        .condition("workEffortId", "in", targetWeIds)
+                        .deleteAll()
+                }
+    
+                // Also clean up any lingering join records linked to this AgiArtifact ID
+                if (artId) {
+                    ec.entity.find("org.moqui.ai.AgiArtifactWorkEffort")
+                        .condition("agiArtifactId", artId)
+                        .deleteAll()
+                }
+    
+                // 5. Safely delete the WorkEffort records now that no join rows reference them
+                if (targetWeIds) {
+                    ec.entity.find("mantle.work.effort.WorkEffort")
+                        .condition("workEffortId", "in", targetWeIds)
+                        .deleteAll()
+                }
+    
+                // 6. Delete the AgiArtifact root record
+                if (art) {
+                    art.delete()
+                }
+    
+                // 7. Physical file removal
+                if (deletePhysicalFile) {
+                    org.moqui.resource.ResourceReference rr = ec.resource.getLocationReference(artifactUri)
+                    if (rr != null && rr.getExists()) {
+                        rr.delete()
+                        ec.logger.info("🗑️ Deleted physical artifact file: ${artifactUri}")
+                    }
+                }
             ]]></script>
         </actions>
     </service>

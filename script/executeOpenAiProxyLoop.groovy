@@ -88,6 +88,10 @@ CRITICAL RULES & TOOL CONTRACT:
     2. 'metaJsonData': A valid JSON string containing the complete AST tree object.
 - NEVER call tools with empty or null required arguments.
 - If a tool reports an error or validation failure, read the error message, correct your parameters, and call the tool again.
+XML Syntax Directive: 
+- Always emit standard W3C XML attributes without leading @ characters 
+  (e.g., name="...", not @name="..."). Place all screen <parameter> tags directly under <screen>,
+   preceding <actions> and <widgets>.
 """
 
 StringBuilder userPromptBuilder = new StringBuilder()
