@@ -10,6 +10,7 @@
                         <div class="row items-center q-gutter-x-sm">
                             <q-icon name="science" color="cyan-4" size="sm" />
                             <span class="text-subtitle2 text-weight-bold font-mono">AGI IN-APP TEST RUNNER</span>
+                            <q-badge :color="testStatusColor" :label="testStatusText" class="q-ml-xs font-mono" />
                         </div>
                         <div class="row items-center q-gutter-x-xs">
                             <q-btn flat dense size="xs" color="cyan-4" icon="refresh" label="Rescan Suites" @click="fetchSuites" />
@@ -34,7 +35,7 @@
                                     class="q-pa-xs rounded-borders q-my-xs"
                                 >
                                     <q-item-section avatar min-width="24px">
-                                        <q-icon name="playlist_play" color="cyan-4" size="xs" />
+                                        <q-icon name="fact_check" color="cyan-4" size="xs" />
                                     </q-item-section>
                                     <q-item-section>
                                         <q-item-label class="font-mono text-caption text-weight-bold">{{ suite.suiteName }}</q-item-label>
@@ -43,16 +44,16 @@
                                 </q-item>
                                 <q-item v-if="testSuites.length === 0" class="q-pa-xs">
                                     <q-item-section class="text-grey-5 italic text-center font-mono" style="font-size: 10px;">
-                                        No test manifests found under test/manifest/
+                                        No test manifests found in mcp/manifests/
                                     </q-item-section>
                                 </q-item>
                             </q-list>
 
                             <div class="q-mt-md" v-if="selectedSuite">
                                 <q-btn 
-                                    color="positive" 
+                                    color="teal-8" 
                                     icon="play_arrow" 
-                                    label="Run Suite" 
+                                    label="Execute Suite (AamTest)" 
                                     no-caps 
                                     class="full-width font-mono text-weight-bold" 
                                     :loading="isRunning"
@@ -66,18 +67,20 @@
                             <div class="row items-center justify-between q-mb-xs">
                                 <div class="row items-center q-gutter-x-xs text-caption font-mono text-weight-bold text-cyan-4">
                                     <q-icon name="terminal" size="xs" />
-                                    <span>TEST EXECUTION OUTPUT &amp; ASSERTIONS</span>
+                                    <span>UNIFIED TEST OUTPUT &amp; ASSERTIONS</span>
                                 </div>
-                                <q-badge :color="testStatusColor">{{ testStatusText }}</q-badge>
+                                <span class="text-caption font-mono text-grey-5" style="font-size: 11px;">
+                                    Target: {{ selectedSuite ? selectedSuite.targetComponent || 'nursinghome' : 'Global' }}
+                                </span>
                             </div>
 
                             <!-- Terminal Console Log Box -->
                             <div class="col full-width font-mono text-caption q-pa-sm rounded-borders bg-black overflow-y-auto" style="border: 1px solid #334155; font-size: 11px; line-height: 16px;">
-                                <div v-for="(log, idx) in executionLogs" :key="idx" :class="log.type === 'error' ? 'text-negative' : (log.type === 'success' ? 'text-positive' : 'text-grey-3')">
+                                <div v-for="(log, idx) in executionLogs" :key="idx" :class="log.type === 'error' ? 'text-negative' : (log.type === 'success' ? 'text-positive' : (log.type === 'warn' ? 'text-amber-4' : 'text-grey-3'))">
                                     <span>[{{ log.timestamp }}]</span> {{ log.message }}
                                 </div>
                                 <div v-if="executionLogs.length === 0" class="text-grey-6 italic">
-                                    Select a test suite and click 'Run Suite' to begin execution...
+                                    Select a test manifest and click 'Execute Suite' to run declarative assertions...
                                 </div>
                             </div>
 
@@ -161,22 +164,48 @@
 
                 const manifest = this.selectedSuite.manifest;
                 const steps = manifest.steps || [];
+                const targetComp = manifest.targetComponent || this.selectedSuite.targetComponent || 'nursinghome';
 
                 this.isRunning = true;
                 this.executionLogs = [];
                 this.passedStepsCount = 0;
                 this.totalStepsCount = steps.length;
                 this.testStatusText = 'RUNNING';
-                this.testStatusColor = 'warning';
+                this.testStatusColor = 'amber-9';
 
-                this.logMessage(`🚀 Starting Test Suite: ${manifest.suiteName}`);
-                this.logMessage(`📋 Description: ${manifest.description}`);
+                this.logMessage(`🚀 Initializing Test Suite: ${manifest.suiteName || this.selectedSuite.suiteName}`);
+                this.logMessage(`📋 Target: ${targetComp} | Steps: ${steps.length}`);
 
                 const headers = {
                     'moquiSessionToken': this.resolveCsrfToken(),
                     'Content-Type': 'application/json'
                 };
 
+                // 1. Stage initial AgiPayload in agi-ai (Mode: test)
+                let activePayloadId = null;
+                try {
+                    const initPayloadResp = await axios.post('/rest/s1/agi-ai/payload', {
+                        mode: 'test',
+                        targetComponent: targetComp,
+                        title: `Suite: ${manifest.suiteName || this.selectedSuite.fileName}`,
+                        userPromptText: manifest.description || 'Automated lifecycle test execution',
+                        facets: {
+                            suiteFile: this.selectedSuite.fileName,
+                            stepCount: steps.length.toString()
+                        },
+                        payload: { manifest: manifest }
+                    }, { headers });
+
+                    if (initPayloadResp.data?.agiPayloadId) {
+                        activePayloadId = initPayloadResp.data.agiPayloadId;
+                        this.logMessage(`📦 Staged AgiPayload [${activePayloadId}] (Status: ${initPayloadResp.data.statusId})`);
+                    }
+                } catch (pldErr) {
+                    this.logMessage(`⚠️ Could not stage payload envelope in agi-ai: ${pldErr.message}`, 'warn');
+                }
+
+                // 2. Execute Steps
+                let suiteFailed = false;
                 for (let i = 0; i < steps.length; i++) {
                     const step = steps[i];
                     this.logMessage(`▶️ [Step ${i + 1}/${steps.length}] ${step.title} (${step.stepId})...`);
@@ -215,6 +244,7 @@
                             responseData = saveResp.data?.results || saveResp.data || {};
                         }
 
+                        // Evaluate Assertions
                         if (step.assertions) {
                             const resolvedUri = step.assertions.targetUri
                                 || step.artifactUri
@@ -222,7 +252,7 @@
                                 || step.parameters?.artifactUri
                                 || step.parameters?.targetArtifactUri
                                 || step.parameters?.artifactLocation
-                                || (step.parameters?.screenPath ? `component://${step.parameters.targetComponent || 'nursinghome'}/screen/${step.parameters.targetComponent || 'nursinghome'}/${step.parameters.screenPath.replace(/^\//, '')}.xml` : null);
+                                || (step.parameters?.screenPath ? `component://${targetComp}/screen/${targetComp}/${step.parameters.screenPath.replace(/^\//, '')}.xml` : null);
 
                             const assertResp = await axios.get('/rest/s1/agi-ide/assertArtifactState', {
                                 params: {
@@ -246,24 +276,43 @@
                             this.logMessage(`✅ Step ${step.stepId} PASSED.`, 'success');
                         } else {
                             this.logMessage(`❌ Step ${step.stepId} FAILED assertions.`, 'error');
+                            suiteFailed = true;
                             break;
                         }
 
                     } catch (stepErr) {
                         this.logMessage(`❌ Exception in step ${step.stepId}: ${stepErr.response?.data?.errors || stepErr.message}`, 'error');
+                        suiteFailed = true;
                         break;
                     }
                 }
 
                 this.isRunning = false;
-                if (this.passedStepsCount === this.totalStepsCount) {
-                    this.testStatusText = 'PASSED';
-                    this.testStatusColor = 'positive';
+                const finalStatus = (!suiteFailed && this.passedStepsCount === this.totalStepsCount) ? 'PASSED' : 'FAILED';
+                this.testStatusText = finalStatus;
+                this.testStatusColor = finalStatus === 'PASSED' ? 'positive' : 'negative';
+
+                if (finalStatus === 'PASSED') {
                     this.logMessage(`🎉 All ${this.totalStepsCount} test steps passed successfully!`, 'success');
                 } else {
-                    this.testStatusText = 'FAILED';
-                    this.testStatusColor = 'negative';
                     this.logMessage(`⚠️ Test suite completed with failures (${this.passedStepsCount}/${this.totalStepsCount} passed).`, 'error');
+                }
+
+                // 3. Commit Execution Results back to AgiPayload
+                if (activePayloadId) {
+                    try {
+                        await axios.post('/rest/s1/agi-ai/payload', {
+                            agiPayloadId: activePayloadId,
+                            mode: 'test',
+                            targetComponent: targetComp,
+                            payload: {
+                                finalStatus: finalStatus,
+                                passedSteps: this.passedStepsCount,
+                                totalSteps: this.totalStepsCount,
+                                executionLogs: this.executionLogs
+                            }
+                        }, { headers });
+                    } catch (ignore) { }
                 }
             }
         }

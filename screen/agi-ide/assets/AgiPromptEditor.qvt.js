@@ -35,19 +35,20 @@
             <q-dialog v-model="isOpen" position="top" @hide="onDialogClosed">
                 <q-card class="agi-prompt-editor-card bg-slate-900 shadow-24 q-mt-sm column no-wrap" style="width: 1240px; max-width: 96vw; height: 90vh;">
                     
-                    <!-- 1. STUDIO HEADER: BREADCRUMB FOCUS COORDINATE -->
+                    <!-- 1. STUDIO HEADER: ASSIST MODE SELECTOR & COORDINATE -->
                     <q-card-section class="q-pa-xs bg-slate-950 row items-center justify-between border-bottom-dark" style="border-bottom: 1px solid #334155;">
                         <div class="row items-center q-gutter-x-sm">
                             <q-icon name="psychology" color="primary" size="sm" />
                             <span class="text-subtitle2 text-weight-bold font-mono">AGI COMMAND STUDIO</span>
+                            <q-badge :color="statusColor" :label="payloadState.statusId" class="q-ml-xs font-mono" />
                         </div>
-                    
+
+                        <!-- Breadcrumb Focus Coordinate -->
                         <div class="col q-mx-md row items-center no-wrap overflow-hidden">
                             <q-breadcrumbs active-color="purple-3" class="text-caption font-mono text-grey-4" separator-color="grey-6">
                                 <template v-slot:separator>
                                     <q-icon size="10px" name="chevron_right" color="grey-6" />
                                 </template>
-                    
                                 <q-breadcrumbs-el 
                                     v-for="(crumb, idx) in breadcrumbSegments" 
                                     :key="idx" 
@@ -57,8 +58,48 @@
                                 />
                             </q-breadcrumbs>
                         </div>
-                    
+
+                        <!-- Mode Selector and Quick Actions -->
                         <div class="row items-center q-gutter-x-xs">
+                            <q-select
+                                v-model="currentMode"
+                                :options="assistModes"
+                                emit-value
+                                map-options
+                                dense
+                                outlined
+                                color="primary"
+                                bg-color="slate-800"
+                                style="min-width: 155px"
+                                class="font-mono text-caption"
+                                @update:model-value="onModeChange"
+                            >
+                                <template v-slot:option="scope">
+                                    <q-item v-bind="scope.itemProps" dense>
+                                        <q-item-section avatar min-width="24px">
+                                            <q-icon :name="scope.opt.icon" :color="scope.opt.color" size="xs" />
+                                        </q-item-section>
+                                        <q-item-section>
+                                            <q-item-label class="text-caption font-mono">{{ scope.opt.label }}</q-item-label>
+                                            <q-item-label caption class="text-grey-5" style="font-size: 9px;">{{ scope.opt.caption }}</q-item-label>
+                                        </q-item-section>
+                                    </q-item>
+                                </template>
+                            </q-select>
+
+                            <q-btn
+                                v-if="currentMode === 'plan' || currentMode === 'discuss'"
+                                flat
+                                dense
+                                color="amber-4"
+                                icon="upgrade"
+                                label="Promote to Build"
+                                class="font-mono text-caption"
+                                @click="promoteToBuild"
+                            >
+                                <q-tooltip>Promote active prompt and facets into a direct Build Payload</q-tooltip>
+                            </q-btn>
+
                             <q-btn flat dense round icon="manage_search" size="xs" color="cyan-4" @click="showPalette = !showPalette">
                                 <q-tooltip>Browse / Switch Focus Artifact</q-tooltip>
                             </q-btn>
@@ -77,7 +118,7 @@
                         </div>
                     </q-slide-transition>
 
-                    <!-- 2. OVERARCHING TASK PROMPT & DISPATCH BAR -->
+                    <!-- 2. TASK PROMPT & DISPATCH BAR -->
                     <div class="bg-slate-950 q-pa-sm border-bottom-dark" style="border-bottom: 1px solid #334155;">
                         <div class="row items-start q-col-gutter-sm">
                             <div class="col">
@@ -86,7 +127,7 @@
                                     v-model="userPrompt" 
                                     type="textarea"
                                     rows="2"
-                                    placeholder="Type task prompt or '/' for MCP tools (e.g. 'Generate room lookup screen using lookup-modal archetype')..." 
+                                    :placeholder="modePromptPlaceholder" 
                                     outlined 
                                     dense 
                                     bg-color="slate-900"
@@ -99,9 +140,9 @@
                             </div>
                             <div class="col-auto column q-gutter-y-xs">
                                 <q-btn 
-                                    color="positive" 
-                                    icon="bolt" 
-                                    label="Dispatch Turn" 
+                                    :color="modeActionColor" 
+                                    :icon="modeActionIcon" 
+                                    :label="modeActionLabel" 
                                     no-caps 
                                     class="q-px-md font-mono text-weight-bold full-width" 
                                     style="height: 38px;"
@@ -110,7 +151,7 @@
                                 />
                                 <div class="row items-center justify-between text-caption font-mono text-grey-5" style="font-size: 10px;">
                                     <span>Ctrl+Enter</span>
-                                    <q-btn flat dense size="xs" color="cyan-4" icon="refresh" label="Reset Buffer" @click="syncControlsToAssemblyBuffer" />
+                                    <q-btn flat dense size="xs" color="cyan-4" icon="refresh" label="Re-sync" @click="syncControlsToAssemblyBuffer" />
                                 </div>
                             </div>
                         </div>
@@ -167,12 +208,44 @@
                     <!-- 3. TWO-PANE MAIN WORKSPACE -->
                     <div class="col row no-wrap overflow-hidden bg-slate-900">
                         
-                        <!-- ========================================================================= -->
-                        <!-- LEFT PANE: GROUNDING CONTROLS (42% Width)                                 -->
-                        <!-- ========================================================================= -->
+                        <!-- LEFT PANE: GROUNDING CONTROLS & FACETS (42% Width) -->
                         <div class="col-5 column no-wrap border-right-dark bg-slate-950 q-pa-sm" style="border-right: 1px solid #334155; overflow-y: auto;">
                             
-                            <!-- A. TARGET SCOPE & FOCUS COORDINATE (WHERE) -->
+                            <!-- A. INTENT FACETS BAR (PLAN / DISCUSS / BUILD) -->
+                            <div class="q-mb-xs q-pa-xs rounded-borders bg-slate-900" style="border: 1px solid #334155;">
+                                <div class="row items-center justify-between q-px-xs q-mb-xs">
+                                    <div class="row items-center q-gutter-x-xs text-caption font-mono text-weight-bold text-amber-4">
+                                        <q-icon name="local_offer" size="xs" />
+                                        <span>INTENT FACETS &amp; PHI TAGS</span>
+                                    </div>
+                                    <span class="text-caption font-mono text-grey-5" style="font-size: 9px;">Mode: {{ currentMode }}</span>
+                                </div>
+
+                                <div class="q-pa-xs font-mono text-caption">
+                                    <div class="row items-center q-gutter-xs q-mb-xs">
+                                        <q-chip 
+                                            v-for="(val, key) in payloadState.facets" 
+                                            :key="key" 
+                                            dense size="sm" 
+                                            removable
+                                            color="slate-800" 
+                                            text-color="teal-3"
+                                            class="font-mono text-caption"
+                                            @remove="removeFacet(key)"
+                                        >
+                                            <strong>{{ key }}:</strong>&nbsp;{{ val }}
+                                        </q-chip>
+                                    </div>
+
+                                    <div class="row items-center q-gutter-xs">
+                                        <q-input v-model="newFacetKey" placeholder="key" dense outlined dark class="col" style="font-size: 10px;" />
+                                        <q-input v-model="newFacetVal" placeholder="val" dense outlined dark class="col" style="font-size: 10px;" />
+                                        <q-btn dense flat round icon="add" size="xs" color="amber-4" @click="addFacet" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- B. TARGET SCOPE & FOCUS COORDINATE -->
                             <div class="q-mb-xs q-pa-xs rounded-borders bg-slate-900" style="border: 1px solid #334155;">
                                 <div class="row items-center justify-between q-px-xs q-mb-xs">
                                     <div class="row items-center q-gutter-x-xs text-caption font-mono text-weight-bold text-cyan-4">
@@ -207,7 +280,7 @@
                                 </div>
                             </div>
 
-                            <!-- B. ARCHETYPES & MCP RESOURCES (STRUCTURE) -->
+                            <!-- C. CANONICAL ARCHETYPES -->
                             <q-expansion-item 
                                 default-opened dense
                                 header-class="bg-slate-900 text-cyan-4 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
@@ -240,7 +313,6 @@
                                         </div>
                                     </div>
 
-                                    <!-- Quick Archetype Preview Drawer -->
                                     <q-expansion-item 
                                         v-if="selectedArchetypePreview" 
                                         dense 
@@ -253,7 +325,7 @@
                                 </div>
                             </q-expansion-item>
 
-                            <!-- C. DATA GROUNDING & ENTITY MODEL (DATA) -->
+                            <!-- D. DATA GROUNDING & ENTITY SCHEMAS -->
                             <q-expansion-item 
                                 default-opened dense
                                 header-class="bg-slate-900 text-teal-4 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
@@ -284,7 +356,6 @@
                                         </q-item>
                                     </q-list>
 
-                                    <!-- AST & XML Inclusion Checkboxes -->
                                     <div class="row items-center q-gutter-x-xs q-mt-xs">
                                         <q-checkbox v-model="includeFullAst" dense dark color="cyan-4" label="Full Screen AST" @update:model-value="syncControlsToAssemblyBuffer" />
                                         <q-checkbox v-model="includeRawXml" dense dark color="cyan-4" label="Raw XML" @update:model-value="syncControlsToAssemblyBuffer" />
@@ -292,7 +363,7 @@
                                 </div>
                             </q-expansion-item>
 
-                            <!-- D. BUSINESS INTENT HIERARCHY (WHY) -->
+                            <!-- E. BUSINESS INTENT THREADS -->
                             <q-expansion-item 
                                 default-opened dense
                                 header-class="bg-slate-900 text-purple-3 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
@@ -328,7 +399,7 @@
                                 </div>
                             </q-expansion-item>
 
-                            <!-- E. GOVERNANCE RULES -->
+                            <!-- F. GOVERNANCE RULES -->
                             <q-expansion-item 
                                 default-opened dense
                                 header-class="bg-slate-900 text-amber-4 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
@@ -350,7 +421,7 @@
                                 </div>
                             </q-expansion-item>
 
-                            <!-- F. PROVENANCE & HISTORY -->
+                            <!-- G. PROVENANCE & PAYLOAD HISTORY -->
                             <q-expansion-item 
                                 dense
                                 header-class="bg-slate-900 text-grey-4 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
@@ -362,7 +433,7 @@
                                         <q-item v-for="(hist, idx) in promptHistory" :key="idx" class="q-pa-xs">
                                             <q-item-section>
                                                 <div class="row items-center justify-between">
-                                                    <span class="font-mono text-caption text-primary" style="font-size: 10px;">{{ hist.timestamp }}</span>
+                                                    <span class="font-mono text-caption text-primary" style="font-size: 10px;">{{ hist.timestamp }} ({{ hist.mode || 'build' }})</span>
                                                     <q-btn flat dense size="xs" color="secondary" icon="tune" label="Fork" @click="forkHistoryTurn(hist)" />
                                                 </div>
                                                 <div class="text-slate-300 font-mono ellipsis" style="font-size: 11px;">{{ hist.text }}</div>
@@ -375,28 +446,43 @@
 
                         </div>
 
-                        <!-- ========================================================================= -->
-                        <!-- RIGHT PANE: STAGED RAG ASSEMBLY BUFFER (58% Width - EDITABLE)             -->
-                        <!-- ========================================================================= -->
+                        <!-- RIGHT PANE: ADAPTIVE VIEWPORTS & ASSEMBLY BUFFER (58% Width) -->
                         <div class="col-7 column no-wrap bg-slate-900 q-pa-sm justify-between">
                             
                             <div class="row items-center justify-between q-mb-xs">
                                 <div class="row items-center q-gutter-x-xs text-caption font-mono text-weight-bold text-cyan-4">
-                                    <q-icon name="terminal" size="xs" />
-                                    <span>STAGED RAG ASSEMBLY BUFFER (EDITABLE GROUNDING)</span>
+                                    <q-icon :name="modeViewportIcon" size="xs" />
+                                    <span>{{ modeViewportTitle }}</span>
                                 </div>
-                                <span class="text-caption font-mono text-grey-5" style="font-size: 11px;">Exact payload synthesized for Agent</span>
+                                <span class="text-caption font-mono text-grey-5" style="font-size: 11px;">
+                                    Payload Target: {{ targetArtifactId ? 'AgiArtifact #' + targetArtifactId : 'Root Intent' }}
+                                </span>
                             </div>
 
-                            <!-- Editable Unified Buffer Textarea -->
+                            <!-- 1. TEST MODE SPECIFIC VIEWPORT -->
+                            <div v-if="currentMode === 'test'" class="col column q-gutter-y-xs">
+                                <div class="row items-center justify-between text-caption font-mono text-grey-4">
+                                    <span>Declarative Test Manifest Pipeline (JSON):</span>
+                                    <q-btn flat dense size="xs" color="teal-4" icon="add" label="Template Assertion" @click="addTestStepTemplate" />
+                                </div>
+                                <textarea 
+                                    v-model="testManifestJsonText"
+                                    class="col full-width font-mono text-caption q-pa-sm rounded-borders"
+                                    style="background-color: #020617; color: #5eead4; border: 1px solid #115e59; resize: none; font-size: 11px; line-height: 16px;"
+                                    placeholder='[ { "stepId": "01_ASSERT", "action": "ASSERT_STATE", "assertions": { "expectFileExists": true } } ]'
+                                ></textarea>
+                            </div>
+
+                            <!-- 2. DEFAULT ASSEMBLY BUFFER VIEWPORT (PLAN, BUILD, ORCHESTRATE, DISCUSS, QUERY, HISTORY) -->
                             <textarea 
+                                v-else
                                 v-model="stagedAssemblyBuffer"
                                 class="col full-width font-mono text-caption q-pa-sm rounded-borders"
                                 style="background-color: #020617; color: #f8fafc; border: 1px solid #334155; resize: none; font-size: 11px; line-height: 16px; font-family: monospace;"
                                 placeholder="/* Staged assembly buffer automatically populates from left controls. You can make ad-hoc edits directly here before dispatching... */"
                             ></textarea>
 
-                            <!-- Bottom Status Summary -->
+                            <!-- Bottom Telemetry & Status Bar -->
                             <div class="q-mt-xs q-pa-xs bg-slate-950 rounded-borders row items-center justify-between text-caption font-mono text-grey-4" style="border: 1px solid #1e293b;">
                                 <div class="row items-center q-gutter-x-sm">
                                     <q-badge color="purple-8">{{ includeTargetCoordinate && focusedElementId ? 'Target: <' + displayTargetTag + '>' : 'Root Target' }}</q-badge>
@@ -405,7 +491,7 @@
                                     <q-badge color="deep-purple-8">{{ selectedIntents.length }} Intents</q-badge>
                                     <q-badge color="secondary">{{ activeRulesCount }} Rules</q-badge>
                                 </div>
-                                <span style="font-size: 11px;">Ready for Agent Compilation</span>
+                                <span style="font-size: 11px;">FSM Mode: <strong class="text-white">{{ currentMode.toUpperCase() }}</strong></span>
                             </div>
 
                         </div>
@@ -418,6 +504,7 @@
         data() {
             return {
                 isOpen: false,
+                currentMode: 'build',
                 userPrompt: '',
                 targetComponent: 'nursinghome',
                 activeArtifactLocation: '',
@@ -433,6 +520,30 @@
                 rawXmlSource: '',
                 promptHistory: [],
                 registeredCommands: [],
+
+                // Assist Modes FSM Definitions
+                assistModes: [
+                    { label: 'Plan', value: 'plan', icon: 'lightbulb', color: 'amber-4', caption: 'Ad-hoc Formulation' },
+                    { label: 'Build', value: 'build', icon: 'build', color: 'primary', caption: 'Direct Artifact Mutation' },
+                    { label: 'Orchestrate', value: 'orchestrate', icon: 'hub', color: 'purple-4', caption: 'Large Model Management' },
+                    { label: 'Test', value: 'test', icon: 'fact_check', color: 'teal-4', caption: 'Lifecycle Assertions' },
+                    { label: 'Query', value: 'query', icon: 'analytics', color: 'blue-4', caption: 'Data & Reporting' },
+                    { label: 'History', value: 'history', icon: 'history', color: 'orange-4', caption: 'Audit & Pruning' },
+                    { label: 'Discuss', value: 'discuss', icon: 'forum', color: 'green-4', caption: 'Intent & ADR Synthesis' }
+                ],
+
+                // AgiPayload Envelope State
+                payloadState: {
+                    agiPayloadId: null,
+                    statusId: 'PlsDraft',
+                    facets: {
+                        hipaa: 'true',
+                        domain: 'clinical'
+                    }
+                },
+                newFacetKey: '',
+                newFacetVal: '',
+                testManifestJsonText: '',
 
                 // Archetypes & MCP Resources
                 availableArchetypes: [],
@@ -456,6 +567,77 @@
             };
         },
         computed: {
+            statusColor() {
+                const map = {
+                    PlsDraft: 'grey-7',
+                    PlsStaged: 'amber-9',
+                    PlsExecuting: 'blue-8',
+                    PlsCommitted: 'positive',
+                    PlsFailed: 'negative'
+                };
+                return map[this.payloadState.statusId] || 'grey-7';
+            },
+
+            modePromptPlaceholder() {
+                switch (this.currentMode) {
+                    case 'plan': return "Draft ad-hoc ideas or architecture changes (creates build payload)...";
+                    case 'build': return "Type task prompt or '/' for MCP tools (e.g. 'Generate room lookup screen using lookup-modal archetype')...";
+                    case 'test': return "Enter test scenario description or assertion objective...";
+                    case 'discuss': return "Enter architectural decisions, trade-offs, or intent notes...";
+                    case 'query': return "Enter clinical data query or entity reporting parameters...";
+                    default: return "Type task prompt or '/' for MCP tools...";
+                }
+            },
+
+            modeActionLabel() {
+                switch (this.currentMode) {
+                    case 'plan': return 'Save Plan';
+                    case 'build': return 'Dispatch Turn';
+                    case 'test': return 'Execute Suite';
+                    case 'discuss': return 'Log Discussion';
+                    case 'query': return 'Run Query';
+                    default: return 'Process Turn';
+                }
+            },
+
+            modeActionIcon() {
+                switch (this.currentMode) {
+                    case 'plan': return 'lightbulb';
+                    case 'build': return 'bolt';
+                    case 'test': return 'fact_check';
+                    case 'discuss': return 'forum';
+                    default: return 'send';
+                }
+            },
+
+            modeActionColor() {
+                switch (this.currentMode) {
+                    case 'plan': return 'amber-9';
+                    case 'build': return 'positive';
+                    case 'test': return 'teal-8';
+                    case 'discuss': return 'green-8';
+                    default: return 'primary';
+                }
+            },
+
+            modeViewportTitle() {
+                switch (this.currentMode) {
+                    case 'test': return 'STAGED TEST MANIFEST & ASSERTIONS';
+                    case 'discuss': return 'INTENT NARRATIVE & DECISION LEDGER';
+                    case 'plan': return 'AD-HOC PLANNING ASSEMBLY BUFFER';
+                    default: return 'STAGED RAG ASSEMBLY BUFFER (EDITABLE GROUNDING)';
+                }
+            },
+
+            modeViewportIcon() {
+                switch (this.currentMode) {
+                    case 'test': return 'fact_check';
+                    case 'discuss': return 'forum';
+                    case 'plan': return 'lightbulb';
+                    default: return 'terminal';
+                }
+            },
+
             displayTargetTag() {
                 if (!this.focusedElementId) return 'screen';
                 const parts = this.focusedElementId.split('#');
@@ -607,6 +789,51 @@
                     || "";
             },
 
+            onModeChange(newMode) {
+                if (newMode === 'test' && !this.testManifestJsonText) {
+                    this.addTestStepTemplate();
+                }
+            },
+
+            promoteToBuild() {
+                this.currentMode = 'build';
+                this.$q.notify({
+                    type: 'info',
+                    message: 'Promoted prompt and context into Build Payload mode.',
+                    position: 'top-right',
+                    timeout: 1500
+                });
+            },
+
+            addFacet() {
+                if (!this.newFacetKey) return;
+                this.payloadState.facets[this.newFacetKey.trim()] = (this.newFacetVal || '').trim();
+                this.newFacetKey = '';
+                this.newFacetVal = '';
+            },
+
+            removeFacet(key) {
+                delete this.payloadState.facets[key];
+            },
+
+            addTestStepTemplate() {
+                const template = [
+                    {
+                        stepId: '01_VERIFY_FILE',
+                        title: 'Verify File Existence on Disk',
+                        action: 'ASSERT_STATE',
+                        assertions: { expectFileExists: true }
+                    },
+                    {
+                        stepId: '02_VERIFY_BUFFER',
+                        title: 'Verify WorkspaceBuffer AST Presence',
+                        action: 'ASSERT_STATE',
+                        assertions: { expectBufferExists: true }
+                    }
+                ];
+                this.testManifestJsonText = JSON.stringify(template, null, 2);
+            },
+
             clearFocusedCoordinate() {
                 this.focusedElementId = '';
                 this.includeTargetCoordinate = false;
@@ -652,7 +879,6 @@
                 this.commandParamValues = {};
             },
 
-            // Fetch Dynamic MCP Tools via REST
             async fetchDynamicTools() {
                 const vm = this;
                 const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
@@ -678,7 +904,6 @@
                 }
             },
 
-            // Fetch MCP Archetype Resources via REST
             async fetchMcpArchetypes() {
                 const vm = this;
                 const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
@@ -765,7 +990,7 @@
                     vm.rawAstObject = null;
                 }
 
-                // 2. Fetch Entity Definitions via Backend Introspection Service
+                // 2. Fetch Entity Grounding
                 try {
                     const entityResp = await axios.get('/rest/s1/agi-ide/getScreenEntityGrounding', {
                         params: { artifactUri: artifactUri },
@@ -796,7 +1021,6 @@
                 vm.syncControlsToAssemblyBuffer();
             },
 
-            // 🎯 SYNTHESIS ENGINE: Synthesizes Archetypes, Schemas, Entities, and AST into Assembly Buffer
             syncControlsToAssemblyBuffer() {
                 const lines = [];
 
@@ -840,7 +1064,7 @@
                     lines.push("");
                 }
 
-                // 2. Canonical Archetypes (Blueprints)
+                // 2. Canonical Archetypes
                 const activeArchs = this.availableArchetypes.filter(a => a.selected);
                 if (activeArchs.length > 0) {
                     lines.push("/* ========================================================================= */");
@@ -908,7 +1132,6 @@
                     lines.push("");
                 }
 
-                // 6. Ad-hoc Directives Workspace
                 lines.push("/* ========================================================================= */");
                 lines.push("/* [6. AD-HOC SYSTEM DIRECTIVES & NOTES] (Type custom notes below)           */");
                 lines.push("/* ========================================================================= */");
@@ -916,7 +1139,7 @@
                 this.stagedAssemblyBuffer = lines.join("\n");
             },
 
-            // 🎯 DISPATCH TURN: Sends Prompt + Editable Staged Assembly Buffer to Agent
+            // 🎯 DISPATCH TURN: Synchronizes via McpPayloadServices.process#Payload and executes
             async handleDirectDispatch() {
                 if (!this.userPrompt.trim()) return;
 
@@ -930,36 +1153,72 @@
                     'Content-Type': 'application/json'
                 };
 
-                const activeEntityRag = (this.detectedEntities || []).filter(e => e.enabled).map(e => ({
-                    category: 'ENTITY_SCHEMA',
-                    title: e.entityName,
-                    snippet: `Fields: ${Object.keys(e.fields || {}).join(', ')}`,
-                    enabled: true
-                }));
+                // Prepare Structured Payload envelope
+                let innerPayload = {};
+                if (this.currentMode === 'test' && this.testManifestJsonText.trim()) {
+                    try {
+                        innerPayload.testManifest = JSON.parse(this.testManifestJsonText);
+                    } catch (e) {
+                        this.$q.notify({ type: 'negative', message: 'Invalid JSON in Test Manifest.' });
+                        this.isExecuting = false;
+                        return;
+                    }
+                }
 
-                const payload = {
-                    artifactUri: previousFileUri,
+                // Stage AgiPayload Envelope
+                const payloadEnvelope = {
+                    agiPayloadId: this.payloadState.agiPayloadId,
+                    mode: this.currentMode,
                     targetComponent: this.targetComponent || 'nursinghome',
-                    focusCoordinate: this.includeTargetCoordinate ? (this.focusedElementId || null) : null,
-                    focusCoordinateArray: this.includeTargetCoordinate ? this.parsedCoordinateArray : [],
-                    userPrompt: executedPromptText,
-                    adHocPrompt: this.stagedAssemblyBuffer,
-                    mcpTool: this.selectedCommand ? this.selectedCommand.command : null,
-                    mcpParams: this.selectedCommand ? this.commandParamValues : null,
-                    selectedArchetypes: this.availableArchetypes.filter(a => a.selected).map(a => a.uri),
-                    selectedIntents: this.selectedIntents,
-                    ragContext: [...this.governanceRules.filter(r => r.enabled), ...activeEntityRag],
-                    rawXmlContent: this.includeRawXml ? this.rawXmlSource : null,
-                    activeRagContext: JSON.stringify({
-                        artifactUri: previousFileUri,
-                        targetComponent: this.targetComponent,
-                        focusCoordinate: this.focusedElementId,
-                        astTree: this.rawAstObject
-                    })
+                    artifactUri: previousFileUri,
+                    targetMariaId: this.includeTargetCoordinate ? (this.focusedElementId || null) : null,
+                    title: executedPromptText.length > 45 ? executedPromptText.slice(0, 42) + '...' : executedPromptText,
+                    userPromptText: executedPromptText,
+                    facets: this.payloadState.facets,
+                    payload: innerPayload
                 };
 
                 try {
-                    const response = await axios.post('/rest/s1/agi-ai/executeStagedAgentTurn', payload, { headers });
+                    // 1. Process Payload Envelope in agi-ai
+                    const payloadResp = await axios.post('/rest/s1/agi-ai/payload', payloadEnvelope, { headers });
+                    const pldData = payloadResp.data || {};
+
+                    if (pldData.agiPayloadId) {
+                        this.payloadState.agiPayloadId = pldData.agiPayloadId;
+                        this.payloadState.statusId = pldData.statusId;
+                    }
+
+                    // 2. Dispatch turn to Agent Runner
+                    const activeEntityRag = (this.detectedEntities || []).filter(e => e.enabled).map(e => ({
+                        category: 'ENTITY_SCHEMA',
+                        title: e.entityName,
+                        snippet: `Fields: ${Object.keys(e.fields || {}).join(', ')}`,
+                        enabled: true
+                    }));
+
+                    const dispatchBody = {
+                        agiPayloadId: this.payloadState.agiPayloadId,
+                        artifactUri: previousFileUri,
+                        targetComponent: this.targetComponent || 'nursinghome',
+                        focusCoordinate: this.includeTargetCoordinate ? (this.focusedElementId || null) : null,
+                        focusCoordinateArray: this.includeTargetCoordinate ? this.parsedCoordinateArray : [],
+                        userPrompt: executedPromptText,
+                        adHocPrompt: this.stagedAssemblyBuffer,
+                        mcpTool: this.selectedCommand ? this.selectedCommand.command : null,
+                        mcpParams: this.selectedCommand ? this.commandParamValues : null,
+                        selectedArchetypes: this.availableArchetypes.filter(a => a.selected).map(a => a.uri),
+                        selectedIntents: this.selectedIntents,
+                        ragContext: [...this.governanceRules.filter(r => r.enabled), ...activeEntityRag],
+                        rawXmlContent: this.includeRawXml ? this.rawXmlSource : null,
+                        activeRagContext: JSON.stringify({
+                            artifactUri: previousFileUri,
+                            targetComponent: this.targetComponent,
+                            focusCoordinate: this.focusedElementId,
+                            astTree: this.rawAstObject
+                        })
+                    };
+
+                    const response = await axios.post('/rest/s1/agi-ai/executeStagedAgentTurn', dispatchBody, { headers });
                     this.isExecuting = false;
                     const res = response.data || {};
 
@@ -976,7 +1235,6 @@
                         || previousFileUri;
                     const updatedXml = parsedRes.rawXmlContent || '';
 
-                    // Detect relocation/move and broadcast
                     if (previousFileUri && newUri && previousFileUri !== newUri && this.contextBus) {
                         this.contextBus.postMessage({
                             event: 'artifact-relocated',
@@ -1007,11 +1265,11 @@
                     if (this.$q) {
                         this.$q.notify({
                             type: 'positive',
-                            message: parsedRes.message || 'Turn dispatched and buffer synced successfully.'
+                            message: parsedRes.message || `Turn dispatched successfully [${this.payloadState.statusId}].`
                         });
                     }
 
-                    this.processExecutionTelemetry('Studio Turn', executedPromptText, newUri, payload);
+                    this.processExecutionTelemetry('Studio Turn', executedPromptText, newUri, payloadEnvelope);
 
                 } catch (err) {
                     this.isExecuting = false;
@@ -1022,6 +1280,7 @@
 
             forkHistoryTurn(hist) {
                 this.userPrompt = hist.text || '';
+                this.currentMode = hist.mode || 'build';
                 if (hist.payload && hist.payload.adHocPrompt) {
                     this.stagedAssemblyBuffer = hist.payload.adHocPrompt;
                 }
@@ -1044,6 +1303,7 @@
 
                 vm.promptHistory.unshift({
                     timestamp: new Date().toLocaleTimeString(),
+                    mode: vm.currentMode,
                     command: executedCommandName || 'AI Agent',
                     text: promptText,
                     resultUri: newUri || '',
