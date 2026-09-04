@@ -17,6 +17,7 @@
                 companionQvtPath: '',
                 themeArtifactPath: 'component://nursinghome/theme/default.theme.json',
                 showArtifactPalette: false,
+                showPromptStudio: false,
                 targetComponentName: 'nursinghome',
                 ignoredFrameworkComponents: ['agi-ide', 'agi-ai', 'moqui-usl', 'mantle-usl', 'webroot', 'tools'],
 
@@ -92,23 +93,26 @@
                     this.loadedComponents.AgiComponentEditor &&
                     this.loadedComponents.AgiStyleEditor
                 );
+            },
+            currentArtifactLabel() {
+                if (!this.localScreenPath) return 'No Artifact Loaded';
+                const parts = this.localScreenPath.split('/');
+                return parts[parts.length - 1];
             }
         },
         mounted() {
             const vm = this;
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
 
-            // 🎯 Listen for local broadcast mutations from AgiPromptEditor, Move Tools, or Canvas
             this.contextBus.onmessage = function (event) {
                 if (!event.data) return;
 
-                // Handle external artifact relocation
                 if (event.data.event === 'artifact-relocated') {
                     const oldUri = event.data.oldUri;
                     const newUri = event.data.newUri;
 
                     if (vm.localScreenPath === oldUri || !vm.localScreenPath) {
-                        console.info(`🚚 [AgiWorkspace] Switching active artifact path from ${oldUri} -> ${newUri}`);
+                        console.info(`[AgiWorkspace] Switching active artifact path from ${oldUri} -> ${newUri}`);
                         vm.executeArtifactSwitch({ value: newUri });
                     }
                     return;
@@ -121,6 +125,19 @@
                     return;
                 }
 
+                if (event.data.event === 'open-prompt-editor' || event.data.event === 'force-open-command-palette') {
+                    vm.showPromptStudio = true;
+                    if (event.data.artifactLocation && event.data.artifactLocation !== vm.localScreenPath) {
+                        vm.executeArtifactSwitch({ value: event.data.artifactLocation });
+                    }
+                    return;
+                }
+
+                if (event.data.event === 'close-prompt-editor') {
+                    vm.showPromptStudio = false;
+                    return;
+                }
+
                 if (event.data.event === 'element-selected-by-id' && event.data.mariaId) {
                     if (!event.data.mariaId.includes('agi-workspace-root') && !event.data.mariaId.includes('AgiWorkspace')) {
                         vm.activeFocusedCoordinate = event.data.mariaId;
@@ -129,7 +146,7 @@
                 }
 
                 if (event.data.event === 'artifact-state-mutated') {
-                    console.info("📡 [AgiWorkspace] Detected artifact mutation via ContextBus. Setting isDirty=true...");
+                    console.info("[AgiWorkspace] Detected artifact mutation via ContextBus. Setting isDirty=true...");
                     vm.isDirty = true;
                     vm.hydrateWorkspaceBuffer();
                 }
@@ -146,7 +163,6 @@
             this.loadRequiredComponents();
             this.resolveTargetComponentAndPath();
 
-            // Keyboard Handlers (Save Ctrl+S, Snapping Super+Arrows)
             this._keyHandler = (e) => {
                 if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
                     e.preventDefault();
@@ -157,7 +173,6 @@
             };
             window.addEventListener('keydown', this._keyHandler);
 
-            // Prevent accidental tab closure if unsaved draft exists
             this._unloadHandler = (e) => {
                 if (vm.isDirty) {
                     e.preventDefault();
@@ -191,11 +206,11 @@
         },
 
         template: `
-            <div class="column fit no-wrap q-pa-md q-gutter-y-md" style="min-height: 90vh;">
+            <div class="column fit no-wrap q-pa-md q-gutter-y-sm" style="min-height: 90vh;">
                 <!-- 1. Header Controls Toolbar -->
                 <div id="agi-workspace-header" @click.stop class="row items-center justify-between q-pa-sm bg-grey-10 text-white rounded-borders shadow-2">
                     
-                    <!-- Left Identity Badge -->
+                    <!-- Left Identity Badge & Active Artifact Anchor -->
                     <div class="row items-center q-gutter-x-sm">
                         <q-icon name="dashboard_customize" color="primary" size="sm" />
                         <div>
@@ -208,13 +223,24 @@
                                     DOMAIN APP
                                 </q-badge>
                                 <q-badge v-if="isDirty" color="amber-10" text-color="black" class="q-ml-sm text-caption font-mono text-weight-bold animate-pulse">
-                                    <q-icon name="warning" size="xs" class="q-mr-xs" /> 
+                                    <q-icon name="warning" size="xs" class="q-mr-xs" /> DRAFT
                                 </q-badge>
+                            </div>
+                        </div>
+
+                        <q-separator vertical dark class="q-mx-sm" />
+
+                        <!-- Active Artifact Pill -->
+                        <div class="column">
+                            <span class="text-caption text-grey-4 font-mono" style="font-size: 9px;">FOCUSED ARTIFACT</span>
+                            <div class="row items-center q-gutter-x-xs font-mono text-caption text-cyan-3">
+                                <q-icon name="code" size="xs" color="cyan-4" />
+                                <span class="text-weight-bold">{{ currentArtifactLabel }}</span>
                             </div>
                         </div>
                     </div>
                 
-                    <!-- Right Controls: Explicit @click.stop on interactive controls -->
+                    <!-- Right Controls -->
                     <div class="row items-center q-gutter-x-sm" @click.stop>
                         
                         <q-btn 
@@ -273,14 +299,14 @@
                         ></q-select>
                 
                         <q-btn 
-                            color="deep-purple-7" 
-                            icon="terminal" 
-                            label="AI Prompt" 
+                            :color="showPromptStudio ? 'purple-6' : 'deep-purple-7'" 
+                            icon="psychology" 
+                            :label="showPromptStudio ? 'Studio (Open)' : 'AI Studio'" 
                             dense 
-                            class="q-px-sm"
-                            @click.stop="triggerPromptOverlay"
+                            class="q-px-sm font-mono text-weight-bold"
+                            @click.stop="showPromptStudio = !showPromptStudio"
                         >
-                            <q-tooltip class="bg-grey-10 text-caption">Launch AGI AI Assistant Core</q-tooltip>
+                            <q-tooltip class="bg-grey-10 text-caption">Toggle Docked AGI Command Studio</q-tooltip>
                         </q-btn>
                         
                         <q-btn 
@@ -304,17 +330,7 @@
                         >
                             <q-tooltip class="bg-grey-10 text-caption">Browse and focus workspace artifacts</q-tooltip>
                         </q-btn>
-                        <q-btn 
-                            color="negative" 
-                            flat
-                            icon="restart_alt" 
-                            label="Revert to Disk" 
-                            dense 
-                            class="q-px-sm font-mono text-caption"
-                            @click.stop="revertBufferToDisk"
-                        >
-                            <q-tooltip class="bg-grey-10 text-caption">Discard buffer draft and reload physical XML file from disk</q-tooltip>
-                        </q-btn>
+
                         <q-btn 
                             color="teal-8" 
                             icon="science" 
@@ -334,8 +350,8 @@
                     <div class="text-subtitle1 text-grey-8 text-weight-medium">Synchronizing Workspace Components for {{ targetComponentName }}...</div>
                 </div>
 
-                <!-- 3. Active Workspace Grid -->
-                <div v-else class="col column fit no-wrap" style="min-height: 80vh;">
+                <!-- 3. Active Workspace Workspace Panes -->
+                <div v-else class="col column fit no-wrap overflow-hidden" style="min-height: 80vh;">
         
                     <div v-if="!localScreenPath || localScreenPath === ''" class="column justify-center items-center col q-gutter-md bg-grey-1 text-center rounded-borders">
                         <q-icon name="folder_open" size="64px" color="primary" />
@@ -346,7 +362,8 @@
                         </p>
                     </div>
 
-                    <div v-else class="row q-col-gutter-md fit items-stretch align-content-start">
+                    <!-- Main Editor Workspace Layout -->
+                    <div v-else class="col row q-col-gutter-md fit items-stretch align-content-start overflow-y-auto">
                         
                         <!-- Canvas Renderer Panel -->
                         <div 
@@ -501,6 +518,7 @@
                                 </div>
                             </div>
                         </div>
+
                         <!-- Entity Model Editor Panel -->
                         <div 
                             v-if="isPanelVisible('AgiEntityEditor')" 
@@ -533,9 +551,24 @@
                         </div>
                     </div>
             
+                    <!-- 4. Docked AGI Command Studio (APE) Tray -->
+                    <q-slide-transition>
+                        <div 
+                            v-if="showPromptStudio && editorConstructors.AgiPromptEditor" 
+                            class="col-12 rounded-borders overflow-hidden shadow-10 q-mt-xs"
+                            style="height: 520px; border: 2px solid #334155;"
+                        >
+                            <component 
+                                :is="editorConstructors.AgiPromptEditor" 
+                                :active-artifact="localScreenPath"
+                                :target-component-prop="targetComponentName"
+                                @close="showPromptStudio = false"
+                            ></component>
+                        </div>
+                    </q-slide-transition>
+
                 </div>
                 
-                <component :is="editorConstructors.AgiPromptEditor" v-if="loadedComponents.AgiPromptEditor"></component>
                 <component :is="editorConstructors.AgiTestRunner" v-if="loadedComponents.AgiTestRunner"></component>
                 <component :is="editorConstructors.AgiNewComponentWizard" v-if="loadedComponents.AgiNewComponentWizard"></component>
 
@@ -846,18 +879,6 @@
                         return newTree;
                     }
                 });
-            },
-
-            triggerPromptOverlay() {
-                if (this.contextBus) {
-                    this.contextBus.postMessage({
-                        event: 'open-prompt-editor',
-                        panelName: this.activeScreens[0],
-                        artifactLocation: this.localScreenPath,
-                        targetComponent: this.targetComponentName,
-                        focusCoordinate: this.activeFocusedCoordinate || ''
-                    });
-                }
             },
 
             triggerNewComponentWizard() {

@@ -4,7 +4,7 @@
     <!-- ===================================================================== -->
     <!-- 0. BLUEPRINT MODIFY SERVICE FACADE                                   -->
     <!-- ===================================================================== -->
-    <service verb="modify" noun="Blueprint" type="inline" 
+    <service verb="modify" noun="Blueprint" type="inline" read-only="false" 
              name="org.moqui.ai.mcp.LayoutServices.modify#Blueprint">
         <description>Modify or update a blueprint layout tree on the server and sync to disk XML.</description>
         <in-parameters>
@@ -357,56 +357,110 @@
     </service>
 
 <!-- ===================================================================== -->
-    <!-- GET SCREEN ARCHETYPE TEMPLATE                                         -->
+    <!-- GET SCREEN ARCHETYPE LIST (Discovery MCP Tool)                        -->
     <!-- ===================================================================== -->
-    <service verb="get" noun="ScreenArchetype" type="inline"
+    <service verb="get" noun="ScreenArchetypeList" type="inline" read-only="true"
+             name="org.moqui.ai.mcp.LayoutServices.get#ScreenArchetypeList">
+        <description>
+            Discovers and lists all canonical screen archetypes available in the workspace.
+            Returns archetype names, URIs, and layout descriptions for the AI to choose from during planning.
+        </description>
+        <in-parameters>
+            <parameter name="targetComponent" default-value="nursinghome"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="archetypes" type="List"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import java.io.File
+                import groovy.io.FileType
+                import groovy.xml.XmlParser
+
+                List archetypeList = []
+                File compBase = new File("runtime/component")
+
+                if (compBase.exists() && compBase.isDirectory()) {
+                    compBase.eachDir { File compDir ->
+                        File archDir = new File(compDir, "mcp/resources/screen/archetype")
+                        if (archDir.exists() && archDir.isDirectory()) {
+                            archDir.eachFileRecurse(FileType.FILES) { File f ->
+                                if (!f.name.endsWith(".xml") || f.name.startsWith(".")) return
+
+                                String archName = f.name.replace(".xml", "")
+                                String uri = "mcp://${compDir.name}/resources/screen/archetype/${f.name}"
+                                String docSummary = ""
+
+                                try {
+                                    def root = new XmlParser(false, false).parse(f)
+                                    docSummary = root.attribute("description") ?: root.attribute("default-menu-title") ?: ""
+                                } catch (Exception ignore) {}
+
+                                archetypeList.add([
+                                    name       : archName,
+                                    uri        : uri,
+                                    component  : compDir.name,
+                                    description: docSummary ?: "Canonical ${archName} screen archetype template from ${compDir.name}"
+                                ])
+                            }
+                        }
+                    }
+                }
+
+                context.archetypes = archetypeList
+                ec.logger.info("📐 [get#ScreenArchetypeList] Discovered ${archetypeList.size()} canonical archetypes.")
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- ===================================================================== -->
+    <!-- GET SCREEN ARCHETYPE (Content Retrieval MCP Tool)                     -->
+    <!-- ===================================================================== -->
+    <service verb="get" noun="ScreenArchetype" type="inline" read-only="true" 
              name="org.moqui.ai.mcp.LayoutServices.get#ScreenArchetype">
-        <description>Retrieve a canonical JSON screen archetype template (such as 'form-single-edit' or 'qbe-list-table') from component storage to guide AST layout generation.</description>
+        <description>Retrieve the XML blueprint content of a specific canonical screen archetype to guide layout generation.</description>
         <in-parameters>
             <parameter name="archetypeId" type="String" required="true">
-                <description>The ID of the archetype template to load (e.g., 'form-single-edit', 'qbe-list-table').</description>
+                <description>The ID or name of the archetype (e.g. 'master-detail', 'lookup-modal', 'find-and-list').</description>
             </parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="status" type="String"/>
             <parameter name="archetypeId" type="String"/>
-            <parameter name="archetypeJson" type="String"/>
-            <parameter name="archetypeMap" type="Map"/>
+            <parameter name="xmlContent" type="String"/>
         </out-parameters>
         <actions>
             <script><![CDATA[
-                import groovy.json.JsonSlurper
-                import groovy.json.JsonOutput
                 import org.moqui.resource.ResourceReference
 
-                String cleanId = archetypeId.trim().replace(".json", "")
-                String templatePath = "component://agi-ide/template/screen-archetypes/${cleanId}.json"
+                String cleanId = archetypeId.trim().replace(".xml", "").replace(".json", "")
+                
+                // Check agi-ai, agi-ide, and framework locations
+                List candidatePaths = [
+                    "component://agi-ai/mcp/resources/screen/archetype/${cleanId}.xml",
+                    "component://agi-ide/mcp/resources/screen/archetype/${cleanId}.xml",
+                    "component://nursinghome/mcp/resources/screen/archetype/${cleanId}.xml"
+                ]
 
-                ResourceReference rr = ec.resource.getLocationReference(templatePath)
-                if (rr == null || !rr.exists) {
-                    ec.logger.warn("⚠️ [get#ScreenArchetype] Archetype template not found at: ${templatePath}")
+                ResourceReference matchedRr = null
+                for (String path : candidatePaths) {
+                    ResourceReference rr = ec.resource.getLocationReference(path)
+                    if (rr != null && rr.exists) {
+                        matchedRr = rr
+                        break
+                    }
+                }
+
+                if (matchedRr == null) {
+                    ec.logger.warn("⚠️ [get#ScreenArchetype] Archetype template '${cleanId}' not found.")
                     context.status = "NOT_FOUND"
                     return
                 }
 
-                String rawText = rr.getText()
-                if (!rawText || rawText.trim().isEmpty()) {
-                    ec.logger.error("❌ [get#ScreenArchetype] Archetype template at '${templatePath}' is empty.")
-                    context.status = "EMPTY_FILE"
-                    return
-                }
-
-                try {
-                    Map parsedMap = new JsonSlurper().parseText(rawText) as Map
-                    context.status = "SUCCESS"
-                    context.archetypeId = cleanId
-                    context.archetypeJson = rawText
-                    context.archetypeMap = parsedMap
-                    ec.logger.info("📄 [get#ScreenArchetype] Successfully loaded archetype: ${cleanId}")
-                } catch (Exception ex) {
-                    ec.logger.error("❌ [get#ScreenArchetype] Failed parsing JSON for archetype '${cleanId}': ${ex.message}")
-                    context.status = "PARSE_ERROR"
-                }
+                context.status = "SUCCESS"
+                context.archetypeId = cleanId
+                context.xmlContent = matchedRr.getText()
+                ec.logger.info("📄 [get#ScreenArchetype] Successfully loaded archetype: ${cleanId}")
             ]]></script>
         </actions>
     </service>

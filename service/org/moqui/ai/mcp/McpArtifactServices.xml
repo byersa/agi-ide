@@ -5,7 +5,7 @@
     <!-- ===================================================================== -->
     <!-- GET ARTIFACT PALETTE SERVICE                                          -->
     <!-- ===================================================================== -->
-    <service verb="get" noun="ArtifactPalette" authenticate="anonymous-all">
+    <service verb="get" noun="ArtifactPalette" authenticate="anonymous-all" read-only="true" >
         <description><![CDATA[
             Queries registered AgiArtifact database records (including uncommitted drafts) 
             and scans runtime/component/ directories to construct a unified list of component 

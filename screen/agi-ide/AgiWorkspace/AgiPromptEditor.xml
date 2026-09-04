@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="true">
+
+    <parameter name="screenPath"/>
+    <parameter name="artifactUri"/>
+
+    <actions>
+        <set field="targetArtifact" from="artifactUri ?: screenPath ?: 'component://nursinghome/screen/nursinghome.xml'"/>
+    </actions>
+
+    <widgets>
+        <container id="agi-prompt-editor-docked" type="agi-prompt-editor"
+                   style="active-artifact='${targetArtifact}'">
+        </container>
+    </widgets>
+</screen>

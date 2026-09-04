@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Search and List View"
+        description="Collapsible search filter form on top and paginated tabular data grid below">
+
+    <transition name="findRecords">
+        <default-response url="."/>
+    </transition>
+
+    <actions>
+        <entity-find entity-name="mantle.party.Person" list="personList" paginate="true">
+            <search-form-inputs default-order-by="lastName,firstName"/>
+        </entity-find>
+    </actions>
+
+    <widgets>
+        <container-box style="q-mb-md">
+            <box-header title="Search Filters"/>
+            <box-body>
+                <form-single name="SearchForm" transition="findRecords">
+                    <field name="firstName"><default-field title="First Name"><text-line/></default-field></field>
+                    <field name="lastName"><default-field title="Last Name"><text-line/></default-field></field>
+                    <field name="submitBtn"><default-field title="Search"><submit/></default-field></field>
+                </form-single>
+            </box-body>
+        </container-box>
+
+        <container-box>
+            <box-header title="Search Results"/>
+            <box-body>
+                <form-list name="ResultsList" list="personList" skip-form="true">
+                    <field name="partyId"><default-field title="ID"><display/></default-field></field>
+                    <field name="firstName"><header-field show-order-by="true"/><default-field><display/></default-field></field>
+                    <field name="lastName"><header-field show-order-by="true"/><default-field><display/></default-field></field>
+                </form-list>
+            </box-body>
+        </container-box>
+    </widgets>
+</screen>

@@ -1,6 +1,10 @@
 (function () {
     const AgiPromptEditor = {
         name: 'AgiPromptEditor',
+        props: {
+            activeArtifact: { type: String, default: '' },
+            targetComponentProp: { type: String, default: 'nursinghome' }
+        },
         components: {
             'discussion-tree': {
                 name: 'DiscussionTreeProxy',
@@ -32,587 +36,597 @@
             }
         },
         template: `
-            <q-dialog v-model="isOpen" position="top" @hide="onDialogClosed">
-                <q-card class="agi-prompt-editor-card bg-slate-900 shadow-24 q-mt-sm column no-wrap" style="width: 1240px; max-width: 96vw; height: 90vh;">
-                    
-                    <!-- 1. STUDIO HEADER: ASSIST MODE SELECTOR & COORDINATE -->
-                    <q-card-section class="q-pa-xs bg-slate-950 row items-center justify-between border-bottom-dark" style="border-bottom: 1px solid #334155;">
-                        <div class="row items-center q-gutter-x-sm">
-                            <q-icon name="psychology" color="primary" size="sm" />
-                            <span class="text-subtitle2 text-weight-bold font-mono text-slate-100">AGI COMMAND STUDIO</span>
-                            <q-badge :color="statusColor" :label="payloadState.statusId" class="q-ml-xs font-mono" />
-                        </div>
+            <div class="agi-prompt-editor-docked full-width full-height column no-wrap bg-slate-900 overflow-hidden" style="min-height: 550px;">
+                
+                <!-- 1. STUDIO HEADER: ASSIST MODE SELECTOR & COORDINATE -->
+                <div class="q-pa-xs bg-slate-950 row items-center justify-between border-bottom-dark" style="border-bottom: 1px solid #334155;">
+                    <div class="row items-center q-gutter-x-sm">
+                        <q-icon name="psychology" color="primary" size="sm" />
+                        <span class="text-subtitle2 text-weight-bold font-mono text-slate-100">AGI COMMAND STUDIO</span>
+                        <q-badge color="cyan-9" :label="activeArtifactMetadata.typeName || 'Artifact'" class="q-ml-xs font-mono" />
+                        <q-badge :color="statusColor" :label="payloadState.statusId" class="q-ml-xs font-mono" />
+                    </div>
 
-                        <!-- Breadcrumb Focus Coordinate -->
-                        <div class="col q-mx-md row items-center no-wrap overflow-hidden">
-                            <q-breadcrumbs active-color="purple-3" class="text-caption font-mono text-slate-300" separator-color="grey-5">
-                                <template v-slot:separator>
-                                    <q-icon size="10px" name="chevron_right" color="grey-4" />
-                                </template>
-                                <q-breadcrumbs-el 
-                                    v-for="(crumb, idx) in breadcrumbSegments" 
-                                    :key="idx" 
-                                    :label="crumb.label" 
-                                    :icon="crumb.icon"
-                                    :class="crumb.isTarget ? 'text-weight-bolder text-purple-3 bg-slate-900 q-px-xs rounded-borders' : ''"
-                                />
-                            </q-breadcrumbs>
-                        </div>
+                    <!-- Breadcrumb Focus Coordinate -->
+                    <div class="col q-mx-md row items-center no-wrap overflow-hidden">
+                        <q-breadcrumbs active-color="purple-3" class="text-caption font-mono text-slate-300" separator-color="grey-5">
+                            <template v-slot:separator>
+                                <q-icon size="10px" name="chevron_right" color="grey-4" />
+                            </template>
+                            <q-breadcrumbs-el 
+                                v-for="(crumb, idx) in breadcrumbSegments" 
+                                :key="idx" 
+                                :label="crumb.label" 
+                                :icon="crumb.icon"
+                                :class="crumb.isTarget ? 'text-weight-bolder text-purple-3 bg-slate-900 q-px-xs rounded-borders' : ''"
+                            />
+                        </q-breadcrumbs>
+                    </div>
 
-                        <!-- Mode Selector and Quick Actions -->
+                    <!-- Mode Selector and Quick Actions -->
+                    <div class="row items-center q-gutter-x-xs">
+                        <q-select
+                            v-model="currentMode"
+                            :options="assistModes"
+                            emit-value
+                            map-options
+                            dense
+                            outlined
+                            color="primary"
+                            bg-color="slate-800"
+                            style="min-width: 155px"
+                            class="font-mono text-caption text-white"
+                            @update:model-value="onModeChange"
+                        >
+                            <template v-slot:option="scope">
+                                <q-item v-bind="scope.itemProps" dense>
+                                    <q-item-section avatar min-width="24px">
+                                        <q-icon :name="scope.opt.icon" :color="scope.opt.color" size="xs" />
+                                    </q-item-section>
+                                    <q-item-section>
+                                        <q-item-label class="text-caption font-mono text-slate-200">{{ scope.opt.label }}</q-item-label>
+                                        <q-item-label caption class="text-slate-400" style="font-size: 9px;">{{ scope.opt.caption }}</q-item-label>
+                                    </q-item-section>
+                                </q-item>
+                            </template>
+                        </q-select>
+
+                        <q-btn
+                            v-if="currentMode === 'plan' || currentMode === 'discuss'"
+                            flat
+                            dense
+                            color="amber-4"
+                            icon="upgrade"
+                            label="Promote to Build"
+                            class="font-mono text-caption text-weight-bold"
+                            @click="promoteToBuild"
+                        >
+                            <q-tooltip>Promote active prompt and facets into a direct Build Payload</q-tooltip>
+                        </q-btn>
+
+                        <q-btn flat dense round icon="manage_search" size="xs" color="cyan-4" @click="showPalette = !showPalette">
+                            <q-tooltip>Browse / Switch Focus Artifact</q-tooltip>
+                        </q-btn>
+                        
+                        <q-btn flat round dense icon="close" text-color="white" size="xs" @click="closeDockedEditor">
+                            <q-tooltip>Close Studio Panel</q-tooltip>
+                        </q-btn>
+                    </div>
+                </div>
+
+                <!-- Inline Artifact Palette Drawer -->
+                <q-slide-transition>
+                    <div v-if="showPalette" class="bg-slate-950 border-bottom-dark q-pa-xs" style="border-bottom: 1px solid #334155;">
+                        <div class="row items-center justify-between q-px-xs q-mb-xs">
+                            <span class="text-caption text-weight-bold text-cyan-4 font-mono">FOCUS WORKSPACE ARTIFACT</span>
+                            <q-btn flat dense icon="close" size="xs" color="slate-300" @click="showPalette = false" />
+                        </div>
+                        <agi-artifact-palette @artifact-selected="onArtifactSelectedFromPalette" />
+                    </div>
+                </q-slide-transition>
+
+                <!-- 2. TASK PROMPT & DISPATCH BAR -->
+                <div class="bg-slate-950 q-pa-sm border-bottom-dark" style="border-bottom: 1px solid #334155;">
+                    <div class="row items-center justify-between q-mb-xs">
                         <div class="row items-center q-gutter-x-xs">
-                            <q-select
-                                v-model="currentMode"
-                                :options="assistModes"
-                                emit-value
-                                map-options
-                                dense
-                                outlined
-                                color="primary"
-                                bg-color="slate-800"
-                                style="min-width: 155px"
-                                class="font-mono text-caption text-white"
-                                @update:model-value="onModeChange"
-                            >
-                                <template v-slot:option="scope">
-                                    <q-item v-bind="scope.itemProps" dense>
+                            <span class="text-caption font-mono text-slate-200 text-weight-bold">USER PROMPT &amp; TASK DISPATCH</span>
+                            <q-badge outline color="teal-4" class="font-mono" style="font-size: 9px;">{{ activeArtifactMetadata.artifactType }}</q-badge>
+                        </div>
+                        
+                        <q-btn-dropdown 
+                            flat dense size="xs" color="cyan-4" icon="history" 
+                            label="Load Past Intent / Prompt" no-caps
+                            @before-show="searchHistoricalPayloads('')"
+                        >
+                            <div class="q-pa-sm bg-slate-950 font-mono" style="min-width: 460px; max-height: 380px;">
+                                <q-input 
+                                    v-model="historySearchFilter" 
+                                    dense outlined 
+                                    placeholder="Search by keywords, status, or date..." 
+                                    bg-color="slate-900"
+                                    input-class="text-caption font-mono text-white"
+                                    debounce="300"
+                                    @update:model-value="searchHistoricalPayloads"
+                                >
+                                    <template v-slot:prepend>
+                                        <q-icon name="search" size="xs" color="cyan-4" />
+                                    </template>
+                                </q-input>
+
+                                <q-list dense separator class="q-mt-xs overflow-y-auto" style="max-height: 300px;">
+                                    <q-item 
+                                        v-for="pld in matchingHistoricalPayloads" 
+                                        :key="pld.agiPayloadId" 
+                                        clickable v-ripple
+                                        class="rounded-borders q-my-xs bg-slate-900"
+                                        @click="restoreHistoricalPayload(pld)"
+                                    >
                                         <q-item-section avatar min-width="24px">
-                                            <q-icon :name="scope.opt.icon" :color="scope.opt.color" size="xs" />
+                                            <q-badge :color="pld.modeEnumId === 'AamPlan' ? 'amber-9' : 'primary'" :label="pld.modeEnumId ? pld.modeEnumId.replace('Aam', '') : ''" />
                                         </q-item-section>
                                         <q-item-section>
-                                            <q-item-label class="text-caption font-mono text-slate-200">{{ scope.opt.label }}</q-item-label>
-                                            <q-item-label caption class="text-slate-400" style="font-size: 9px;">{{ scope.opt.caption }}</q-item-label>
+                                            <q-item-label class="text-caption font-mono text-weight-bold text-slate-200 ellipsis">
+                                                {{ pld.title || pld.userPromptText }}
+                                            </q-item-label>
+                                            <q-item-label caption class="text-slate-400" style="font-size: 9px;">
+                                                {{ pld.lastUpdatedStamp }} | {{ pld.statusId }}
+                                            </q-item-label>
+                                            <div class="row q-gutter-xs q-mt-xs" v-if="pld.facets && Object.keys(pld.facets).length > 0">
+                                                <q-badge v-for="(fVal, fKey) in pld.facets" :key="fKey" color="slate-800" text-color="teal-3" style="font-size: 8px;">
+                                                    {{ fKey }}: {{ fVal }}
+                                                </q-badge>
+                                            </div>
                                         </q-item-section>
                                     </q-item>
-                                </template>
-                            </q-select>
-
-                            <q-btn
-                                v-if="currentMode === 'plan' || currentMode === 'discuss'"
-                                flat
-                                dense
-                                color="amber-4"
-                                icon="upgrade"
-                                label="Promote to Build"
-                                class="font-mono text-caption text-weight-bold"
-                                @click="promoteToBuild"
-                            >
-                                <q-tooltip>Promote active prompt and facets into a direct Build Payload</q-tooltip>
-                            </q-btn>
-
-                            <q-btn flat dense round icon="manage_search" size="xs" color="cyan-4" @click="showPalette = !showPalette">
-                                <q-tooltip>Browse / Switch Focus Artifact</q-tooltip>
-                            </q-btn>
-                            <q-btn flat round dense icon="close" text-color="white" v-close-popup />
-                        </div>
-                    </q-card-section>
-
-                    <!-- Inline Artifact Palette Drawer -->
-                    <q-slide-transition>
-                        <div v-if="showPalette" class="bg-slate-950 border-bottom-dark q-pa-xs" style="border-bottom: 1px solid #334155;">
-                            <div class="row items-center justify-between q-px-xs q-mb-xs">
-                                <span class="text-caption text-weight-bold text-cyan-4 font-mono">FOCUS WORKSPACE ARTIFACT</span>
-                                <q-btn flat dense icon="close" size="xs" color="slate-300" @click="showPalette = false" />
+                                    <q-item v-if="matchingHistoricalPayloads.length === 0">
+                                        <q-item-section class="text-slate-400 italic text-center text-caption font-mono">
+                                            No matching past payloads found.
+                                        </q-item-section>
+                                    </q-item>
+                                </q-list>
                             </div>
-                            <agi-artifact-palette @artifact-selected="onArtifactSelectedFromPalette" />
+                        </q-btn-dropdown>
+                    </div>
+
+                    <!-- Prompt Textarea & Action Button -->
+                    <div class="row items-start q-col-gutter-sm">
+                        <div class="col">
+                            <q-input 
+                                ref="promptInput"
+                                v-model="userPrompt" 
+                                type="textarea"
+                                rows="2"
+                                dark
+                                outlined 
+                                dense 
+                                :placeholder="modePromptPlaceholder" 
+                                class="font-mono text-caption"
+                                style="background-color: #020617; border-radius: 4px;"
+                                input-style="color: #f8fafc; font-family: monospace; font-size: 11px;"
+                                :disable="isExecuting"
+                                @update:model-value="onPromptInput"
+                                @keydown.ctrl.enter="handleDirectDispatch"
+                            />
+                        </div>
+                        <div class="col-auto column q-gutter-y-xs">
+                            <q-btn 
+                                :color="modeActionColor" 
+                                :icon="modeActionIcon" 
+                                :label="modeActionLabel" 
+                                no-caps 
+                                class="q-px-md font-mono text-weight-bold full-width" 
+                                style="height: 38px;"
+                                :loading="isExecuting" 
+                                @click="handleDirectDispatch" 
+                            />
+                            <div class="row items-center justify-between text-caption font-mono text-slate-400" style="font-size: 10px;">
+                                <span>Ctrl+Enter</span>
+                                <q-btn flat dense size="xs" color="cyan-4" icon="refresh" label="Re-sync" @click="syncControlsToAssemblyBuffer" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Dynamic Tool Parameters -->
+                    <q-slide-transition>
+                        <div v-if="selectedCommand" class="q-mt-xs q-pa-xs bg-slate-900 rounded-borders border-dark row items-center q-gutter-x-sm" style="border: 1px solid #334155;">
+                            <q-chip color="primary" text-color="white" dense size="sm" icon="build" removable @remove="clearSelectedCommand">
+                                {{ selectedCommand.command }}
+                            </q-chip>
+                            <span class="text-caption text-slate-300 ellipsis" style="max-width: 220px;">{{ selectedCommand.description }}</span>
+                            
+                            <div v-for="param in visibleParams" :key="param.name" class="col-auto">
+                                <q-input 
+                                    v-model="commandParamValues[param.name]" 
+                                    :label="param.name" 
+                                    dense 
+                                    outlined 
+                                    class="text-caption font-mono text-white" 
+                                    style="min-width: 140px;"
+                                />
+                            </div>
                         </div>
                     </q-slide-transition>
 
-                    <!-- 2. TASK PROMPT & DISPATCH BAR -->
-                    <div class="bg-slate-950 q-pa-sm border-bottom-dark" style="border-bottom: 1px solid #334155;">
-                        <!-- Prompt Header & Historical Intent Dropdown -->
-                        <div class="row items-center justify-between q-mb-xs">
-                            <span class="text-caption font-mono text-slate-200 text-weight-bold">USER PROMPT &amp; TASK DISPATCH</span>
-                            
-                            <q-btn-dropdown 
-                                flat dense size="xs" color="cyan-4" icon="history" 
-                                label="Load Past Intent / Prompt" no-caps
-                                @before-show="searchHistoricalPayloads('')"
+                    <!-- Slash Command Autocomplete Dropdown -->
+                    <div 
+                        v-if="showCommandList && availableCommands.length > 0" 
+                        class="q-mt-xs rounded-borders border-dark q-pa-xs max-h-36 overflow-y-auto shadow-8"
+                        style="background-color: #020617; border: 1px solid #334155;"
+                    >
+                        <q-list dense separator>
+                            <q-item 
+                                v-for="cmd in availableCommands" 
+                                :key="cmd.command" 
+                                clickable 
+                                v-ripple 
+                                @click="selectCommand(cmd)"
+                                class="rounded-borders q-my-xs"
+                                style="background-color: #0f172a;"
                             >
-                                <div class="q-pa-sm bg-slate-950 font-mono" style="min-width: 460px; max-height: 380px;">
-                                    <q-input 
-                                        v-model="historySearchFilter" 
-                                        dense outlined 
-                                        placeholder="Search by keywords, status, or date..." 
-                                        bg-color="slate-900"
-                                        input-class="text-caption font-mono text-white"
-                                        debounce="300"
-                                        @update:model-value="searchHistoricalPayloads"
+                                <q-item-section avatar min-width="24px">
+                                    <q-icon name="bolt" color="cyan-4" size="xs" />
+                                </q-item-section>
+                                <q-item-section>
+                                    <q-item-label class="font-mono text-caption text-cyan-4">{{ cmd.command }}</q-item-label>
+                                    <q-item-label caption class="text-slate-300 ellipsis" style="font-size: 10px;">{{ cmd.description }}</q-item-label>
+                                </q-item-section>
+                            </q-item>
+                        </q-list>
+                    </div>
+                </div>
+
+                <!-- 3. TWO-PANE MAIN WORKSPACE -->
+                <div class="col row no-wrap overflow-hidden bg-slate-900">
+                    
+                    <!-- LEFT PANE: GROUNDING CONTROLS & FACETS (42% Width) -->
+                    <div class="col-5 column no-wrap border-right-dark bg-slate-950 q-pa-sm" style="border-right: 1px solid #334155; overflow-y: auto;">
+                        
+                        <!-- A. INTENT FACETS BAR -->
+                        <div class="q-mb-xs q-pa-xs rounded-borders bg-slate-900" style="border: 1px solid #334155;">
+                            <div class="row items-center justify-between q-px-xs q-mb-xs">
+                                <div class="row items-center q-gutter-x-xs text-caption font-mono text-weight-bold text-amber-4">
+                                    <q-icon name="local_offer" size="xs" />
+                                    <span>INTENT FACETS &amp; PHI TAGS</span>
+                                </div>
+                                <span class="text-caption font-mono text-slate-400" style="font-size: 9px;">Mode: {{ currentMode }}</span>
+                            </div>
+                        
+                            <div class="q-pa-xs font-mono text-caption">
+                                <div class="row items-center q-gutter-xs q-mb-xs">
+                                    <q-chip 
+                                        v-for="(val, key) in payloadState.facets" 
+                                        :key="key" 
+                                        dense size="sm" 
+                                        removable
+                                        color="slate-800" 
+                                        text-color="teal-3"
+                                        class="font-mono text-caption"
+                                        @remove="removeFacet(key)"
                                     >
-                                        <template v-slot:prepend>
-                                            <q-icon name="search" size="xs" color="cyan-4" />
-                                        </template>
-                                    </q-input>
-
-                                    <q-list dense separator class="q-mt-xs overflow-y-auto" style="max-height: 300px;">
-                                        <q-item 
-                                            v-for="pld in matchingHistoricalPayloads" 
-                                            :key="pld.agiPayloadId" 
-                                            clickable v-ripple
-                                            class="rounded-borders q-my-xs bg-slate-900"
-                                            @click="restoreHistoricalPayload(pld)"
-                                        >
-                                            <q-item-section avatar min-width="24px">
-                                                <q-badge :color="pld.modeEnumId === 'AamPlan' ? 'amber-9' : 'primary'" :label="pld.modeEnumId ? pld.modeEnumId.replace('Aam', '') : ''" />
-                                            </q-item-section>
-                                            <q-item-section>
-                                                <q-item-label class="text-caption font-mono text-weight-bold text-slate-200 ellipsis">
-                                                    {{ pld.title || pld.userPromptText }}
-                                                </q-item-label>
-                                                <q-item-label caption class="text-slate-400" style="font-size: 9px;">
-                                                    {{ pld.lastUpdatedStamp }} | {{ pld.statusId }}
-                                                </q-item-label>
-                                                <div class="row q-gutter-xs q-mt-xs" v-if="pld.facets && Object.keys(pld.facets).length > 0">
-                                                    <q-badge v-for="(fVal, fKey) in pld.facets" :key="fKey" color="slate-800" text-color="teal-3" style="font-size: 8px;">
-                                                        {{ fKey }}: {{ fVal }}
-                                                    </q-badge>
-                                                </div>
-                                            </q-item-section>
-                                        </q-item>
-                                        <q-item v-if="matchingHistoricalPayloads.length === 0">
-                                            <q-item-section class="text-slate-400 italic text-center text-caption font-mono">
-                                                No matching past payloads found.
-                                            </q-item-section>
-                                        </q-item>
-                                    </q-list>
+                                        <strong class="text-amber-3">{{ key }}:</strong>&nbsp;{{ val }}
+                                    </q-chip>
+                                    <div v-if="Object.keys(payloadState.facets).length === 0" class="text-caption text-slate-400 italic">
+                                        No facets attached.
+                                    </div>
                                 </div>
-                            </q-btn-dropdown>
-                        </div>
-
-                        <!-- Prompt Textarea & Action Button -->
-                        <div class="row items-start q-col-gutter-sm">
-                            <div class="col">
-                            <q-input 
-    ref="promptInput"
-    v-model="userPrompt" 
-    type="textarea"
-    rows="2"
-    dark
-    outlined 
-    dense 
-    :placeholder="modePromptPlaceholder" 
-    class="font-mono text-caption"
-    style="background-color: #020617; border-radius: 4px;"
-    input-style="color: #f8fafc; font-family: monospace; font-size: 11px;"
-    :disable="isExecuting"
-    @update:model-value="onPromptInput"
-    @keydown.ctrl.enter="handleDirectDispatch"
-    @keydown.esc="isOpen = false"
-/>
-                            </div>
-                            <div class="col-auto column q-gutter-y-xs">
-                                <q-btn 
-                                    :color="modeActionColor" 
-                                    :icon="modeActionIcon" 
-                                    :label="modeActionLabel" 
-                                    no-caps 
-                                    class="q-px-md font-mono text-weight-bold full-width" 
-                                    style="height: 38px;"
-                                    :loading="isExecuting" 
-                                    @click="handleDirectDispatch" 
-                                />
-                                <div class="row items-center justify-between text-caption font-mono text-slate-400" style="font-size: 10px;">
-                                    <span>Ctrl+Enter</span>
-                                    <q-btn flat dense size="xs" color="cyan-4" icon="refresh" label="Re-sync" @click="syncControlsToAssemblyBuffer" />
+                        
+                                <div class="row items-center q-gutter-xs q-mb-xs">
+                                    <span class="text-slate-300" style="font-size: 9px;">Quick:</span>
+                                    <q-chip 
+                                        v-for="rec in quickFacetPresets" 
+                                        :key="rec.key + rec.val"
+                                        dense size="xs" clickable
+                                        color="slate-950" text-color="cyan-3"
+                                        class="font-mono"
+                                        @click="applyPreset(rec.key, rec.val)"
+                                    >
+                                        + {{ rec.key }}: {{ rec.label || rec.val }}
+                                    </q-chip>
+                                </div>
+                        
+                                <div class="row items-center q-gutter-xs">
+                                    <q-select
+                                        v-model="newFacetKey"
+                                        :options="standardFacetKeys"
+                                        use-input
+                                        new-value-mode="add-unique"
+                                        dense outlined
+                                        placeholder="key"
+                                        bg-color="slate-950"
+                                        class="col-4 font-mono text-caption text-white"
+                                        style="font-size: 10px;"
+                                        @update:model-value="onFacetKeyChanged"
+                                    />
+                                    <q-select
+                                        v-model="newFacetVal"
+                                        :options="dynamicFacetValueOptions"
+                                        use-input
+                                        new-value-mode="add-unique"
+                                        dense outlined
+                                        placeholder="value"
+                                        bg-color="slate-950"
+                                        class="col font-mono text-caption text-white"
+                                        style="font-size: 10px;"
+                                        @keydown.enter="addFacet"
+                                    />
+                                    <q-btn dense flat round icon="add" size="xs" color="amber-4" @click="addFacet">
+                                        <q-tooltip>Add Facet</q-tooltip>
+                                    </q-btn>
                                 </div>
                             </div>
                         </div>
 
-                        <!-- Dynamic Tool Parameters -->
-                        <q-slide-transition>
-                            <div v-if="selectedCommand" class="q-mt-xs q-pa-xs bg-slate-900 rounded-borders border-dark row items-center q-gutter-x-sm" style="border: 1px solid #334155;">
-                                <q-chip color="primary" text-color="white" dense size="sm" icon="build" removable @remove="clearSelectedCommand">
-                                    {{ selectedCommand.command }}
-                                </q-chip>
-                                <span class="text-caption text-slate-300 ellipsis" style="max-width: 220px;">{{ selectedCommand.description }}</span>
-                                
-                                <div v-for="param in visibleParams" :key="param.name" class="col-auto">
-                                    <q-input 
-                                        v-model="commandParamValues[param.name]" 
-                                        :label="param.name" 
-                                        dense 
-                                        outlined 
-                                        class="text-caption font-mono text-white" 
-                                        style="min-width: 140px;"
+                        <!-- B. TARGET SCOPE & FOCUS COORDINATE (Polymorphic) -->
+                        <div v-if="isPanelVisible('targetCoordinate')" class="q-mb-xs q-pa-xs rounded-borders bg-slate-900" style="border: 1px solid #334155;">
+                            <div class="row items-center justify-between q-px-xs q-mb-xs">
+                                <div class="row items-center q-gutter-x-xs text-caption font-mono text-weight-bold text-cyan-4">
+                                    <q-icon name="gps_fixed" size="xs" />
+                                    <span>1. TARGET COORDINATE (WHERE)</span>
+                                </div>
+                                <q-btn v-if="focusedElementId" flat dense size="xs" color="slate-300" icon="close" label="Clear Focus" @click="clearFocusedCoordinate" />
+                            </div>
+
+                            <div class="q-pa-xs font-mono text-caption">
+                                <div class="row items-center justify-between q-mb-xs">
+                                    <q-checkbox 
+                                        v-model="includeTargetCoordinate" 
+                                        label="Include Target AST Slice" 
+                                        dense color="secondary" 
+                                        @update:model-value="syncControlsToAssemblyBuffer"
                                     />
                                 </div>
-                            </div>
-                        </q-slide-transition>
 
-                        <!-- Slash Command Autocomplete Dropdown -->
-                        <div 
-                            v-if="showCommandList && availableCommands.length > 0" 
-                            class="q-mt-xs rounded-borders border-dark q-pa-xs max-h-36 overflow-y-auto shadow-8"
-                            style="background-color: #020617; border: 1px solid #334155;"
-                        >
-                            <q-list dense separator>
-                                <q-item 
-                                    v-for="cmd in availableCommands" 
-                                    :key="cmd.command" 
-                                    clickable 
-                                    v-ripple 
-                                    @click="selectCommand(cmd)"
-                                    class="rounded-borders q-my-xs"
-                                    style="background-color: #0f172a;"
-                                >
-                                    <q-item-section avatar min-width="24px">
-                                        <q-icon name="bolt" color="cyan-4" size="xs" />
-                                    </q-item-section>
-                                    <q-item-section>
-                                        <q-item-label class="font-mono text-caption text-cyan-4">{{ cmd.command }}</q-item-label>
-                                        <q-item-label caption class="text-slate-300 ellipsis" style="font-size: 10px;">{{ cmd.description }}</q-item-label>
-                                    </q-item-section>
-                                </q-item>
-                            </q-list>
-                        </div>
-                    </div>
-
-                    <!-- 3. TWO-PANE MAIN WORKSPACE -->
-                    <div class="col row no-wrap overflow-hidden bg-slate-900">
-                        
-                        <!-- LEFT PANE: GROUNDING CONTROLS & FACETS (42% Width) -->
-                        <div class="col-5 column no-wrap border-right-dark bg-slate-950 q-pa-sm" style="border-right: 1px solid #334155; overflow-y: auto;">
-                            
-                            <!-- A. INTENT FACETS BAR (PLAN / DISCUSS / BUILD) -->
-                            <div class="q-mb-xs q-pa-xs rounded-borders bg-slate-900" style="border: 1px solid #334155;">
-                                <div class="row items-center justify-between q-px-xs q-mb-xs">
-                                    <div class="row items-center q-gutter-x-xs text-caption font-mono text-weight-bold text-amber-4">
-                                        <q-icon name="local_offer" size="xs" />
-                                        <span>INTENT FACETS &amp; PHI TAGS</span>
-                                    </div>
-                                    <span class="text-caption font-mono text-slate-400" style="font-size: 9px;">Mode: {{ currentMode }}</span>
-                                </div>
-                            
-                                <div class="q-pa-xs font-mono text-caption">
-                                    <!-- Active Facet Chips -->
-                                    <div class="row items-center q-gutter-xs q-mb-xs">
-                                        <q-chip 
-                                            v-for="(val, key) in payloadState.facets" 
-                                            :key="key" 
-                                            dense size="sm" 
-                                            removable
-                                            color="slate-800" 
-                                            text-color="teal-3"
-                                            class="font-mono text-caption"
-                                            @remove="removeFacet(key)"
-                                        >
-                                            <strong class="text-amber-3">{{ key }}:</strong>&nbsp;{{ val }}
-                                        </q-chip>
-                                        <div v-if="Object.keys(payloadState.facets).length === 0" class="text-caption text-slate-400 italic">
-                                            No facets attached.
-                                        </div>
-                                    </div>
-                            
-                                    <!-- Quick-Add Recommendation Chips -->
-                                    <div class="row items-center q-gutter-xs q-mb-xs">
-                                        <span class="text-slate-300" style="font-size: 9px;">Quick:</span>
-                                        <q-chip 
-                                            v-for="rec in quickFacetPresets" 
-                                            :key="rec.key + rec.val"
-                                            dense size="xs" clickable
-                                            color="slate-950" text-color="cyan-3"
-                                            class="font-mono"
-                                            @click="applyPreset(rec.key, rec.val)"
-                                        >
-                                            + {{ rec.key }}: {{ rec.label || rec.val }}
-                                        </q-chip>
-                                    </div>
-                            
-                                    <!-- Inline Key/Value Autocomplete Inputs -->
-                                    <div class="row items-center q-gutter-xs">
-                                        <q-select
-                                            v-model="newFacetKey"
-                                            :options="standardFacetKeys"
-                                            use-input
-                                            new-value-mode="add-unique"
-                                            dense outlined
-                                            placeholder="key"
-                                            bg-color="slate-950"
-                                            class="col-4 font-mono text-caption text-white"
-                                            style="font-size: 10px;"
-                                            @update:model-value="onFacetKeyChanged"
-                                        />
-                                        <q-select
-                                            v-model="newFacetVal"
-                                            :options="dynamicFacetValueOptions"
-                                            use-input
-                                            new-value-mode="add-unique"
-                                            dense outlined
-                                            placeholder="value"
-                                            bg-color="slate-950"
-                                            class="col font-mono text-caption text-white"
-                                            style="font-size: 10px;"
-                                            @keydown.enter="addFacet"
-                                        />
-                                        <q-btn dense flat round icon="add" size="xs" color="amber-4" @click="addFacet">
-                                            <q-tooltip>Add Facet</q-tooltip>
-                                        </q-btn>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- B. TARGET SCOPE & FOCUS COORDINATE -->
-                            <div class="q-mb-xs q-pa-xs rounded-borders bg-slate-900" style="border: 1px solid #334155;">
-                                <div class="row items-center justify-between q-px-xs q-mb-xs">
-                                    <div class="row items-center q-gutter-x-xs text-caption font-mono text-weight-bold text-cyan-4">
-                                        <q-icon name="gps_fixed" size="xs" />
-                                        <span>1. TARGET COORDINATE (WHERE)</span>
-                                    </div>
-                                    <q-btn v-if="focusedElementId" flat dense size="xs" color="slate-300" icon="close" label="Clear Focus" @click="clearFocusedCoordinate" />
-                                </div>
-
-                                <div class="q-pa-xs font-mono text-caption">
-                                    <div class="row items-center justify-between q-mb-xs">
-                                        <q-checkbox 
-                                            v-model="includeTargetCoordinate" 
-                                            label="Include Target AST Slice" 
-                                            dense color="secondary" 
-                                            @update:model-value="syncControlsToAssemblyBuffer"
-                                        />
-                                    </div>
-
-                                    <div class="row items-center q-gutter-xs q-mt-xs">
-                                        <q-chip 
-                                            v-for="(seg, sIdx) in parsedCoordinateArray" 
-                                            :key="sIdx" 
-                                            dense size="sm" 
-                                            :color="sIdx === parsedCoordinateArray.length - 1 ? 'deep-purple-8' : 'slate-800'" 
-                                            text-color="white"
-                                            class="font-mono text-caption"
-                                        >
-                                            {{ seg }}
-                                        </q-chip>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- C. CANONICAL ARCHETYPES -->
-                            <q-expansion-item 
-                                default-opened dense
-                                header-class="bg-slate-900 text-cyan-4 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
-                                icon="architecture"
-                                label="2. CANONICAL ARCHETYPES (STRUCTURE)"
-                            >
-                                <div class="q-pa-xs font-mono text-caption">
-                                    <div class="row items-center justify-between q-mb-xs">
-                                        <span class="text-caption text-slate-200 text-weight-bold">CANONICAL BLUEPRINTS</span>
-                                        <q-btn flat dense icon="refresh" size="xs" color="cyan-4" label="Rescan" @click="fetchMcpArchetypes" />
-                                    </div>
-
-                                    <div class="row q-gutter-xs items-center q-mb-xs">
-                                        <q-chip 
-                                            v-for="arch in availableArchetypes" 
-                                            :key="arch.uri"
-                                            v-model:selected="arch.selected"
-                                            clickable
-                                            dense
-                                            color="slate-800"
-                                            text-color="white"
-                                            :class="{ 'bg-cyan-9 text-white': arch.selected }"
-                                            icon="code"
-                                            @click="toggleArchetype(arch)"
-                                        >
-                                            {{ arch.name }} ({{ arch.component }})
-                                        </q-chip>
-                                        <div v-if="availableArchetypes.length === 0" class="text-caption text-slate-400 italic">
-                                            No archetypes found under mcp/resources/screen/archetype/
-                                        </div>
-                                    </div>
-
-                                    <q-expansion-item 
-                                        v-if="selectedArchetypePreview" 
-                                        dense 
-                                        header-class="text-caption text-slate-200 rounded-borders q-pa-xs"
-                                        :label="'Blueprint: ' + selectedArchetypePreview.name"
-                                        default-opened
+                                <div class="row items-center q-gutter-xs q-mt-xs">
+                                    <q-chip 
+                                        v-for="(seg, sIdx) in parsedCoordinateArray" 
+                                        :key="sIdx" 
+                                        dense size="sm" 
+                                        :color="sIdx === parsedCoordinateArray.length - 1 ? 'deep-purple-8' : 'slate-800'" 
+                                        text-color="white"
+                                        class="font-mono text-caption"
                                     >
-                                        <pre class="q-pa-xs bg-slate-950 text-slate-200 rounded-borders overflow-auto" style="font-size: 10px; max-height: 120px; border: 1px solid #1e293b;">{{ selectedArchetypePreview.xml }}</pre>
-                                    </q-expansion-item>
+                                        {{ seg }}
+                                    </q-chip>
                                 </div>
-                            </q-expansion-item>
-
-                            <!-- D. DATA GROUNDING & ENTITY SCHEMAS -->
-                            <q-expansion-item 
-                                default-opened dense
-                                header-class="bg-slate-900 text-teal-4 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
-                                icon="storage"
-                                label="3. DATA GROUNDING (DATA)"
-                            >
-                                <div class="q-pa-xs q-gutter-y-xs font-mono text-caption">
-                                    <div class="text-caption text-slate-200 text-weight-bold q-mb-xs">DETECTED ENTITIES &amp; SCHEMAS</div>
-                                    <q-list dense separator class="bg-black rounded-borders max-h-32 overflow-y-auto">
-                                        <q-item v-for="(ent, idx) in detectedEntities" :key="idx" tag="label" class="q-pa-xs" v-ripple>
-                                            <q-item-section side top>
-                                                <q-checkbox v-model="ent.enabled" dense color="secondary" @update:model-value="syncControlsToAssemblyBuffer" />
-                                            </q-item-section>
-                                            <q-item-section>
-                                                <q-item-label class="text-weight-bold text-caption text-secondary">
-                                                    {{ ent.entityName }}
-                                                    <q-badge v-if="ent.isPrimary" color="purple-8" class="q-ml-xs text-caption" style="font-size: 8px;">Primary</q-badge>
-                                                </q-item-label>
-                                                <q-item-label caption class="text-slate-400" style="font-size: 9px;">
-                                                    {{ Object.keys(ent.fields || {}).length }} fields | {{ (ent.relationships || []).length }} relationships
-                                                </q-item-label>
-                                            </q-item-section>
-                                        </q-item>
-                                        <q-item v-if="detectedEntities.length === 0" class="q-pa-xs">
-                                            <q-item-section class="text-slate-400 italic text-center text-caption font-mono">
-                                                No direct entity mappings detected.
-                                            </q-item-section>
-                                        </q-item>
-                                    </q-list>
-
-                                    <div class="row items-center q-gutter-x-xs q-mt-xs">
-                                        <q-checkbox v-model="includeFullAst" dense color="cyan-4" label="Full Screen AST" @update:model-value="syncControlsToAssemblyBuffer" />
-                                        <q-checkbox v-model="includeRawXml" dense color="cyan-4" label="Raw XML" @update:model-value="syncControlsToAssemblyBuffer" />
-                                    </div>
-                                </div>
-                            </q-expansion-item>
-
-                            <!-- E. BUSINESS INTENT THREADS -->
-                            <q-expansion-item 
-                                default-opened dense
-                                header-class="bg-slate-900 text-purple-3 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
-                                icon="account_tree"
-                                label="4. BUSINESS INTENT &amp; THREADS (WHY)"
-                            >
-                                <div class="q-pa-xs bg-black rounded-borders" style="min-height: 140px; max-height: 180px; overflow-y: auto; border: 1px solid #1e293b;">
-                                    <discussion-tree 
-                                        :key="blueprintTreeKey"
-                                        wiki-space-id="AGI_INTENT"
-                                        :agi-artifact-id="targetArtifactId || ''"
-                                        :source-reference-id="activeArtifactLocation || ''">
-                                        <template v-slot:node-detail="{ node }">
-                                            <discussion-detail :node="node">
-                                                <div class="q-pa-xs row items-center justify-between bg-slate-900 rounded-borders q-mb-xs">
-                                                    <q-checkbox 
-                                                        v-model="selectedIntents" 
-                                                        :val="node.wikiPageId || node.id" 
-                                                        label="Attach to Staged Buffer" 
-                                                        dense 
-                                                        color="secondary" 
-                                                        @update:model-value="syncControlsToAssemblyBuffer"
-                                                    />
-                                                </div>
-                                                <agi-intent-detail 
-                                                    :node="node" 
-                                                    :selected-artifact="{ agiArtifactId: targetArtifactId, artifactPath: activeArtifactLocation }"
-                                                />
-                                            </discussion-detail>
-                                        </template>
-                                    </discussion-tree>
-                                </div>
-                            </q-expansion-item>
-
-                            <!-- F. GOVERNANCE RULES -->
-                            <q-expansion-item 
-                                default-opened dense
-                                header-class="bg-slate-900 text-amber-4 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
-                                icon="gavel"
-                                label="5. GOVERNANCE &amp; COMPLIANCE"
-                            >
-                                <div class="q-pa-xs q-gutter-y-xs font-mono text-caption">
-                                    <q-list dense separator class="bg-black rounded-borders">
-                                        <q-item v-for="(rule, idx) in governanceRules" :key="idx" tag="label" class="q-pa-xs" v-ripple>
-                                            <q-item-section side top>
-                                                <q-checkbox v-model="rule.enabled" dense color="secondary" @update:model-value="syncControlsToAssemblyBuffer" />
-                                            </q-item-section>
-                                            <q-item-section>
-                                                <q-item-label class="text-weight-bold text-caption text-secondary">{{ rule.title }}</q-item-label>
-                                                <q-item-label caption class="text-slate-300" style="font-size: 10px;">{{ rule.snippet }}</q-item-label>
-                                            </q-item-section>
-                                        </q-item>
-                                    </q-list>
-                                </div>
-                            </q-expansion-item>
-
-                            <!-- G. PROVENANCE & PAYLOAD HISTORY -->
-                            <q-expansion-item 
-                                dense
-                                header-class="bg-slate-900 text-slate-200 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
-                                icon="history"
-                                label="6. PROVENANCE &amp; HISTORY"
-                            >
-                                <div class="q-pa-xs bg-black rounded-borders max-h-32 overflow-y-auto">
-                                    <q-list separator dense v-if="promptHistory.length > 0">
-                                        <q-item v-for="(hist, idx) in promptHistory" :key="idx" class="q-pa-xs">
-                                            <q-item-section>
-                                                <div class="row items-center justify-between">
-                                                    <span class="font-mono text-caption text-primary" style="font-size: 10px;">{{ hist.timestamp }} ({{ hist.mode || 'build' }})</span>
-                                                    <q-btn flat dense size="xs" color="secondary" icon="tune" label="Fork" @click="forkHistoryTurn(hist)" />
-                                                </div>
-                                                <div class="text-slate-200 font-mono ellipsis" style="font-size: 11px;">{{ hist.text }}</div>
-                                            </q-item-section>
-                                        </q-item>
-                                    </q-list>
-                                    <div v-else class="text-center text-slate-400 italic q-pa-xs text-caption">No prior turns in this session.</div>
-                                </div>
-                            </q-expansion-item>
-
+                            </div>
                         </div>
 
-                        <!-- RIGHT PANE: ADAPTIVE VIEWPORTS & ASSEMBLY BUFFER (58% Width) -->
-                        <div class="col-7 column no-wrap bg-slate-900 q-pa-sm justify-between">
-                            
-                            <div class="row items-center justify-between q-mb-xs">
-                                <div class="row items-center q-gutter-x-xs text-caption font-mono text-weight-bold text-cyan-4">
-                                    <q-icon :name="modeViewportIcon" size="xs" />
-                                    <span>{{ modeViewportTitle }}</span>
+                        <!-- C. CANONICAL ARCHETYPES (Polymorphic) -->
+                        <q-expansion-item 
+                            v-if="isPanelVisible('canonicalArchetypes')"
+                            default-opened dense
+                            header-class="bg-slate-900 text-cyan-4 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
+                            icon="architecture"
+                            label="2. CANONICAL ARCHETYPES (STRUCTURE)"
+                        >
+                            <div class="q-pa-xs font-mono text-caption">
+                                <div class="row items-center justify-between q-mb-xs">
+                                    <span class="text-caption text-slate-200 text-weight-bold">CANONICAL BLUEPRINTS</span>
+                                    <q-btn flat dense icon="refresh" size="xs" color="cyan-4" label="Rescan" @click="fetchMcpArchetypes" />
                                 </div>
-                                <span class="text-caption font-mono text-slate-300" style="font-size: 11px;">
-                                    Payload Target: {{ targetArtifactId ? 'AgiArtifact #' + targetArtifactId : 'Root Intent' }}
-                                </span>
-                            </div>
 
-                            <!-- 1. TEST MODE SPECIFIC VIEWPORT -->
-                            <div v-if="currentMode === 'test'" class="col column q-gutter-y-xs">
-                                <div class="row items-center justify-between text-caption font-mono text-slate-200">
-                                    <span>Declarative Test Manifest Pipeline (JSON):</span>
-                                    <q-btn flat dense size="xs" color="teal-4" icon="add" label="Template Assertion" @click="addTestStepTemplate" />
+                                <div class="row q-gutter-xs items-center q-mb-xs">
+                                    <q-chip 
+                                        v-for="arch in availableArchetypes" 
+                                        :key="arch.uri"
+                                        v-model:selected="arch.selected"
+                                        clickable
+                                        dense
+                                        color="slate-800"
+                                        text-color="white"
+                                        :class="{ 'bg-cyan-9 text-white': arch.selected }"
+                                        icon="code"
+                                        @click="toggleArchetype(arch)"
+                                    >
+                                        {{ arch.name }} ({{ arch.component }})
+                                    </q-chip>
+                                    <div v-if="availableArchetypes.length === 0" class="text-caption text-slate-400 italic">
+                                        No archetypes found under mcp/resources/screen/archetype/
+                                    </div>
                                 </div>
-                                <textarea 
-                                    v-model="testManifestJsonText"
-                                    class="col full-width font-mono text-caption q-pa-sm rounded-borders"
-                                    style="background-color: #020617; color: #5eead4; border: 1px solid #115e59; resize: none; font-size: 11px; line-height: 16px;"
-                                    placeholder='[ { "stepId": "01_ASSERT", "action": "ASSERT_STATE", "assertions": { "expectFileExists": true } } ]'
-                                ></textarea>
-                            </div>
 
-                            <!-- 2. DEFAULT ASSEMBLY BUFFER VIEWPORT (PLAN, BUILD, ORCHESTRATE, DISCUSS, QUERY, HISTORY) -->
+                                <q-expansion-item 
+                                    v-if="selectedArchetypePreview" 
+                                    dense 
+                                    header-class="text-caption text-slate-200 rounded-borders q-pa-xs"
+                                    :label="'Blueprint: ' + selectedArchetypePreview.name"
+                                    default-opened
+                                >
+                                    <pre class="q-pa-xs bg-slate-950 text-slate-200 rounded-borders overflow-auto" style="font-size: 10px; max-height: 120px; border: 1px solid #1e293b;">{{ selectedArchetypePreview.xml }}</pre>
+                                </q-expansion-item>
+                            </div>
+                        </q-expansion-item>
+
+                        <!-- D. DATA GROUNDING & ENTITY SCHEMAS (Polymorphic) -->
+                        <q-expansion-item 
+                            v-if="isPanelVisible('detectedEntities')"
+                            default-opened dense
+                            header-class="bg-slate-900 text-teal-4 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
+                            icon="storage"
+                            label="3. DATA GROUNDING (DATA)"
+                        >
+                            <div class="q-pa-xs q-gutter-y-xs font-mono text-caption">
+                                <div class="text-caption text-slate-200 text-weight-bold q-mb-xs">DETECTED ENTITIES &amp; SCHEMAS</div>
+                                <q-list dense separator class="bg-black rounded-borders max-h-32 overflow-y-auto">
+                                    <q-item v-for="(ent, idx) in detectedEntities" :key="idx" tag="label" class="q-pa-xs" v-ripple>
+                                        <q-item-section side top>
+                                            <q-checkbox v-model="ent.enabled" dense color="secondary" @update:model-value="syncControlsToAssemblyBuffer" />
+                                        </q-item-section>
+                                        <q-item-section>
+                                            <q-item-label class="text-weight-bold text-caption text-secondary">
+                                                {{ ent.entityName }}
+                                                <q-badge v-if="ent.isPrimary" color="purple-8" class="q-ml-xs text-caption" style="font-size: 8px;">Primary</q-badge>
+                                            </q-item-label>
+                                            <q-item-label caption class="text-slate-400" style="font-size: 9px;">
+                                                {{ Object.keys(ent.fields || {}).length }} fields | {{ (ent.relationships || []).length }} relationships
+                                            </q-item-label>
+                                        </q-item-section>
+                                    </q-item>
+                                    <q-item v-if="detectedEntities.length === 0" class="q-pa-xs">
+                                        <q-item-section class="text-slate-400 italic text-center text-caption font-mono">
+                                            No direct entity mappings detected.
+                                        </q-item-section>
+                                    </q-item>
+                                </q-list>
+
+                                <div class="row items-center q-gutter-x-xs q-mt-xs">
+                                    <q-checkbox v-model="includeFullAst" dense color="cyan-4" label="Full Screen AST" @update:model-value="syncControlsToAssemblyBuffer" />
+                                    <q-checkbox v-model="includeRawXml" dense color="cyan-4" label="Raw XML" @update:model-value="syncControlsToAssemblyBuffer" />
+                                </div>
+                            </div>
+                        </q-expansion-item>
+
+                        <!-- E. BUSINESS INTENT THREADS (Polymorphic) -->
+                        <q-expansion-item 
+                            v-if="isPanelVisible('intentThreads')"
+                            default-opened dense
+                            header-class="bg-slate-900 text-purple-3 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
+                            icon="account_tree"
+                            label="4. BUSINESS INTENT &amp; THREADS (WHY)"
+                        >
+                            <div class="q-pa-xs bg-black rounded-borders" style="min-height: 140px; max-height: 180px; overflow-y: auto; border: 1px solid #1e293b;">
+                                <discussion-tree 
+                                    :key="blueprintTreeKey"
+                                    wiki-space-id="AGI_INTENT"
+                                    :agi-artifact-id="targetArtifactId || ''"
+                                    :source-reference-id="activeArtifactLocation || ''">
+                                    <template v-slot:node-detail="{ node }">
+                                        <discussion-detail :node="node">
+                                            <div class="q-pa-xs row items-center justify-between bg-slate-900 rounded-borders q-mb-xs">
+                                                <q-checkbox 
+                                                    v-model="selectedIntents" 
+                                                    :val="node.wikiPageId || node.id" 
+                                                    label="Attach to Staged Buffer" 
+                                                    dense 
+                                                    color="secondary" 
+                                                    @update:model-value="syncControlsToAssemblyBuffer"
+                                                />
+                                            </div>
+                                            <agi-intent-detail 
+                                                :node="node" 
+                                                :selected-artifact="{ agiArtifactId: targetArtifactId, artifactPath: activeArtifactLocation }"
+                                            />
+                                        </discussion-detail>
+                                    </template>
+                                </discussion-tree>
+                            </div>
+                        </q-expansion-item>
+
+                        <!-- F. GOVERNANCE RULES (Polymorphic) -->
+                        <q-expansion-item 
+                            v-if="isPanelVisible('governanceRules')"
+                            default-opened dense
+                            header-class="bg-slate-900 text-amber-4 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
+                            icon="gavel"
+                            label="5. GOVERNANCE &amp; COMPLIANCE"
+                        >
+                            <div class="q-pa-xs q-gutter-y-xs font-mono text-caption">
+                                <q-list dense separator class="bg-black rounded-borders">
+                                    <q-item v-for="(rule, idx) in governanceRules" :key="idx" tag="label" class="q-pa-xs" v-ripple>
+                                        <q-item-section side top>
+                                            <q-checkbox v-model="rule.enabled" dense color="secondary" @update:model-value="syncControlsToAssemblyBuffer" />
+                                        </q-item-section>
+                                        <q-item-section>
+                                            <q-item-label class="text-weight-bold text-caption text-secondary">{{ rule.title }}</q-item-label>
+                                            <q-item-label caption class="text-slate-300" style="font-size: 10px;">{{ rule.snippet }}</q-item-label>
+                                        </q-item-section>
+                                    </q-item>
+                                </q-list>
+                            </div>
+                        </q-expansion-item>
+
+                        <!-- G. SERVICE/ENTITY/TEST FALLBACK PLACEHOLDER -->
+                        <div v-if="activeArtifactMetadata.artifactType !== 'XML_SCREEN'" class="q-pa-sm q-mt-xs rounded-borders bg-slate-900 border-dark text-caption font-mono" style="border: 1px solid #334155;">
+                            <div class="text-weight-bold text-teal-4 q-mb-xs">SPECIFICATION GROUNDING</div>
+                            <div class="text-slate-300" style="font-size: 11px;">Schema: <span class="text-cyan-3">{{ activeArtifactMetadata.schemaUri || 'Generic' }}</span></div>
+                            <div class="text-slate-400 q-mt-xs" style="font-size: 10px;">Instruction: {{ activeArtifactMetadata.instructionUri }}</div>
+                        </div>
+
+                        <!-- H. PROVENANCE & PAYLOAD HISTORY -->
+                        <q-expansion-item 
+                            dense
+                            header-class="bg-slate-900 text-slate-200 text-weight-bold font-mono text-caption q-pa-xs rounded-borders q-mt-xs"
+                            icon="history"
+                            label="6. PROVENANCE &amp; HISTORY"
+                        >
+                            <div class="q-pa-xs bg-black rounded-borders max-h-32 overflow-y-auto">
+                                <q-list separator dense v-if="promptHistory.length > 0">
+                                    <q-item v-for="(hist, idx) in promptHistory" :key="idx" class="q-pa-xs">
+                                        <q-item-section>
+                                            <div class="row items-center justify-between">
+                                                <span class="font-mono text-caption text-primary" style="font-size: 10px;">{{ hist.timestamp }} ({{ hist.mode || 'build' }})</span>
+                                                <q-btn flat dense size="xs" color="secondary" icon="tune" label="Fork" @click="forkHistoryTurn(hist)" />
+                                            </div>
+                                            <div class="text-slate-200 font-mono ellipsis" style="font-size: 11px;">{{ hist.text }}</div>
+                                        </q-item-section>
+                                    </q-item>
+                                </q-list>
+                                <div v-else class="text-center text-slate-400 italic q-pa-xs text-caption">No prior turns in this session.</div>
+                            </div>
+                        </q-expansion-item>
+
+                    </div>
+
+                    <!-- RIGHT PANE: ADAPTIVE VIEWPORTS & ASSEMBLY BUFFER (58% Width) -->
+                    <div class="col-7 column no-wrap bg-slate-900 q-pa-sm justify-between">
+                        
+                        <div class="row items-center justify-between q-mb-xs">
+                            <div class="row items-center q-gutter-x-xs text-caption font-mono text-weight-bold text-cyan-4">
+                                <q-icon :name="modeViewportIcon" size="xs" />
+                                <span>{{ modeViewportTitle }}</span>
+                            </div>
+                            <span class="text-caption font-mono text-slate-300" style="font-size: 11px;">
+                                Payload Target: {{ targetArtifactId ? 'AgiArtifact #' + targetArtifactId : 'Root Intent' }}
+                            </span>
+                        </div>
+
+                        <!-- 1. TEST MODE SPECIFIC VIEWPORT -->
+                        <div v-if="currentMode === 'test'" class="col column q-gutter-y-xs">
+                            <div class="row items-center justify-between text-caption font-mono text-slate-200">
+                                <span>Declarative Test Manifest Pipeline (JSON):</span>
+                                <q-btn flat dense size="xs" color="teal-4" icon="add" label="Template Assertion" @click="addTestStepTemplate" />
+                            </div>
                             <textarea 
-                                v-else
-                                v-model="stagedAssemblyBuffer"
+                                v-model="testManifestJsonText"
                                 class="col full-width font-mono text-caption q-pa-sm rounded-borders"
-                                style="background-color: #020617; color: #f8fafc; border: 1px solid #334155; resize: none; font-size: 11px; line-height: 16px; font-family: monospace;"
-                                placeholder="/* Staged assembly buffer automatically populates from left controls. You can make ad-hoc edits directly here before dispatching... */"
+                                style="background-color: #020617; color: #5eead4; border: 1px solid #115e59; resize: none; font-size: 11px; line-height: 16px;"
+                                placeholder='[ { "stepId": "01_ASSERT", "action": "ASSERT_STATE", "assertions": { "expectFileExists": true } } ]'
                             ></textarea>
+                        </div>
 
-                            <!-- Bottom Telemetry & Status Bar -->
-                            <div class="q-mt-xs q-pa-xs bg-slate-950 rounded-borders row items-center justify-between text-caption font-mono text-slate-300" style="border: 1px solid #1e293b;">
-                                <div class="row items-center q-gutter-x-sm">
-                                    <q-badge color="purple-8">{{ includeTargetCoordinate && focusedElementId ? 'Target: <' + displayTargetTag + '>' : 'Root Target' }}</q-badge>
-                                    <q-badge color="cyan-9">{{ activeArchetypesCount }} Archetypes</q-badge>
-                                    <q-badge color="teal-9">{{ activeEntitiesCount }} Entities</q-badge>
-                                    <q-badge color="deep-purple-8">{{ selectedIntents.length }} Intents</q-badge>
-                                    <q-badge color="secondary">{{ activeRulesCount }} Rules</q-badge>
-                                </div>
-                                <span style="font-size: 11px;">FSM Mode: <strong class="text-white">{{ currentMode.toUpperCase() }}</strong></span>
+                        <!-- 2. DEFAULT ASSEMBLY BUFFER VIEWPORT -->
+                        <textarea 
+                            v-else
+                            v-model="stagedAssemblyBuffer"
+                            class="col full-width font-mono text-caption q-pa-sm rounded-borders"
+                            style="background-color: #020617; color: #f8fafc; border: 1px solid #334155; resize: none; font-size: 11px; line-height: 16px; font-family: monospace;"
+                            placeholder="/* Staged assembly buffer automatically populates from left controls. You can make ad-hoc edits directly here before dispatching... */"
+                        ></textarea>
+
+                        <!-- Bottom Telemetry & Status Bar -->
+                        <div class="q-mt-xs q-pa-xs bg-slate-950 rounded-borders row items-center justify-between text-caption font-mono text-slate-300" style="border: 1px solid #1e293b;">
+                            <div class="row items-center q-gutter-x-sm">
+                                <q-badge color="purple-8">{{ includeTargetCoordinate && focusedElementId ? 'Target: <' + displayTargetTag + '>' : 'Root Target' }}</q-badge>
+                                <q-badge color="cyan-9">{{ activeArchetypesCount }} Archetypes</q-badge>
+                                <q-badge color="teal-9">{{ activeEntitiesCount }} Entities</q-badge>
+                                <q-badge color="deep-purple-8">{{ selectedIntents.length }} Intents</q-badge>
+                                <q-badge color="secondary">{{ activeRulesCount }} Rules</q-badge>
                             </div>
-
+                            <span style="font-size: 11px;">FSM Mode: <strong class="text-white">{{ currentMode.toUpperCase() }}</strong></span>
                         </div>
 
                     </div>
 
-                </q-card>
-            </q-dialog>
+                </div>
+
+            </div>
         `,
         data() {
             return {
-                isOpen: false,
                 currentMode: 'build',
                 userPrompt: '',
-                targetComponent: 'nursinghome',
-                activeArtifactLocation: '',
+                targetComponent: this.targetComponentProp || 'nursinghome',
+                activeArtifactLocation: this.activeArtifact || '',
                 targetArtifactId: '',
                 focusedElementId: '',
                 blueprintTreeKey: 1,
@@ -627,6 +641,16 @@
                 registeredCommands: [],
                 historySearchFilter: '',
                 matchingHistoricalPayloads: [],
+
+                // Introspected Registry Metadata
+                activeArtifactMetadata: {
+                    artifactType: 'XML_SCREEN',
+                    typeName: 'Moqui XML Screen',
+                    schemaUri: '',
+                    instructionUri: '',
+                    editorComponent: 'agi-screen-payload-editor',
+                    groundingPanels: ['targetCoordinate', 'canonicalArchetypes', 'detectedEntities', 'intentThreads', 'governanceRules']
+                },
 
                 // Assist Modes FSM Definitions
                 assistModes: [
@@ -675,12 +699,10 @@
                     { key: 'hipaa', val: 'true', label: 'hipaa' }
                 ],
 
-                // Archetypes & MCP Resources
                 availableArchetypes: [],
                 selectedArchetypePreview: null,
                 archetypeContentCache: {},
 
-                // Left Pane Grounding Controls State
                 includeTargetCoordinate: true,
                 includeFullAst: false,
                 includeRawXml: false,
@@ -692,7 +714,6 @@
                     { title: 'Strict xml-screen-3.xsd', snippet: 'Never wrap <hidden/> or <display/> in <container name="...">; use declarative forms', enabled: true }
                 ],
 
-                // Right Pane Editable Assembly Buffer
                 stagedAssemblyBuffer: ''
             };
         },
@@ -865,6 +886,16 @@
             }
         },
 
+        watch: {
+            activeArtifact(newUri) {
+                if (newUri && newUri !== this.activeArtifactLocation) {
+                    this.activeArtifactLocation = newUri;
+                    this.fetchArtifactMetadata(newUri);
+                    this.fetchActiveRagContext(newUri);
+                }
+            }
+        },
+
         mounted() {
             const vm = this;
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
@@ -886,15 +917,16 @@
 
                     if (vm.activeArtifactLocation === oldUri || !vm.activeArtifactLocation) {
                         vm.activeArtifactLocation = newUri;
+                        vm.fetchArtifactMetadata(newUri);
                         vm.fetchActiveRagContext(newUri);
                     }
                     return;
                 }
 
-                if (event.data.event === 'force-open-command-palette' || event.data.event === 'open-prompt-editor') {
-                    vm.targetComponent = event.data.targetComponent || 'nursinghome';
-                    vm.activeArtifactLocation = event.data.artifactLocation || vm.activeArtifactLocation || '';
-                    vm.targetArtifactId = event.data.agiArtifactId || '';
+                if (event.data.event === 'force-open-command-palette' || event.data.event === 'open-prompt-editor' || event.data.event === 'open-screen-artifact') {
+                    vm.targetComponent = event.data.targetComponent || vm.targetComponent || 'nursinghome';
+                    vm.activeArtifactLocation = event.data.artifactLocation || event.data.artifactUri || vm.activeArtifactLocation || '';
+                    vm.targetArtifactId = event.data.agiArtifactId || vm.targetArtifactId || '';
 
                     let coord = event.data.focusCoordinate || vm.focusedElementId || '';
                     if (coord.includes('agi-workspace-root')) {
@@ -904,23 +936,23 @@
                     vm.focusedElementId = coord;
                     vm.includeTargetCoordinate = !!coord;
 
-                    vm.isOpen = true;
                     vm.fetchDynamicTools();
                     vm.fetchMcpArchetypes();
                     if (vm.activeArtifactLocation) {
+                        vm.fetchArtifactMetadata(vm.activeArtifactLocation);
                         vm.fetchActiveRagContext(vm.activeArtifactLocation);
                     } else {
                         vm.syncControlsToAssemblyBuffer();
-                    }
-
-                    if (vm.contextBus) {
-                        vm.contextBus.postMessage({ event: 'refresh-artifact-palette' });
                     }
                 }
             };
 
             this.fetchDynamicTools();
             this.fetchMcpArchetypes();
+            if (this.activeArtifactLocation) {
+                this.fetchArtifactMetadata(this.activeArtifactLocation);
+                this.fetchActiveRagContext(this.activeArtifactLocation);
+            }
         },
         beforeUnmount() {
             if (this.contextBus) this.contextBus.close();
@@ -932,6 +964,39 @@
                     || (window.opener && window.opener.moqui && window.opener.moqui.moquiSessionToken)
                     || (document.querySelector('meta[name="moqui-session-token"]')?.getAttribute('content'))
                     || "";
+            },
+
+            async fetchArtifactMetadata(uri) {
+                if (!uri) return;
+                try {
+                    const resp = await axios.get('/rest/s1/agi-ai/artifactMetadata', {
+                        params: { artifactUri: uri },
+                        headers: { 'moquiSessionToken': this.resolveCsrfToken() }
+                    });
+                    if (resp.data) {
+                        this.activeArtifactMetadata = {
+                            artifactType: resp.data.artifactType || 'XML_SCREEN',
+                            typeName: resp.data.typeName || 'Artifact',
+                            schemaUri: resp.data.schemaUri || '',
+                            instructionUri: resp.data.instructionUri || '',
+                            editorComponent: resp.data.editorComponent || 'agi-screen-payload-editor',
+                            groundingPanels: resp.data.groundingPanels || []
+                        };
+                    }
+                } catch (e) {
+                    console.warn("Could not introspect artifact metadata:", e);
+                }
+            },
+
+            isPanelVisible(panelName) {
+                return (this.activeArtifactMetadata?.groundingPanels || []).includes(panelName);
+            },
+
+            closeDockedEditor() {
+                this.$emit('close');
+                if (this.contextBus) {
+                    this.contextBus.postMessage({ event: 'close-prompt-editor' });
+                }
             },
 
             onModeChange(newMode) {
@@ -1007,17 +1072,9 @@
                 this.showCommandList = val.startsWith('/') && !this.selectedCommand;
             },
 
-            onDialogClosed() {
-                // Preserve userPrompt when closing if in plan mode
-                if (this.currentMode !== 'plan') {
-                    this.userPrompt = '';
-                }
-                this.showPalette = false;
-                this.clearSelectedCommand();
-            },
-
             onArtifactSelectedFromPalette(item) {
                 this.activeArtifactLocation = item.value;
+                this.fetchArtifactMetadata(item.value);
                 this.fetchActiveRagContext(item.value);
                 this.showPalette = false;
 
@@ -1137,7 +1194,6 @@
                 const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
                 const openBraceChar = String.fromCharCode(123);
 
-                // 1. Load Workspace Buffer AST
                 try {
                     const response = await axios.get('/rest/s1/agi-ide/getWorkspaceBuffer', {
                         params: { artifactUri: artifactUri },
@@ -1158,7 +1214,6 @@
                     vm.rawAstObject = null;
                 }
 
-                // 2. Fetch Entity Grounding
                 try {
                     const entityResp = await axios.get('/rest/s1/agi-ide/getScreenEntityGrounding', {
                         params: { artifactUri: artifactUri },
@@ -1192,7 +1247,6 @@
             syncControlsToAssemblyBuffer() {
                 const lines = [];
 
-                // 1. Target Scope Section
                 if (this.includeTargetCoordinate && this.focusedElementId && this.rawAstObject) {
                     const targetName = this.focusedElementId.split('#').pop();
 
@@ -1227,14 +1281,13 @@
                     lines.push("");
                 } else {
                     lines.push("/* ========================================================================= */");
-                    lines.push("/* [1. TARGET SCOPE]: Entire Screen / Root Container                         */");
+                    lines.push("/* [1. TARGET SCOPE]: Entire Artifact / Root Container                      */");
                     lines.push("/* ========================================================================= */");
                     lines.push("");
                 }
 
-                // 2. Canonical Archetypes
                 const activeArchs = this.availableArchetypes.filter(a => a.selected);
-                if (activeArchs.length > 0) {
+                if (this.isPanelVisible('canonicalArchetypes') && activeArchs.length > 0) {
                     lines.push("/* ========================================================================= */");
                     lines.push(`/* [2. CANONICAL ARCHETYPE BLUEPRINTS]: ${activeArchs.length} Selected               */`);
                     lines.push("/* ========================================================================= */");
@@ -1250,35 +1303,35 @@
                     });
                 }
 
-                // 3. Data Grounding & Schemas Section
                 const activeEntities = (this.detectedEntities || []).filter(e => e.enabled);
-                lines.push("/* ========================================================================= */");
-                lines.push(`/* [3. DATA GROUNDING & SCHEMAS]: ${activeEntities.length} Entities Selected             */`);
-                lines.push("/* ========================================================================= */");
+                if (this.isPanelVisible('detectedEntities')) {
+                    lines.push("/* ========================================================================= */");
+                    lines.push(`/* [3. DATA GROUNDING & SCHEMAS]: ${activeEntities.length} Entities Selected             */`);
+                    lines.push("/* ========================================================================= */");
 
-                activeEntities.forEach(ent => {
-                    lines.push(`/* Entity: ${ent.entityName} ${ent.isPrimary ? '(Primary Target)' : ''} */`);
-                    lines.push(JSON.stringify({
-                        entityName: ent.entityName,
-                        fields: ent.fields || {},
-                        relationships: ent.relationships || []
-                    }, null, 2));
-                    lines.push("");
-                });
+                    activeEntities.forEach(ent => {
+                        lines.push(`/* Entity: ${ent.entityName} ${ent.isPrimary ? '(Primary Target)' : ''} */`);
+                        lines.push(JSON.stringify({
+                            entityName: ent.entityName,
+                            fields: ent.fields || {},
+                            relationships: ent.relationships || []
+                        }, null, 2));
+                        lines.push("");
+                    });
 
-                if (this.includeFullAst && this.rawAstObject) {
-                    lines.push("/* Full Screen Blueprint AST: */");
-                    lines.push(JSON.stringify(this.rawAstObject, null, 2));
-                    lines.push("");
+                    if (this.includeFullAst && this.rawAstObject) {
+                        lines.push("/* Full Screen Blueprint AST: */");
+                        lines.push(JSON.stringify(this.rawAstObject, null, 2));
+                        lines.push("");
+                    }
+                    if (this.includeRawXml && this.rawXmlSource) {
+                        lines.push("/* Raw Screen XML Source: */");
+                        lines.push(this.rawXmlSource);
+                        lines.push("");
+                    }
                 }
-                if (this.includeRawXml && this.rawXmlSource) {
-                    lines.push("/* Raw Screen XML Source: */");
-                    lines.push(this.rawXmlSource);
-                    lines.push("");
-                }
 
-                // 4. Business Intent Grounding
-                if (this.selectedIntents.length > 0) {
+                if (this.isPanelVisible('intentThreads') && this.selectedIntents.length > 0) {
                     lines.push("/* ========================================================================= */");
                     lines.push(`/* [4. BUSINESS INTENT SPECIFICATIONS]: ${this.selectedIntents.length} attached            */`);
                     lines.push("/* ========================================================================= */");
@@ -1288,9 +1341,8 @@
                     lines.push("");
                 }
 
-                // 5. Governance Rules
                 const activeRules = this.governanceRules.filter(r => r.enabled);
-                if (activeRules.length > 0) {
+                if (this.isPanelVisible('governanceRules') && activeRules.length > 0) {
                     lines.push("/* ========================================================================= */");
                     lines.push("/* [5. GOVERNANCE & COMPLIANCE DIRECTIVES]                                   */");
                     lines.push("/* ========================================================================= */");
@@ -1307,7 +1359,6 @@
                 this.stagedAssemblyBuffer = lines.join("\n");
             },
 
-            // 🎯 DISPATCH TURN: Synchronizes via McpPayloadServices.process#Payload and executes
             async handleDirectDispatch() {
                 if (!this.userPrompt.trim()) return;
 
@@ -1345,7 +1396,6 @@
                 };
 
                 try {
-                    // 1. Process Payload Envelope in agi-ai
                     const payloadResp = await axios.post('/rest/s1/agi-ai/payload', payloadEnvelope, { headers });
                     const pldData = payloadResp.data || {};
 
@@ -1354,7 +1404,6 @@
                         this.payloadState.statusId = pldData.statusId;
                     }
 
-                    // 2. Dispatch turn to Agent Runner
                     const activeEntityRag = (this.detectedEntities || []).filter(e => e.enabled).map(e => ({
                         category: 'ENTITY_SCHEMA',
                         title: e.entityName,
@@ -1364,8 +1413,9 @@
 
                     const dispatchBody = {
                         agiPayloadId: this.payloadState.agiPayloadId,
+                        mode: this.currentMode,
                         artifactUri: previousFileUri,
-                        targetComponent: this.targetComponent || 'nursinghome',
+                        targetComponent: this.targetComponent,
                         focusCoordinate: this.includeTargetCoordinate ? (this.focusedElementId || null) : null,
                         focusCoordinateArray: this.includeTargetCoordinate ? this.parsedCoordinateArray : [],
                         userPrompt: executedPromptText,
@@ -1376,6 +1426,7 @@
                         selectedIntents: this.selectedIntents,
                         ragContext: [...this.governanceRules.filter(r => r.enabled), ...activeEntityRag],
                         rawXmlContent: this.includeRawXml ? this.rawXmlSource : null,
+                        facets: this.payloadState.facets,
                         activeRagContext: JSON.stringify({
                             artifactUri: previousFileUri,
                             targetComponent: this.targetComponent,
@@ -1384,7 +1435,7 @@
                         })
                     };
 
-                    const response = await axios.post('/rest/s1/agi-ai/executeStagedAgentTurn', dispatchBody, { headers });
+                    const response = await axios.post('/rest/s1/agi-ide/executeStagedAgentTurn', dispatchBody, { headers });
                     this.isExecuting = false;
                     const res = response.data || {};
 
@@ -1464,6 +1515,7 @@
 
                 if (newUri) {
                     vm.activeArtifactLocation = newUri;
+                    vm.fetchArtifactMetadata(newUri);
                     vm.fetchActiveRagContext(newUri);
                 }
 
@@ -1478,7 +1530,6 @@
 
                 vm.blueprintTreeKey++;
 
-                // Ensure userPrompt is preserved whenever in plan mode
                 if (vm.currentMode !== 'plan') {
                     vm.userPrompt = '';
                 }
@@ -1512,6 +1563,7 @@
                 }
                 if (pld.artifactUri) {
                     this.activeArtifactLocation = pld.artifactUri;
+                    this.fetchArtifactMetadata(pld.artifactUri);
                     this.fetchActiveRagContext(pld.artifactUri);
                 }
                 this.syncControlsToAssemblyBuffer();

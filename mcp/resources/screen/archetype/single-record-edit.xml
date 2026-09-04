@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Record Edit Form"
+        description="Single-column or two-column editable input form with validation and submit button">
+
+    <parameter name="partyId"/>
+
+    <transition name="saveRecord">
+        <service-call name="mantle.party.PartyServices.update#Person"/>
+        <default-response url="."/>
+    </transition>
+
+    <actions>
+        <entity-find-one entity-name="mantle.party.Person" value-field="person">
+            <field-map field-name="partyId"/>
+        </entity-find-one>
+    </actions>
+
+    <widgets>
+        <container-box>
+            <box-header title="Edit Information"/>
+            <box-body>
+                <form-single name="EditForm" map="person" transition="saveRecord">
+                    <field name="partyId"><default-field><hidden/></default-field></field>
+                    <field name="firstName"><default-field title="First Name"><text-line/></default-field></field>
+                    <field name="lastName"><default-field title="Last Name"><text-line/></default-field></field>
+                    <field name="submitButton"><default-field title="Save Changes"><submit/></default-field></field>
+                </form-single>
+            </box-body>
+        </container-box>
+    </widgets>
+</screen>

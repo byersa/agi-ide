@@ -26,32 +26,6 @@
         </out-parameters>
     </service>
 
-    <service verb="run" noun="OpenAiProxy" type="script"
-             location="component://agi-ide/script/executeOpenAiProxyLoop.groovy">
-        <description>
-            Executes multi-turn agent tool execution loop against OpenAI-compatible REST endpoints.
-        </description>
-        <in-parameters>
-            <parameter name="userPrompt" required="true" allow-html="any" />
-            <parameter name="targetComponent" default-value="nursinghome"/>
-            <parameter name="focusCoordinate"/>
-            <parameter name="activeArtifactLocation"/>
-            <parameter name="targetMariaId"/>
-            <parameter name="activeRagContext" allow-html="any" />
-            <parameter name="availableToolSchemas" type="List"/>
-            <!-- Optional overrides for dynamic provider selection -->
-            <parameter name="aiEndpointUrl"/>
-            <parameter name="aiApiKey"/>
-            <parameter name="aiModelName"/>
-        </in-parameters>
-        <out-parameters>
-            <parameter name="completionText" type="String"/>
-            <parameter name="status" type="String"/>
-            <parameter name="createdArtifactUri" type="String"/>
-            <parameter name="rawXmlContent" type="String"/>
-        </out-parameters>
-    </service>
-
     <service verb="get" noun="XmlArtifactBlueprint" read-only="true">
         <in-parameters>
             <parameter name="targetComponent" required="true"/>
@@ -236,6 +210,41 @@
                 }
             ]]></script>
         </actions>
+    </service>
+
+    <service verb="execute" noun="StagedAgentTurn" type="script"
+             location="component://agi-ide/script/ExecuteStagedAgentTurn.groovy">
+        <description>
+            Orchestrates a staged prompt turn from APE, delegating to AI gateway and staging buffers.
+        </description>
+        <in-parameters>
+            <parameter name="agiPayloadId"/>
+            <parameter name="artifactUri"/>
+            <parameter name="targetComponent" default-value="nursinghome"/>
+            <parameter name="focusCoordinate"/>
+            <parameter name="focusCoordinateArray" type="List"/>
+            <parameter name="userPrompt" required="true" allow-html="any"/>
+            <parameter name="adHocPrompt" allow-html="any"/>
+            <parameter name="mcpTool"/>
+            <parameter name="mcpParams" type="Map"/>
+            <parameter name="selectedArchetypes" type="List"/>
+            <parameter name="selectedIntents" type="List"/>
+            <parameter name="ragContext" type="List"/>
+            <parameter name="rawXmlContent" allow-html="any"/>
+            <parameter name="facets" type="Map"/>
+            <parameter name="activeRagContext" allow-html="any"/>
+            <parameter name="mode" default-value="build"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="completionText"/>
+            <parameter name="createdArtifactUri"/>
+            <parameter name="rawXmlContent"/>
+            <parameter name="mutatedTree" type="Map"/>
+            <parameter name="isDraft" type="Boolean"/>
+            <parameter name="status"/>
+            <parameter name="message"/>
+            <parameter name="filesGenerated" type="List"/>
+        </out-parameters>
     </service>
 
 </services>

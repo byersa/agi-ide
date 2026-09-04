@@ -17,16 +17,13 @@
         <subscreen name="AgiCanvasEditor" location="component://agi-ide/screen/agi-ide/AgiCanvasEditor.xml"/>
         <subscreen name="AgiScreenEditor" location="component://agi-ide/screen/agi-ide/AgiScreenEditor.xml"/>
         <subscreen name="AgiComponentEditor" location="component://agi-ide/screen/agi-ide/AgiComponentEditor.xml"/>
+        <subscreen name="AgiPromptEditor" location="component://agi-ide/screen/agi-ide/AgiPromptEditor.xml"/>
     </subscreens>
 
     <widgets>
-
-
-
         <container id="agi-workspace-root" 
                    type="agi-workspace" 
                    style="screen-path='${screenPath}'">
         </container>
-
     </widgets>
 </screen>
