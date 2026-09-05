@@ -160,6 +160,7 @@ if (completion instanceof String) {
 } else {
     parsed = proxyResult
 }
+ec.logger.info("parsed result: ${parsed}")
 
 List filesGenerated = []
 // =============================================================================

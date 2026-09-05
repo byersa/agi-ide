@@ -158,6 +158,16 @@
                     }
                     vm.focusedPanel = 'AgiServiceEditor';
                 }
+
+                if (event.data.event === 'focus-editor-panel' && event.data.panelName) {
+                    const target = event.data.panelName;
+                    if (!vm.activeScreens.includes(target)) {
+                        vm.activeScreens.push(target);
+                    }
+                    // Set to docked or maximized
+                    vm.focusedPanel = target;
+                    vm.activeLayoutGrid[target].state = 'docked';
+                }
             };
 
             this.loadRequiredComponents();
