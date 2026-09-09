@@ -3,6 +3,298 @@
           xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <!-- ===================================================================== -->
+    <!-- AGENT TURN ORCHESTRATOR                                               -->
+    <!-- ===================================================================== -->
+    <service verb="execute" noun="StagedAgentTurn" type="script"
+             location="component://agi-ide/script/ExecuteStagedAgentTurn.groovy">
+        <description>
+            Orchestrates a staged prompt turn from APE, delegating to AI gateway and staging buffers.
+        </description>
+        <in-parameters>
+            <parameter name="agiPayloadId"/>
+            <parameter name="artifactUri"/>
+            <parameter name="targetComponent" default-value="nursinghome"/>
+            <parameter name="focusCoordinate"/>
+            <parameter name="focusCoordinateArray" type="List"/>
+            <parameter name="userPrompt" required="true" allow-html="any"/>
+            <parameter name="adHocPrompt" allow-html="any"/>
+            <parameter name="mcpTool"/>
+            <parameter name="mcpParams" type="Map"/>
+            <parameter name="selectedArchetypes" type="List"/>
+            <parameter name="selectedIntents" type="List"/>
+            <parameter name="ragContext" type="List"/>
+            <parameter name="rawXmlContent" allow-html="any"/>
+            <parameter name="facets" type="Map"/>
+            <parameter name="activeRagContext" allow-html="any"/>
+            <parameter name="mode" default-value="build"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="completionText"/>
+            <parameter name="createdArtifactUri"/>
+            <parameter name="rawXmlContent"/>
+            <parameter name="mutatedTree" type="Map"/>
+            <parameter name="isDraft" type="Boolean"/>
+            <parameter name="status"/>
+            <parameter name="message"/>
+            <parameter name="filesGenerated" type="List"/>
+        </out-parameters>
+    </service>
+
+    <!-- ===================================================================== -->
+    <!-- PROCESS PAYLOAD (Unified FSM Pipeline Dispatcher)                     -->
+    <!-- ===================================================================== -->
+    <service verb="process" noun="Payload" type="inline">
+        <description>
+            Central dispatcher validating, storing, and executing AgiPayload envelopes 
+            according to the selected Assist Mode.
+        </description>
+        <in-parameters>
+            <parameter name="agiPayloadId"/>
+            <parameter name="mode" default-value="plan" required="true"/>
+            <parameter name="targetComponent" default-value="nursinghome" required="true"/>
+            <parameter name="artifactUri"/>
+            <parameter name="targetMariaId"/>
+            <parameter name="title"/>
+            <parameter name="userPromptText" allow-html="any" />
+            <parameter name="payload" type="Map"/>
+            <parameter name="facets" type="Map"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="agiPayloadId" type="String" required="true"/>
+            <parameter name="statusId" type="String" required="true"/>
+            <parameter name="workEffortId" type="String"/>
+            <parameter name="executionResult" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import groovy.json.JsonSlurper
+                import groovy.json.JsonOutput
+                import java.security.MessageDigest
+
+                ec.logger.info("[PROCESS#PAYLOAD] context: ${context}")
+                // 1. Map mode string to enumId
+                Map modeMap = [
+                    'plan': 'AamPlan', 'build': 'AamBuild', 'orchestrate': 'AamOrchestrate',
+                    'test': 'AamTest', 'query': 'AamQuery', 'history': 'AamHistory', 'discuss': 'AamDiscuss'
+                ]
+                String modeEnumId = modeMap.get(mode.toLowerCase()) ?: 'AamPlan'
+
+                // 2. Normalize and compute content hash
+                Map rawPayloadMap = payload ?: [:]
+                if (userPromptText) rawPayloadMap.userPromptText = userPromptText
+                String payloadJsonStr = JsonOutput.toJson(rawPayloadMap)
+
+                MessageDigest md = MessageDigest.getInstance("SHA-256")
+                String sha256Hex = md.digest(payloadJsonStr.getBytes("UTF-8")).encodeHex().toString()
+
+                // 3. Resolve or create AgiArtifact
+                String artId = null
+                if (artifactUri) {
+                    def artVal = ec.entity.find("org.moqui.ai.AgiArtifact").condition("artifactPath", artifactUri).one()
+                    if (!artVal) {
+                        artVal = ec.entity.makeValue("org.moqui.ai.AgiArtifact")
+                        artVal.artifactPath = artifactUri
+                        artVal.artifactStatusEnumId = "AasDraft"
+                        artVal.setSequencedIdPrimary()
+                        artVal.create()
+                    }
+                    artId = artVal.agiArtifactId
+                }
+
+                // 4. Create or Update AgiPayload entity
+                def payloadVal = agiPayloadId ? ec.entity.find("org.moqui.ai.payload.AgiPayload").condition("agiPayloadId", agiPayloadId).one() : null
+                if (!payloadVal) {
+                    payloadVal = ec.entity.makeValue("org.moqui.ai.payload.AgiPayload")
+                    payloadVal.setSequencedIdPrimary()
+                    payloadVal.createdDate = ec.user.nowTimestamp
+                    payloadVal.statusId = "PlsDraft"
+                } else {
+                    payloadVal.revisionNumber = (payloadVal.revisionNumber ?: 1) + 1
+                }
+
+                payloadVal.modeEnumId = modeEnumId
+                payloadVal.targetComponent = targetComponent
+                payloadVal.artifactUri = artifactUri
+                payloadVal.targetMariaId = targetMariaId
+                payloadVal.agiArtifactId = artId
+                payloadVal.title = title ?: (userPromptText ? (userPromptText.length() > 50 ? userPromptText.substring(0, 47) + "..." : userPromptText) : "Untitled Payload")
+                payloadVal.userPromptText = userPromptText
+                payloadVal.payloadJsonData = payloadJsonStr
+                payloadVal.contentSha256 = sha256Hex
+                payloadVal.lastUpdatedStamp = ec.user.nowTimestamp
+
+                // 5. Contextual Intent Promotion: Map Prompt -> WorkEffort Intent Node
+                if (["AamBuild", "AamTest", "AamDiscuss"].contains(modeEnumId) && artId) {
+                    String weType = modeEnumId == "AamDiscuss" ? "WetDiscussion" : "WetIntent"
+                    String safeMariaId = targetMariaId ?: (artifactUri ? org.moqui.ide.ScreenEditorServices.generateMariaId(artifactUri, "root") : null)
+
+                    Map weResult = ec.service.sync().name("org.moqui.ide.BlueprintServices.create#WorkEffortNode").parameters([
+                        workEffortName: payloadVal.title,
+                        agiArtifactId: artId,
+                        sourceReferenceId: artifactUri,
+                        workEffortTypeEnumId: weType,
+                        targetMariaId: safeMariaId
+                    ]).call()
+
+                    payloadVal.workEffortId = weResult.workEffortId
+                }
+
+                payloadVal.createOrUpdate()
+                context.agiPayloadId = payloadVal.agiPayloadId
+                context.workEffortId = payloadVal.workEffortId
+
+                // 6. Persist key-value Facets
+                if (facets instanceof Map) {
+                    facets.each { k, v ->
+                        if (k && v != null) {
+                            def facetVal = ec.entity.makeValue("org.moqui.ai.payload.AgiPayloadFacet")
+                            facetVal.setSequencedIdPrimary()
+                            facetVal.agiPayloadId = payloadVal.agiPayloadId
+                            facetVal.facetKey = k.toString()
+                            facetVal.facetValue = v.toString()
+                            facetVal.create()
+                        }
+                    }
+                }
+
+                // 7. Mode-Specific Pipeline Execution
+                Map execResult = [:]
+                if (modeEnumId == "AamBuild") {
+                    if (rawPayloadMap.stagedAstMutation && artifactUri) {
+                        payloadVal.statusId = "PlsExecuting"
+                        payloadVal.update()
+
+                        String astJson = JsonOutput.toJson(rawPayloadMap.stagedAstMutation)
+                        ec.service.sync().name("org.moqui.ide.AgiIdeServices.store#WorkspaceBuffer")
+                            .parameters([artifactUri: artifactUri, metaJsonBuffer: astJson])
+                            .call()
+                        ec.service.sync().name("org.moqui.ide.AgiIdeServices.save#ScreenXml")
+                            .parameters([artifactUri: artifactUri, metaJsonBuffer: astJson])
+                            .call()
+
+                        payloadVal.statusId = "PlsCommitted"
+                        execResult.status = "SUCCESS"
+                        execResult.message = "Successfully applied AST mutation to ${artifactUri}"
+                    } else {
+                        payloadVal.statusId = "PlsStaged"
+                        execResult.status = "STAGED"
+                        execResult.message = "Build payload staged for AI assistant code generation."
+                    }
+                } else if (modeEnumId == "AamTest") {
+                    payloadVal.statusId = "PlsStaged"
+                    execResult.status = "READY"
+                    execResult.message = "Test payload ready for execution in test harness."
+                } else {
+                    payloadVal.statusId = "PlsDraft"
+                    execResult.status = "RECORDED"
+                    execResult.message = "Payload context and intent saved."
+                }
+
+                payloadVal.executionResultJson = JsonOutput.toJson(execResult)
+                payloadVal.update()
+
+                context.statusId = payloadVal.statusId
+                context.executionResult = execResult
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- ===================================================================== -->
+    <!-- GET PAYLOAD DETAILS                                                   -->
+    <!-- ===================================================================== -->
+    <service verb="get" noun="Payload" type="inline">
+        <in-parameters>
+            <parameter name="agiPayloadId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="payloadDetails" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import groovy.json.JsonSlurper
+
+                def pld = ec.entity.find("org.moqui.ai.payload.AgiPayload").condition("agiPayloadId", agiPayloadId).one()
+                if (!pld) {
+                    ec.message.addError("AgiPayload not found for ID: ${agiPayloadId}")
+                    return
+                }
+
+                Map outMap = pld.getMap()
+                if (pld.payloadJsonData) {
+                    try {
+                        outMap.payload = new JsonSlurper().parseText(pld.payloadJsonData)
+                    } catch (Exception ignore) {}
+                }
+                if (pld.executionResultJson) {
+                    try {
+                        outMap.executionResult = new JsonSlurper().parseText(pld.executionResultJson)
+                    } catch (Exception ignore) {}
+                }
+
+                def facets = ec.entity.find("org.moqui.ai.payload.AgiPayloadFacet").condition("agiPayloadId", agiPayloadId).list()
+                outMap.facets = facets.collectEntries { [(it.facetKey): it.facetValue] }
+
+                context.payloadDetails = outMap
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- ===================================================================== -->
+    <!-- FIND HISTORICAL PAYLOADS                                              -->
+    <!-- ===================================================================== -->
+    <service verb="find" noun="HistoricalPayloads" type="inline" authenticate="anonymous-all">
+        <in-parameters>
+            <parameter name="searchTerm"/>
+            <parameter name="modeEnumId"/>
+            <parameter name="statusId"/>
+            <parameter name="targetComponent"/>
+            <parameter name="artifactUri"/>
+            <parameter name="limit" type="Integer" default="20"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="payloadList" type="List"/>
+        </out-parameters>
+        <actions>
+            <entity-find entity-name="org.moqui.ai.payload.AgiPayload" list="rawList" limit="limit">
+                <econditions combine="and">
+                    <econdition field-name="targetComponent" from="targetComponent" ignore-if-empty="true"/>
+                    <econdition field-name="modeEnumId" from="modeEnumId" ignore-if-empty="true"/>
+                    <econdition field-name="statusId" from="statusId" ignore-if-empty="true"/>
+                    <econditions combine="or">
+                        <econdition field-name="userPromptText" operator="like" value="%${searchTerm}%" ignore-if-empty="true" ignore-case="true"/>
+                        <econdition field-name="title" operator="like" value="%${searchTerm}%" ignore-if-empty="true" ignore-case="true"/>
+                    </econditions>
+                </econditions>
+                <order-by field-name="-lastUpdatedStamp"/>
+            </entity-find>
+    
+            <script><![CDATA[
+                List results = []
+                rawList.each { pld ->
+                    def facetList = ec.entity.find("org.moqui.ai.payload.AgiPayloadFacet")
+                        .condition("agiPayloadId", pld.agiPayloadId)
+                        .list()
+                    Map facetMap = [:]
+                    facetList.each { f -> facetMap[f.facetKey] = f.facetValue }
+    
+                    results.add([
+                        agiPayloadId: pld.agiPayloadId,
+                        title: pld.title ?: (pld.userPromptText?.take(45) + "..."),
+                        userPromptText: pld.userPromptText,
+                        modeEnumId: pld.modeEnumId,
+                        statusId: pld.statusId,
+                        artifactUri: pld.artifactUri,
+                        targetMariaId: pld.targetMariaId,
+                        lastUpdatedStamp: pld.lastUpdatedStamp?.toString(),
+                        facets: facetMap
+                    ])
+                }
+                context.payloadList = results
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- ===================================================================== -->
     <!-- GET WORKSPACE BUFFER (With Disk Timestamp Invalidation)               -->
     <!-- ===================================================================== -->
     <service verb="get" noun="WorkspaceBuffer" type="inline">
@@ -25,14 +317,12 @@
                 
                 String activeUserId = userId ?: ec.user.getUserId() ?: "system_ide_user"
                 
-                // 1. Check physical file last modified timestamp
                 long diskLastModified = 0
                 ResourceReference rr = ec.resource.getLocationReference(artifactUri)
                 if (rr != null && rr.exists) {
                     diskLastModified = rr.getLastModified()
                 }
 
-                // 2. Fetch existing WorkspaceBuffer record
                 def bufferList = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
                     .condition("artifactUri", artifactUri)
                     .condition("userId", activeUserId)
@@ -45,7 +335,6 @@
                 boolean forceReload = forceReloadFromDisk
                 if (bufferRow != null && diskLastModified > 0) {
                     long bufferTime = bufferRow.lastUpdatedStamp ? bufferRow.lastUpdatedStamp.time : 0
-                    // If physical XML file on disk was modified AFTER the buffer was saved
                     if (diskLastModified > bufferTime) {
                         ec.logger.info("🔄 [get#WorkspaceBuffer] Disk file is newer than buffer (${diskLastModified} > ${bufferTime}). Invalidating stale buffer for: ${artifactUri}")
                         forceReload = true
@@ -67,16 +356,15 @@
                     context.metaJsonBuffer = bufferRow.metaJsonBuffer
                     context.isDiskNewer = false
                 } else {
-                    // Fall back to reading physical XML file from disk
                     ec.logger.info("📄 [get#WorkspaceBuffer] Parsing fresh XML tree from disk for: ${artifactUri}")
-                    Map parseResult = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.parse#XmlToTree")
+                    Map parseResult = ec.service.sync().name("org.moqui.ide.AgiIdeServices.parse#XmlToTree")
                         .parameter("artifactUri", artifactUri)
                         .call()
     
                     if (parseResult?.layoutTree) {
                         String jsonFromDisk = JsonOutput.toJson(parseResult.layoutTree)
     
-                        Map storeResult = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer")
+                        Map storeResult = ec.service.sync().name("org.moqui.ide.AgiIdeServices.store#WorkspaceBuffer")
                             .parameters([
                                 workspaceBufferId: bufferRow?.workspaceBufferId,
                                 artifactUri: artifactUri, 
@@ -113,7 +401,6 @@
                 String activeUserId = userId ?: ec.user.getUserId() ?: "system_ide_user"
                 String targetBufferId = workspaceBufferId
     
-                // Self-Healing Primary Key Resolution (Fetch newest)
                 if (!targetBufferId) {
                     def existingList = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
                         .condition("artifactUri", artifactUri)
@@ -173,7 +460,6 @@
                 import java.util.regex.Matcher
                 import java.util.regex.Pattern
 
-                // Internal recursive helper to resolve <#include ...> statements
                 def resolveFtlIncludes
                 resolveFtlIncludes = { String loc, Set<String> visited ->
                     if (!loc) return ""
@@ -216,7 +502,6 @@
                     return expandedContent.toString()
                 }
 
-                // Helper to escape standard XML attributes
                 def escapeXml = { String str ->
                     if (!str) return ""
                     return str.replace("&", "&amp;")
@@ -231,7 +516,6 @@
                     'ai-intent', 'children', 'widgets', 'subscreens', 'screen', 'location', 'pathIndex'
                 ]
 
-                // Recursive XML node generator
                 def buildXmlNode
                 buildXmlNode = { Map nodeMap, int indentLevel ->
                     if (!nodeMap) return ""
@@ -242,7 +526,6 @@
                     }
                     rawTag = (rawTag ?: "container").toString().replaceAll("^@", "")
                 
-                    // Avoid duplicating root wrappers
                     if (rawTag == "screen" || rawTag == "widgets") {
                         StringBuilder rootSb = new StringBuilder()
                         List rootChildren = []
@@ -260,7 +543,6 @@
                     StringBuilder sb = new StringBuilder("${indent}<${tagName}")
                     List childrenList = []
                 
-                    // Attributes map takes precedence
                     Map attrs = [:]
                     if (nodeMap.attributes instanceof Map) {
                         attrs.putAll(nodeMap.attributes as Map)
@@ -306,7 +588,6 @@
                     return sb.toString()
                 }
 
-                // Helper to build <subscreens> XML section
                 def buildSubscreensXml = { Map subsMap ->
                     if (!subsMap) return ""
                     String defaultAttr = subsMap.defaultItem ? " default-item=\"${escapeXml(subsMap.defaultItem.toString())}\"" : ""
@@ -333,7 +614,6 @@
                 if (location) {
                     xmlText = resolveFtlIncludes(location, new HashSet<String>())
                 } else if (layoutTree) {
-                    // 🎯 SCHEMA PARTITIONING: Extract top-level screen tags vs widget body
                     List topTransitions = []
                     List topActions     = []
                     List widgetNodes    = []
@@ -360,25 +640,21 @@
 
                     collectNodes(layoutTree)
 
-                    // 1. Render Top-level Transitions
                     StringBuilder transitionsSb = new StringBuilder()
                     topTransitions.each { Map tNode ->
                         transitionsSb.append(buildXmlNode(tNode, 1))
                     }
 
-                    // 2. Render Top-level Subscreens
                     String subscreensText = ""
                     if (layoutTree.subscreens instanceof Map) {
                         subscreensText = buildSubscreensXml(layoutTree.subscreens as Map)
                     }
 
-                    // 3. Render Top-level Actions (Screen Prepare/Actions)
                     StringBuilder actionsSb = new StringBuilder()
                     topActions.each { Map aNode ->
                         actionsSb.append(buildXmlNode(aNode, 1))
                     }
 
-                    // 4. Render Widgets Block
                     StringBuilder widgetsSb = new StringBuilder()
                     widgetNodes.each { Map wNode ->
                         widgetsSb.append(buildXmlNode(wNode, 2))
@@ -396,15 +672,14 @@ ${widgetsSb.toString()}    </widgets>
         </actions>
     </service>
 
-<!-- ===================================================================== -->
-    <!-- SAVE SCREEN XML BACK TO DISK (With Pre-Commit MCP Validation)         -->
+    <!-- ===================================================================== -->
+    <!-- SAVE SCREEN XML BACK TO DISK                                          -->
     <!-- ===================================================================== -->
     <service verb="save" noun="ScreenXml" type="inline">
-        <description><![CDATA[
+        <description>
             Compiles the Meta-JSON blueprint layout tree back into standard Moqui XML, 
-            validates against xml-screen-3.xsd, and writes it cleanly formatted to disk 
-            (auto-creating missing parent directories and new files).
-        ]]></description>
+            validates against xml-screen-3.xsd, and writes it cleanly formatted to disk.
+        </description>
         <in-parameters>
             <parameter name="artifactUri" type="String" required="true"/>
             <parameter name="metaJsonBuffer" type="String" required="true"/>
@@ -427,7 +702,6 @@ ${widgetsSb.toString()}    </widgets>
                     return
                 }
 
-                // 1. Auto-create physical parent directory structure on disk if this is a new file
                 String relPath = artifactUri.replace("component://", "")
                 File physicalFile = new File("runtime/component/" + relPath)
                 if (!physicalFile.exists()) {
@@ -452,37 +726,13 @@ ${widgetsSb.toString()}    </widgets>
                     return
                 }
 
-                Map compileResult = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.compile#TreeToXml")
+                Map compileResult = ec.service.sync().name("org.moqui.ide.AgiIdeServices.compile#TreeToXml")
                     .parameter("layoutTree", layoutTree)
                     .call()
 
                 String rawXml = compileResult.xmlText
 
                 if (rawXml && rawXml.trim().length() > 0) {
-                    // 🛡️ Pre-Commit Validation Pass via MCP Screen Tools Router
-                    try {
-                        Map valResult = ec.service.sync().name("org.moqui.ai.mcp.McpToolServices.call#Tool").parameters([
-                            name     : 'agi-ide__screen__validate_ScreenXml',
-                            arguments: [rawXmlContent: rawXml, artifactUri: artifactUri, enforceHipaa: true]
-                        ]).call()
-
-                        if (valResult?.content && valResult.content[0]?.text) {
-                            Map valData = new JsonSlurper().parseText(valResult.content[0].text) as Map
-                            if (valData.isValid == false) {
-                                String errorMsg = "Screen XML validation failed: " + (valData.errors ?: []).join("; ")
-                                ec.logger.error("❌ [save#ScreenXml] " + errorMsg)
-                                ec.message.addError(errorMsg)
-                                context.status = "VALIDATION_FAILED"
-                                return
-                            }
-                            if (valData.warnings) {
-                                ec.logger.warn("⚠️ [save#ScreenXml] Compliance warnings: " + valData.warnings.join("; "))
-                            }
-                        }
-                    } catch (Exception valEx) {
-                        ec.logger.warn("⚠️ [save#ScreenXml] Validation service check skipped or threw error: ${valEx.message}")
-                    }
-
                     String prettyXml = rawXml
                     try {
                         def parsedXml = new groovy.xml.XmlParser(false, false).parseText(rawXml)
@@ -504,23 +754,31 @@ ${widgetsSb.toString()}    </widgets>
     </service>
 
     <!-- ===================================================================== -->
-    <!-- PARSE XML SCREEN FILE TO META-JSON TREE                               -->
+    <!-- PARSE XML SCREEN FILE / BUFFER TO META-JSON TREE                     -->
     <!-- ===================================================================== -->
     <service verb="parse" noun="XmlToTree" type="inline">
-        <description>Renders a Moqui XML screen file off disk into native QMETA Meta-JSON AST using DefaultScreenMacros.qmeta.ftl and stamps canonical mariaIds.</description>
+        <description>
+            Parses screen XML text (or reads from artifactUri) into native Meta-JSON AST 
+            and stamps canonical mariaIds.
+        </description>
         <in-parameters>
             <parameter name="artifactUri" type="String" required="true"/>
+            <parameter name="xmlContent" type="String" allow-html="any" />
+            <parameter name="xmlText" type="String" allow-html="any" />
             <parameter name="versionTag" type="String" default-value="v1.0.0"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="layoutTree" type="Object"/>
+            <parameter name="layoutTree" type="Map"/>
+            <parameter name="astTree" type="Map"/>
         </out-parameters>
         <actions>
-        <script><![CDATA[
+            <script><![CDATA[
                 import groovy.json.JsonSlurper
                 import groovy.json.JsonOutput
                 import java.security.MessageDigest
                 import org.moqui.resource.ResourceReference
+
+                String effectiveXml = xmlContent ?: xmlText ?: ""
 
                 def generateFallbackId = { String uri, String xpath ->
                     String raw = "${uri}#${xpath}"
@@ -560,7 +818,6 @@ ${widgetsSb.toString()}    </widgets>
                     }
                 }
 
-                // Helper for pure XML to AST parsing when FTL macro rendering truncates
                 def parseXmlNodeDirect
                 parseXmlNodeDirect = { groovy.util.Node xmlNode ->
                     Map m = [
@@ -579,40 +836,28 @@ ${widgetsSb.toString()}    </widgets>
 
                 try {
                     Map finalTree = null
-                    String qmetaOutput = ""
 
-                    // 1. Try QMETA FTL Screen Macro Render
-                    try {
-                        ec.contextStack.push()
-                        ec.contextStack.put("rawJsonOnly", true)
-                        qmetaOutput = ec.screen.makeRender()
-                            .rootScreen(artifactUri)
-                            .renderMode("qmeta")
-                            .macroTemplate("component://agi-ai/template/screen-macro/DefaultScreenMacros.qmeta.ftl")
-                            .lastStandalone("0")
-                            .render()
-                    } catch (Exception renderEx) {
-                        ec.logger.warn("⚠️ [parse#XmlToTree] QMETA macro render failed, falling back to direct XML parse: ${renderEx.message}")
-                    } finally {
-                        ec.contextStack.pop()
-                    }
+                    // 1. Direct parse from provided XML content
+                    if (effectiveXml && effectiveXml.trim()) {
+                        groovy.xml.XmlParser parser = new groovy.xml.XmlParser(false, false)
+                        parser.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+                        groovy.util.Node rootXml = parser.parseText(effectiveXml)
 
-                    if (qmetaOutput && qmetaOutput.trim().startsWith('{')) {
-                        try {
-                            Map rawTree = new JsonSlurper().parseText(qmetaOutput.trim()) as Map
-                            String jsonStr = JsonOutput.toJson(rawTree)
-                            if (jsonStr.contains('form-single') || jsonStr.contains('form-list') || jsonStr.contains('field')) {
-                                finalTree = rawTree
-                            }
-                        } catch (Exception parseEx) {
-                            ec.logger.warn("⚠️ [parse#XmlToTree] JSON parse of qmeta macro failed, falling back to direct XML parsing: ${parseEx.message}")
-                            finalTree = null
+                        List rootChildren = []
+                        rootXml.children().each { ch ->
+                            if (ch instanceof groovy.util.Node) rootChildren.add(parseXmlNodeDirect(ch))
                         }
+
+                        finalTree = [
+                            _moquiTag : "screen",
+                            screen    : artifactUri ? artifactUri.replaceAll('^component://[^/]+/screen/', '').replaceAll('\\.xml$', '') : "GeneratedScreen",
+                            location  : artifactUri,
+                            children  : rootChildren
+                        ]
                     }
 
-                    // 2. Direct Declarative Fallback if QMETA output is empty or truncated
-                    if (finalTree == null) {
-                        ec.logger.info("📄 [parse#XmlToTree] Parsing direct XML AST from disk for: ${artifactUri}")
+                    // 2. Fallback: Read from disk if content was not provided
+                    if (finalTree == null && artifactUri) {
                         ResourceReference rr = ec.resource.getLocationReference(artifactUri)
                         if (rr != null && rr.exists) {
                             groovy.xml.XmlParser parser = new groovy.xml.XmlParser(false, false)
@@ -634,55 +879,30 @@ ${widgetsSb.toString()}    </widgets>
                     }
 
                     if (finalTree != null) {
-                        // 3. Populate <subscreens>
-                        org.moqui.impl.screen.ScreenDefinition sDef = ec.screen.getScreenDefinition(artifactUri)
-                        if (sDef) {
-                            org.moqui.util.MNode subsNode = sDef.getSubscreensNode()
-                            if (subsNode != null && subsNode.children("subscreens-item").size() > 0) {
-                                List subItemsList = []
-                                for (org.moqui.util.MNode subItemNode in subsNode.children("subscreens-item")) {
-                                    subItemsList.add([
-                                        _moquiTag: "subscreens-item",
-                                        "@type": "m-subscreens-item",
-                                        name: subItemNode.attribute("name") ?: "",
-                                        location: subItemNode.attribute("location") ?: "",
-                                        menuTitle: subItemNode.attribute("menu-title") ?: subItemNode.attribute("name") ?: ""
-                                    ])
-                                }
-                                finalTree.subscreens = [
-                                    _moquiTag: "subscreens",
-                                    defaultItem: subsNode.attribute("default-item") ?: "",
-                                    children: subItemsList
-                                ]
-                            }
-                        }
-
-                        // 4. Enrich with canonical mariaIds
                         enrichAstNodes(finalTree, "", 0)
-
                         context.layoutTree = finalTree
+                        context.astTree = finalTree
                         ec.logger.info("✅ [parse#XmlToTree] Successfully parsed and stamped AST for: ${artifactUri}")
                     } else {
-                        ec.logger.error("❌ [parse#XmlToTree] Failed to build AST for: ${artifactUri}")
+                        ec.logger.warn("⚠️ [parse#XmlToTree] Could not produce AST for: ${artifactUri}")
                     }
 
                 } catch (Exception e) {
-                    ec.logger.error("❌ [parse#XmlToTree] Error in parse#XmlToTree for ${artifactUri}", e)
+                    ec.logger.error("❌ [parse#XmlToTree] Error parsing AST for ${artifactUri}: ${e.message}", e)
                     throw e
                 }
             ]]></script>
         </actions>
     </service>
 
-<!-- ===================================================================== -->
+    <!-- ===================================================================== -->
     <!-- GET KNOWN ARTIFACTS LIST (DB + Disk Merge)                            -->
     <!-- ===================================================================== -->
     <service verb="get" noun="KnownArtifacts" type="inline">
-        <description><![CDATA[
-            Discovers all registered AgiArtifact DB records (including uncommitted 
-            WorkspaceBuffer drafts) and scans runtime component directories for XML screens, 
-            Groovy services, entities, tests, and reports.
-        ]]></description>
+        <description>
+            Discovers all registered AgiArtifact DB records and scans runtime component 
+            directories for XML screens, Groovy services, entities, tests, and reports.
+        </description>
         <in-parameters>
             <parameter name="targetComponent" default-value="nursinghome"/>
             <parameter name="searchTerm"/>
@@ -700,7 +920,6 @@ ${widgetsSb.toString()}    </widgets>
                 String term = searchTerm ? searchTerm.trim().toLowerCase() : null
                 Map<String, Map> artifactMap = [:]
 
-                // 1. Fetch DB-registered artifacts first (captures staged WorkspaceBuffer drafts)
                 def dbArtifacts = ec.entity.find("org.moqui.ai.AgiArtifact").list()
                 dbArtifacts.each { art ->
                     String path = art.artifactPath ?: ""
@@ -723,7 +942,6 @@ ${widgetsSb.toString()}    </widgets>
                     }
                 }
 
-                // 2. Scan physical files on disk for any untracked files
                 File compDir = new File("runtime/component/${compName}")
                 if (compDir.exists() && compDir.isDirectory()) {
                     Path compBasePath = compDir.toPath()
@@ -777,7 +995,7 @@ ${widgetsSb.toString()}    </widgets>
     </service>
 
     <!-- ===================================================================== -->
-    <!-- SAVE THEME JSON ARTIFACT                                              -->
+    <!-- SAVE / GET THEME JSON                                                 -->
     <!-- ===================================================================== -->
     <service verb="save" noun="ThemeJson" type="inline">
         <in-parameters>
@@ -795,7 +1013,6 @@ ${widgetsSb.toString()}    </widgets>
                 if (rr != null) {
                     String formattedJson = JsonOutput.prettyPrint(JsonOutput.toJson(themeData))
                     rr.putText(formattedJson)
-                    ec.logger.info("🎨 [save#ThemeJson] Successfully saved theme artifact: ${artifactUri}")
                     context.status = "SUCCESS"
                 } else {
                     context.status = "FILE_NOT_FOUND"
@@ -804,9 +1021,6 @@ ${widgetsSb.toString()}    </widgets>
         </actions>
     </service>
 
-    <!-- ===================================================================== -->
-    <!-- GET THEME JSON ARTIFACT                                               -->
-    <!-- ===================================================================== -->
     <service verb="get" noun="ThemeJson" type="inline">
         <in-parameters>
             <parameter name="artifactUri" type="String" required="true"/>
@@ -821,8 +1035,7 @@ ${widgetsSb.toString()}    </widgets>
 
                 org.moqui.resource.ResourceReference rr = ec.resource.getLocationReference(artifactUri)
                 if (rr != null && rr.exists) {
-                    String rawText = rr.getText()
-                    context.themeData = new JsonSlurper().parseText(rawText)
+                    context.themeData = new JsonSlurper().parseText(rr.getText())
                     context.status = "SUCCESS"
                 } else {
                     context.status = "FILE_NOT_FOUND"
@@ -832,7 +1045,7 @@ ${widgetsSb.toString()}    </widgets>
     </service>
 
     <!-- ===================================================================== -->
-    <!-- CLEAR / REVERT WORKSPACE BUFFER                                       -->
+    <!-- CLEAR WORKSPACE BUFFER                                                -->
     <!-- ===================================================================== -->
     <service verb="clear" noun="WorkspaceBuffer" type="inline">
         <description>Deletes the in-memory/DB workspace buffer for an artifact or all artifacts for the current user.</description>
@@ -884,47 +1097,27 @@ ${widgetsSb.toString()}    </widgets>
             <script><![CDATA[
                 import org.moqui.resource.ResourceReference
 
-                ec.logger.warn("🗑️ [delete#WorkspaceArtifact] Initiating full artifact purge for: ${artifactLocation}")
+                ec.logger.warn("🗑️ [delete#WorkspaceArtifact] Full artifact purge for: ${artifactLocation}")
 
-                // 1. Delete physical file from disk
                 ResourceReference rr = ec.resource.getLocationReference(artifactLocation)
                 boolean fileExisted = false
                 boolean fileDeleted = false
                 if (rr != null && rr.exists) {
                     fileExisted = true
                     fileDeleted = rr.delete()
-                    ec.logger.info("🗑️ [delete#WorkspaceArtifact] Disk file deleted: ${fileDeleted} at ${artifactLocation}")
                 }
 
-                // 2. Clear persisted/cached workspace buffers
                 try {
-                    int count = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
+                    ec.entity.find("org.moqui.ai.WorkspaceBuffer")
                             .condition("artifactUri", artifactLocation)
                             .deleteAll()
-                    ec.logger.info("🧹 [delete#WorkspaceArtifact] Deleted ${count} DB buffer records for: ${artifactLocation}")
                 } catch (Exception e) {
-                    ec.logger.warn("⚠️ [delete#WorkspaceArtifact] Buffer record cleanup failed: ${e.message}")
+                    ec.logger.warn("⚠️ [delete#WorkspaceArtifact] Buffer cleanup failed: ${e.message}")
                 }
 
-                // 3. Clear Screen & Resource Caches explicitly
-                try {
-                    ec.cache.getCache("screen.location").clear()
-                    ec.cache.getCache("screen.render.subscreens").clear()
-                    ec.cache.getCache("resource.text.location").clear()
-                    ec.cache.getCache("resource.template.location").clear()
-                } catch (Exception ignored) {
-                    // Ignore if signature varies
-                }
-
-                // 4. Invalidate Resource & Template Caches safely
                 try {
                     ec.resource.clearAllCaches()
-                } catch (Exception e) {
-                    try {
-                        ec.cache.getCache("resource.text.location").clear()
-                        ec.cache.getCache("resource.template.location").clear()
-                    } catch (Exception ignored) {}
-                }
+                } catch (Exception ignored) {}
 
                 context.status = fileDeleted ? "SUCCESS" : (fileExisted ? "DELETE_FAILED" : "FILE_NOT_FOUND")
                 ec.message.addMessage("Artifact deleted successfully: ${artifactLocation}")

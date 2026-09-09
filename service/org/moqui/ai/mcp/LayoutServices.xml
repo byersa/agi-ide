@@ -416,6 +416,7 @@
     <!-- ===================================================================== -->
     <!-- GET SCREEN ARCHETYPE (Content Retrieval MCP Tool)                     -->
     <!-- ===================================================================== -->
+    <!--
     <service verb="get" noun="ScreenArchetype" type="inline" read-only="true" 
              name="org.moqui.ai.mcp.LayoutServices.get#ScreenArchetype">
         <description>Retrieve the XML blueprint content of a specific canonical screen archetype to guide layout generation.</description>
@@ -464,5 +465,6 @@
             ]]></script>
         </actions>
     </service>
+    -->
 
 </services>

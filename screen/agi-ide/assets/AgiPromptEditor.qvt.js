@@ -15,6 +15,7 @@
                 activeArtifactLocation: this.activeArtifact || '',
                 focusedElementId: '',
                 isExecuting: false,
+                isSavingToDisk: false,
                 showPalette: false,
                 selectedPayloadMember: 'notes',
 
@@ -466,7 +467,7 @@
                                 <div v-if="selectedPayloadMember === 'notes'" class="column fit">
                                     <div class="text-caption text-weight-bold text-amber-4 q-mb-xs">ADDITIONAL DIRECTIVES &amp; NOTES</div>
                                     <div class="text-caption text-slate-400 q-mb-sm" style="font-size: 10px;">
-                                        Payload notes injected directly into prompt directives without ad-hoc string formatting[cite: 3].
+                                        Payload notes injected directly into prompt directives without ad-hoc string formatting[cite: 16].
                                     </div>
                                     <q-input 
                                         v-model="payloadEnvelope.notes" 
@@ -484,7 +485,7 @@
                                     <div class="row items-center justify-between q-mb-xs">
                                         <div>
                                             <span class="text-caption text-weight-bold text-cyan-4">CANONICAL ARCHETYPES</span>
-                                            <div class="text-caption text-slate-400" style="font-size: 10px;">Select from dynamically discovered workspace blueprints[cite: 9].</div>
+                                            <div class="text-caption text-slate-400" style="font-size: 10px;">Select from dynamically discovered workspace blueprints[cite: 16].</div>
                                         </div>
                                         <q-btn flat dense icon="refresh" size="xs" color="cyan-4" label="Rescan" @click="fetchArchetypeCatalog" />
                                     </div>
@@ -513,7 +514,7 @@
                                 <!-- 3. ENTITY PICKER -->
                                 <div v-if="selectedPayloadMember === 'entities'" class="column fit">
                                     <div class="text-caption text-weight-bold text-teal-4 q-mb-xs">ENTITY SCHEMAS &amp; GROUNDING</div>
-                                    <div class="text-caption text-slate-400 q-mb-sm" style="font-size: 10px;">Entities attached to this payload turn for RAG context[cite: 3].</div>
+                                    <div class="text-caption text-slate-400 q-mb-sm" style="font-size: 10px;">Entities attached to this payload turn for RAG context[cite: 16].</div>
 
                                     <q-list dense separator class="bg-slate-950 rounded-borders border-dark">
                                         <q-item v-for="(ent, idx) in detectedEntities" :key="idx" tag="label" class="q-pa-xs">
@@ -531,7 +532,7 @@
                                 <!-- 4. FACETS EDITOR -->
                                 <div v-if="selectedPayloadMember === 'facets'" class="column fit">
                                     <div class="text-caption text-weight-bold text-purple-3 q-mb-xs">INTENT FACETS</div>
-                                    <div class="text-caption text-slate-400 q-mb-sm" style="font-size: 10px;">Key-value directives triggering layered instruction overlays[cite: 1, 3].</div>
+                                    <div class="text-caption text-slate-400 q-mb-sm" style="font-size: 10px;">Key-value directives triggering layered instruction overlays[cite: 16].</div>
 
                                     <div class="row q-gutter-xs q-mb-md">
                                         <q-chip 
@@ -606,8 +607,22 @@
                                     <div class="text-caption text-slate-200" style="line-height: 1.5;">{{ lastParsedResult.architectureSummary }}</div>
                                 </div>
 
+                                <!-- XML Screen Output Panel with Direct Save to Disk -->
                                 <div v-if="lastParsedResult.rawXmlContent" class="column q-gutter-y-xs">
-                                    <div class="text-caption text-weight-bold text-cyan-4">GENERATED XML (BUFFER DRAFT)</div>
+                                    <div class="row items-center justify-between">
+                                        <div class="text-caption text-weight-bold text-cyan-4">GENERATED XML (BUFFER DRAFT)</div>
+                                        <q-btn 
+                                            color="positive" 
+                                            icon="save" 
+                                            label="Save to Disk" 
+                                            dense no-caps
+                                            class="font-mono text-caption text-weight-bold q-px-sm"
+                                            :loading="isSavingToDisk"
+                                            @click="saveCurrentBufferToDisk"
+                                        >
+                                            <q-tooltip>Compile buffer and write physical .xml file to component directory</q-tooltip>
+                                        </q-btn>
+                                    </div>
                                     <pre class="bg-black text-slate-200 q-pa-sm rounded-borders overflow-auto text-caption" style="max-height: 250px; border: 1px solid #1e293b;">{{ lastParsedResult.rawXmlContent }}</pre>
                                 </div>
                             </div>
@@ -616,7 +631,6 @@
                         <!-- ============================================================= -->
                         <!-- TAB 3: INTENT HISTORY & LEDGER (Smart One-Click Re-staging)   -->
                         <!-- ============================================================= -->
-                        <!-- TOP ANCHOR: HISTORICAL INSPECTION NOTICE BANNER -->
                         <div v-if="inspectingHistoryId" class="row items-center justify-between q-px-md q-py-xs bg-amber-10 text-black font-mono text-caption text-weight-bolder">
                             <div class="row items-center q-gutter-x-sm">
                                 <q-icon name="history_edu" size="sm" color="black" />
@@ -627,9 +641,7 @@
                             </div>
                         </div>
                         
-                        <!-- TOP OF ILH TAB: BAR & FILTER DRAWER -->
                         <q-tab-panel name="history" class="fit q-pa-none column overflow-hidden bg-slate-950">
-                            
                             <!-- ILH Sub-Toolbar -->
                             <div class="row items-center justify-between q-pa-xs bg-slate-900 border-bottom-dark" style="border-bottom: 1px solid #334155;">
                                 <div class="row items-center q-gutter-x-xs">
@@ -690,21 +702,18 @@
                                     :selected-rows-label="() => ''"
                                     @row-click="onHistoryRowClick"
                                 >
-                                    <!-- Mode Chip -->
                                     <template v-slot:body-cell-modeEnumId="props">
                                         <q-td :props="props">
                                             <q-badge :color="getModeBadgeColor(props.value)" :label="formatMode(props.value)" class="text-weight-bold" />
                                         </q-td>
                                     </template>
                         
-                                    <!-- Status Chip -->
                                     <template v-slot:body-cell-statusId="props">
                                         <q-td :props="props">
                                             <q-badge :color="props.value === 'AasActive' || props.value === 'SUCCESS' ? 'positive' : (props.value === 'PLANNED' ? 'amber-9' : 'slate-700')" :label="props.value" />
                                         </q-td>
                                     </template>
                         
-                                    <!-- Actions Cell -->
                                     <template v-slot:body-cell-actions="props">
                                         <q-td :props="props" class="q-gutter-x-xs">
                                             <q-btn flat dense size="xs" color="cyan-3" icon="tune" label="Input" @click.stop="inspectHistoricalTurn(props.row, 'payload')">
@@ -864,12 +873,49 @@
             },
 
             promotePlanToBuild() {
+                if (!this.lastParsedResult) return;
+                const plan = this.lastParsedResult;
+
                 this.currentMode = 'build';
                 this.payloadEnvelope.mode = 'build';
+
+                if (plan.targetArtifactUri || plan.createdArtifactUri) {
+                    this.activeArtifactLocation = plan.targetArtifactUri || plan.createdArtifactUri;
+                    this.payloadEnvelope.artifactUri = this.activeArtifactLocation;
+                }
+                if (plan.recommendedArchetype) {
+                    this.payloadEnvelope.recommendedArchetype = plan.recommendedArchetype;
+                }
+                if (plan.recommendedArchetypeUri) {
+                    this.payloadEnvelope.recommendedArchetypeUri = plan.recommendedArchetypeUri;
+                }
+
+                if (Array.isArray(plan.suggestedEntities) && plan.suggestedEntities.length > 0) {
+                    this.payloadEnvelope.selectedEntities = [...plan.suggestedEntities];
+                }
+
+                const contractDirectives = [];
+                if (plan.architectureSummary) {
+                    contractDirectives.push(`### ARCHITECTURAL PLAN:\n${plan.architectureSummary}`);
+                }
+                if (plan.formulationSteps && plan.formulationSteps.length > 0) {
+                    contractDirectives.push(`### IMPLEMENTATION SEQUENCE:\n${plan.formulationSteps.join('\n')}`);
+                }
+                if (plan.screenContract && Object.keys(plan.screenContract).length > 0) {
+                    contractDirectives.push(`### SCREEN CONTRACT (Strict Transitions & Parameters):\n\`\`\`json\n${JSON.stringify(plan.screenContract, null, 2)}\n\`\`\``);
+                }
+                if (plan.entityFieldBindings && plan.entityFieldBindings.length > 0) {
+                    contractDirectives.push(`### ENTITY FIELD BINDINGS:\n\`\`\`json\n${JSON.stringify(plan.entityFieldBindings, null, 2)}\n\`\`\``);
+                }
+                if (plan.securityAndHipaaRules && plan.securityAndHipaaRules.length > 0) {
+                    contractDirectives.push(`### SECURITY & HIPAA DIRECTIVES:\n- ${plan.securityAndHipaaRules.join('\n- ')}`);
+                }
+
+                this.payloadEnvelope.notes = contractDirectives.join('\n\n');
                 this.activeTab = 'payload';
                 this.$q?.notify({
                     type: 'positive',
-                    message: 'Promoted Plan to Build Mode. Ready for AST code mutation dispatch[cite: 3].'
+                    message: 'Plan promoted to Build! Screen contract and field bindings locked into staged directives.'
                 });
             },
 
@@ -877,7 +923,7 @@
                 if (!this.userPrompt.trim()) return;
 
                 this.isExecuting = true;
-                this.lastParsedResult = null; // Clear previous result on fresh dispatch
+                this.lastParsedResult = null;
                 const tkn = this.resolveCsrfToken();
                 const headers = { 'moquiSessionToken': tkn, 'Content-Type': 'application/json' };
 
@@ -919,6 +965,8 @@
                             this.payloadEnvelope.selectedEntities = parsedRes.suggestedEntities;
                         }
                         this.$q?.notify({ type: 'info', message: 'Architectural Plan formulated. Review results.' });
+                    } else if (parsedRes.status === 'DISCUSSING') {
+                        this.$q?.notify({ type: 'info', message: 'Conversational intent recorded. Check proposed modules.' });
                     } else if (parsedRes.status === 'SUCCESS') {
                         if (this.contextBus) {
                             this.contextBus.postMessage({
@@ -930,12 +978,91 @@
                         this.$q?.notify({ type: 'positive', message: 'Turn applied to Workspace Buffer draft.' });
                     }
 
+                    if (res.agiPayloadId) {
+                        this.payloadEnvelope.agiPayloadId = res.agiPayloadId;
+                    }
+                    this.searchHistoricalIntents('');
+
                 } catch (err) {
                     this.isExecuting = false;
                     this.$q?.notify({ type: 'negative', message: err.response?.data?.errors || err.message || 'Turn dispatch failed.' });
                 }
             },
-            // Switches from Historical Inspection to the active working draft
+
+            async saveCurrentBufferToDisk() {
+                const targetUri = this.activeArtifactLocation || this.lastParsedResult?.targetArtifactUri || this.payloadEnvelope.artifactUri;
+                if (!targetUri) {
+                    this.$q?.notify({ type: 'warning', message: 'No target artifact URI specified to write to disk.' });
+                    return;
+                }
+
+                this.isSavingToDisk = true;
+                const tkn = this.resolveCsrfToken();
+                const headers = { 'moquiSessionToken': tkn, 'Content-Type': 'application/json' };
+
+                try {
+                    let metaJsonStr = null;
+                    const rawXml = this.lastParsedResult?.rawXmlContent;
+
+                    if (rawXml) {
+                        try {
+                            const parseResp = await axios.post('/rest/s1/agi-ide/compileRawXmlToBlueprint', {
+                                rawXml: rawXml
+                            }, { headers });
+                            if (parseResp.data?.blueprintJson) {
+                                metaJsonStr = JSON.stringify(parseResp.data.blueprintJson);
+                            }
+                        } catch (pxEx) {
+                            console.warn("compileRawXmlToBlueprint fallback triggered:", pxEx);
+                        }
+                    }
+
+                    if (!metaJsonStr) {
+                        const activeUser = window.AGI_SERVER_USER_ID || 'ANONYMOUS';
+                        const bufResp = await axios.get('/rest/s1/agi-ide/getWorkspaceBuffer', {
+                            params: { artifactUri: targetUri, userId: activeUser },
+                            headers
+                        });
+                        metaJsonStr = bufResp.data?.metaJsonBuffer;
+                    }
+
+                    if (!metaJsonStr) {
+                        throw new Error('Workspace buffer is empty. Generate or edit the screen before saving.');
+                    }
+
+                    const saveResp = await axios.post('/rest/s1/agi-ide/saveScreenXml', {
+                        artifactUri: targetUri,
+                        metaJsonBuffer: metaJsonStr
+                    }, { headers });
+
+                    this.isSavingToDisk = false;
+
+                    if (saveResp.data?.status === 'SUCCESS' || saveResp.status === 200) {
+                        this.$q?.notify({
+                            type: 'positive',
+                            message: `Successfully saved ${targetUri} to disk!`
+                        });
+
+                        if (this.contextBus) {
+                            this.contextBus.postMessage({
+                                event: 'artifact-saved-to-disk',
+                                artifactUri: targetUri
+                            });
+                        }
+                    } else {
+                        throw new Error(saveResp.data?.errors || saveResp.data?.status || 'Save failed');
+                    }
+
+                } catch (err) {
+                    this.isSavingToDisk = false;
+                    console.error('Save to disk failed:', err);
+                    this.$q?.notify({
+                        type: 'negative',
+                        message: err.response?.data?.errors || err.message || 'Failed to save screen XML to disk.'
+                    });
+                }
+            },
+
             restoreCurrentPrompt() {
                 this.inspectingHistoryId = null;
                 this.userPrompt = this.currentPromptState.userPrompt;
@@ -948,11 +1075,9 @@
                 this.$q?.notify({ type: 'info', message: 'Restored active working prompt.' });
             },
 
-            // Load a historical row into the viewing state
             async inspectHistoricalTurn(row, targetTab = 'payload') {
                 this.inspectingHistoryId = row.agiPayloadId;
 
-                // Fetch full payload details if not cached
                 if (!this.historyDetailCache[row.agiPayloadId]) {
                     await this.lazyLoadHistoryDetail(row.agiPayloadId);
                 }
@@ -960,7 +1085,6 @@
                 const storedPld = fullDetail.payload || {};
                 const storedRes = fullDetail.result || fullDetail.parsedResult || {};
 
-                // Hydrate viewing controls
                 this.userPrompt = row.userPromptText || storedPld.userPrompt || '';
                 if (row.modeEnumId) this.currentMode = row.modeEnumId.replace('Aam', '').toLowerCase();
                 if (row.artifactUri) this.activeArtifactLocation = row.artifactUri;
@@ -981,7 +1105,6 @@
                 this.activeTab = targetTab;
             },
 
-            // Intelligent paste from Staged Input into the active scratchpad
             copyInputToCurrentPrompt() {
                 this.currentPromptState.payloadEnvelope = JSON.parse(JSON.stringify(this.payloadEnvelope));
                 this.currentPromptState.userPrompt = this.userPrompt;
@@ -990,12 +1113,10 @@
                 this.$q?.notify({ type: 'positive', message: 'Copied staged input values to Current Prompt.' });
             },
 
-            // Intelligent paste from Parsed Output into the active scratchpad
             pasteOutputToCurrentPrompt() {
                 if (!this.lastParsedResult) return;
                 const res = this.lastParsedResult;
 
-                // Smart Field Alignment
                 if (res.targetArtifactUri || res.cleanArtifactUri) {
                     this.currentPromptState.activeArtifactLocation = res.cleanArtifactUri || res.targetArtifactUri;
                     this.currentPromptState.payloadEnvelope.artifactUri = this.currentPromptState.activeArtifactLocation;
@@ -1016,7 +1137,7 @@
 
                 this.$q?.notify({ type: 'positive', message: 'Intelligently mapped Parsed Output into Current Prompt.' });
             },
-            // Badge color mapping for execution/artifact modes
+
             getModeBadgeColor(mode) {
                 if (!mode) return 'grey-7';
                 switch (mode.toLowerCase()) {
@@ -1039,17 +1160,15 @@
                         return 'blue-grey-6';
                 }
             },
+
             formatMode(modeEnumId) {
                 if (!modeEnumId) return 'N/A';
-                // Handles enum IDs like 'AamPlan', 'AamBuild', or raw strings like 'plan'
                 const clean = modeEnumId.toString().replace(/^Aam/, '').trim();
                 return clean.charAt(0).toUpperCase() + clean.slice(1).toLowerCase();
             },
-            onHistoryRowClick(evt, row) {
-                // Avoid double-firing if an action button inside the row was clicked
-                if (evt.target.closest('.q-btn') || evt.target.closest('button')) return;
 
-                // Loads the selected record into the top banner, mode selector, and active panels
+            onHistoryRowClick(evt, row) {
+                if (evt.target.closest('.q-btn') || evt.target.closest('button')) return;
                 this.inspectHistoricalTurn(row, 'payload');
             },
         },

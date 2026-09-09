@@ -74,19 +74,37 @@ if (selectedArchetypes instanceof List && !selectedArchetypes.isEmpty()) {
     archetypeBuilder.append("\n### SELECTED CANONICAL ARCHETYPE BLUEPRINTS:\n")
     for (archUri in selectedArchetypes) {
         if (!archUri) continue
-        try {
-            Map resResult = ec.service.sync().name("org.moqui.ai.mcp.McpResourceServices.get#ResourceContent")
-                .parameters([uri: archUri.toString()])
-                .call()
-            
-            String archXml = resResult.contents ? resResult.contents[0]?.text : null
-            if (archXml) {
-                archetypeBuilder.append("<!-- Archetype Blueprint: ${archUri} -->\n")
-                archetypeBuilder.append(archXml.trim())
-                archetypeBuilder.append("\n\n")
-            }
-        } catch (Exception archEx) {
-            ec.logger.warn("⚠️ [ExecuteStagedAgentTurn] Could not fetch archetype ${archUri}: ${archEx.message}")
+        String raw = archUri.toString().trim()
+        String cleanName = raw.substring(raw.lastIndexOf('/') + 1).replace(".xml", "")
+        
+        List candidateUris = [
+            "component://agi-ai/mcp/resources/screen/archetype/${cleanName}.xml",
+            "component://agi-ide/mcp/resources/screen/archetype/${cleanName}.xml",
+            "component://agi-ide/resources/screen/archetype/${cleanName}.xml"
+        ]
+        
+        String archXml = null
+        String finalResolvedUri = null
+        for (candidate in candidateUris) {
+            try {
+                Map resResult = ec.service.sync().name("org.moqui.ai.mcp.McpResourceServices.get#ResourceContent")
+                    .parameters([uri: candidate])
+                    .call()
+                if (resResult?.contents && resResult.contents[0]?.text) {
+                    archXml = resResult.contents[0].text
+                    finalResolvedUri = candidate
+                    break
+                }
+            } catch (Exception ignore) {}
+        }
+        
+        if (archXml) {
+            archetypeBuilder.append("<!-- Archetype Blueprint: ${finalResolvedUri} -->\n")
+            archetypeBuilder.append(archXml.trim())
+            archetypeBuilder.append("\n\n")
+            ec.logger.info("📐 [ExecuteStagedAgentTurn] Loaded archetype template from: ${finalResolvedUri}")
+        } else {
+            ec.logger.warn("⚠️ [ExecuteStagedAgentTurn] Archetype '${cleanName}' not found in candidate paths.")
         }
     }
 }
@@ -136,7 +154,7 @@ Map proxyParams = [
     moquiSessionToken   : ec.web?.sessionToken ?: ""
 ]
 
-Map proxyResult = ec.service.sync().name("org.moqui.ai.mcp.McpPayloadServices.run#OpenAiProxy").parameters(proxyParams).call()
+Map proxyResult = ec.service.sync().name("org.moqui.ai.AgiAiGatewayServices.run#OpenAiProxy").parameters(proxyParams).call()
 
 if (proxyResult.error || proxyResult.status == "error") {
     context.status = "error"
@@ -163,6 +181,10 @@ if (completion instanceof String) {
 ec.logger.info("parsed result: ${parsed}")
 
 List filesGenerated = []
+String finalUri = null
+String finalXml = null
+def finalAstTree = null
+
 // =============================================================================
 // 7. Store Directly to Workspace Buffer (Ensuring AST Single Source of Truth)
 // =============================================================================
@@ -172,11 +194,10 @@ if (parsed?.files instanceof List && !parsed.files.isEmpty()) {
         String fileContent = fileItem.content ?: fileItem.rawXmlContent
         def fileAst = fileItem.astTree
 
-        // If file is an XML screen and AST is missing, compile XML -> AST
         if (fileUri && fileUri.endsWith(".xml") && fileContent && !fileAst) {
             try {
-                Map parseRes = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.parse#XmlToTree")
-                    .parameters([xmlContent: fileContent]).call()
+                Map parseRes = ec.service.sync().name("org.moqui.ide.AgiIdeServices.parse#XmlToTree")
+                    .parameters([artifactUri: fileUri, xmlText: fileContent, xmlContent: fileContent]).call()
                 fileAst = parseRes.layoutTree ?: parseRes.astTree
             } catch (Exception px) {
                 ec.logger.warn("⚠️ Could not compile AST for ${fileUri}: ${px.message}")
@@ -186,7 +207,7 @@ if (parsed?.files instanceof List && !parsed.files.isEmpty()) {
         String fileAstJson = fileAst ? (fileAst instanceof String ? fileAst : JsonOutput.toJson(fileAst)) : null
 
         if (fileUri && (fileContent != null || fileAstJson != null)) {
-            ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer").parameters([
+            ec.service.sync().name("org.moqui.ide.AgiIdeServices.store#WorkspaceBuffer").parameters([
                 artifactUri   : fileUri,
                 metaJsonBuffer: fileAstJson,
                 rawXmlContent : fileContent,
@@ -195,14 +216,15 @@ if (parsed?.files instanceof List && !parsed.files.isEmpty()) {
             filesGenerated.add([artifactUri: fileUri, status: "BUFFERED_DRAFT"])
         }
     }
+    finalUri = artifactUri
     context.status = "SUCCESS"
     context.isDraft = true
     context.message = "Successfully staged ${filesGenerated.size()} artifact files in buffer."
     context.createdArtifactUri = artifactUri
 } else {
-    String finalUri = parsed?.createdArtifactUri ?: parsed?.targetArtifactUri ?: parsed?.targetScreenUri ?: parsed?.workspaceBuffer?.artifactUri ?: proxyResult.createdArtifactUri ?: proxyResult.targetArtifactUri ?: artifactUri
-    String finalXml = parsed?.rawXmlContent ?: proxyResult.rawXmlContent ?: parsed?.workspaceBuffer?.rawXmlContent
-    def finalAstTree = parsed?.astTree ?: parsed?.workspaceBuffer?.metaJsonBuffer ?: null
+    finalUri = parsed?.createdArtifactUri ?: parsed?.targetArtifactUri ?: parsed?.targetScreenUri ?: parsed?.workspaceBuffer?.artifactUri ?: proxyResult.createdArtifactUri ?: proxyResult.targetArtifactUri ?: artifactUri
+    finalXml = parsed?.rawXmlContent ?: proxyResult.rawXmlContent ?: parsed?.workspaceBuffer?.rawXmlContent
+    finalAstTree = parsed?.astTree ?: parsed?.workspaceBuffer?.metaJsonBuffer ?: null
 
     if (finalAstTree instanceof String && finalAstTree.trim().startsWith('{')) {
         try {
@@ -210,11 +232,14 @@ if (parsed?.files instanceof List && !parsed.files.isEmpty()) {
         } catch (Exception ignored) {}
     }
 
+    // Clear any transient messages from earlier tool turns so subsequent services can execute
+    ec.message.clearErrors()
+
     // Compile raw XML to AST if XML exists but AST is missing
     if (finalXml && !finalAstTree && finalUri?.endsWith(".xml")) {
         try {
-            Map parseRes = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.parse#XmlToTree")
-                .parameters([xmlContent: finalXml]).call()
+            Map parseRes = ec.service.sync().name("org.moqui.ide.AgiIdeServices.parse#XmlToTree")
+                .parameters([artifactUri: finalUri, xmlText: finalXml, xmlContent: finalXml]).call()
             finalAstTree = parseRes.layoutTree ?: parseRes.astTree
         } catch (Exception parseEx) {
             ec.logger.warn("⚠️ Could not parse XML to AST tree: ${parseEx.message}")
@@ -231,7 +256,7 @@ if (parsed?.files instanceof List && !parsed.files.isEmpty()) {
     String bufferJson = finalAstTree ? (finalAstTree instanceof String ? finalAstTree : JsonOutput.toJson(finalAstTree)) : null
 
     if (context.mode != 'plan' && finalUri && (finalXml || bufferJson)) {
-        ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer").parameters([
+        ec.service.sync().name("org.moqui.ide.AgiIdeServices.store#WorkspaceBuffer").parameters([
             artifactUri   : finalUri,
             metaJsonBuffer: bufferJson,
             rawXmlContent : finalXml,
@@ -269,3 +294,40 @@ if (parsed?.files instanceof List && !parsed.files.isEmpty()) {
 }
 
 context.filesGenerated = filesGenerated
+
+// =============================================================================
+// 8. Commit Turn to AgiPayload Intent Ledger (Fix 2)
+// =============================================================================
+try {
+    Map payloadDetail = [
+        notes                  : adHocPrompt ?: "",
+        selectedEntities       : (selectedEntities instanceof List) ? selectedEntities : [],
+        selectedArchetypes     : (selectedArchetypes instanceof List) ? selectedArchetypes : [],
+        recommendedArchetype   : parsed?.recommendedArchetype ?: "",
+        recommendedArchetypeUri: parsed?.recommendedArchetypeUri ?: "",
+        screenContract         : parsed?.screenContract ?: [:],
+        formulationSteps       : parsed?.formulationSteps ?: [],
+        architectureSummary    : parsed?.architectureSummary ?: "",
+        rawXmlContent          : finalXml
+    ]
+
+    Map processParams = [
+        agiPayloadId   : context.agiPayloadId,
+        mode           : context.mode ?: 'build',
+        targetComponent: targetComponent ?: 'nursinghome',
+        artifactUri    : finalUri ?: artifactUri,
+        targetMariaId  : targetNodeId,
+        userPromptText : effectivePrompt,
+        title          : effectivePrompt ? (effectivePrompt.length() > 50 ? effectivePrompt.substring(0, 47) + "..." : effectivePrompt) : "Untitled Turn",
+        payload        : payloadDetail,
+        facets         : (context.facets instanceof Map) ? context.facets : [:]
+    ]
+
+    Map processResult = ec.service.sync().name("org.moqui.ide.AgiIdeServices.process#Payload").parameters(processParams).call()
+    if (processResult?.agiPayloadId) {
+        context.agiPayloadId = processResult.agiPayloadId
+        context.workEffortId = processResult.workEffortId
+    }
+} catch (Exception pEx) {
+    ec.logger.warn("⚠️ [ExecuteStagedAgentTurn] Could not persist AgiPayload record: ${pEx.message}", pEx)
+}

@@ -148,7 +148,18 @@
                 if (event.data.event === 'artifact-state-mutated') {
                     console.info("[AgiWorkspace] Detected artifact mutation via ContextBus. Setting isDirty=true...");
                     vm.isDirty = true;
+                    if (event.data.artifactUri && event.data.artifactUri !== vm.localScreenPath) {
+                        vm.localScreenPath = event.data.artifactUri;
+                    }
                     vm.hydrateWorkspaceBuffer();
+                    return;
+                }
+
+                if (event.data.event === 'artifact-saved-to-disk') {
+                    console.info("[AgiWorkspace] Artifact saved to disk. Refreshing buffer and setting isDirty=false...");
+                    vm.isDirty = false;
+                    vm.hydrateWorkspaceBuffer();
+                    return;
                 }
 
                 if (event.data?.event === 'open-service-artifact') {
@@ -157,16 +168,34 @@
                         vm.activeScreens.push('AgiServiceEditor');
                     }
                     vm.focusedPanel = 'AgiServiceEditor';
+                    return;
                 }
 
+                // Focus/Bring Editor Into View from AgiPromptEditor Viewport badges
                 if (event.data.event === 'focus-editor-panel' && event.data.panelName) {
                     const target = event.data.panelName;
                     if (!vm.activeScreens.includes(target)) {
                         vm.activeScreens.push(target);
                     }
-                    // Set to docked or maximized
+                    if (vm.activeLayoutGrid[target]) {
+                        vm.activeLayoutGrid[target].state = 'docked';
+                    }
                     vm.focusedPanel = target;
-                    vm.activeLayoutGrid[target].state = 'docked';
+
+                    // If a single-focus display mode is active, switch to Collage Grid or focus the target panel
+                    if (vm.windowDisplayMode !== 'Collage Grid') {
+                        if (target === 'AgiCanvasEditor') vm.windowDisplayMode = 'Focus Canvas';
+                        else if (target === 'AgiScreenEditor') vm.windowDisplayMode = 'Focus Source';
+                        else if (target === 'AgiStyleEditor') vm.windowDisplayMode = 'Focus Theme';
+                        else vm.windowDisplayMode = 'Collage Grid';
+                        vm.handleDisplayModeChange(vm.windowDisplayMode);
+                    }
+
+                    vm.$q?.notify({
+                        type: 'info',
+                        message: `Focused viewport: ${target}`,
+                        timeout: 900
+                    });
                 }
             };
 
@@ -346,7 +375,7 @@
                             icon="science" 
                             label="Tests" 
                             dense 
-                            class="q-px-sm font-mono"
+                            class="q-px-mono"
                             @click.stop="triggerTestRunnerOverlay"
                         >
                             <q-tooltip class="bg-grey-10 text-caption">Run in-app test suites and verify invariants</q-tooltip>
@@ -626,6 +655,12 @@
             </div>
         `,
         methods: {
+            resolveCsrfToken() {
+                return window.AGI_SERVER_CSRF_TOKEN
+                    || (window.moqui && window.moqui.moquiSessionToken)
+                    || "";
+            },
+
             getPanelClass(panelName) {
                 const panel = this.activeLayoutGrid[panelName];
                 if (panel.state === 'maximized') return 'col-12';
@@ -934,7 +969,7 @@
                 if (!this.localScreenPath) return;
                 if (!confirm(`Discard all unsaved draft changes and reload "${this.localScreenPath}" from disk?`)) return;
 
-                const headers = { 'moquiSessionToken': window.AGI_SERVER_CSRF_TOKEN || '' };
+                const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
                 try {
                     await axios.post('/rest/s1/agi-ide/clearWorkspaceBuffer', {
                         artifactUri: this.localScreenPath
@@ -960,8 +995,11 @@
 
                 if (!activeBlueprint) return;
 
-                const activeUser = window.AGI_SERVER_USER_ID;
-                const headers = { 'X-CSRF-Token': window.AGI_SERVER_CSRF_TOKEN };
+                const activeUser = window.AGI_SERVER_USER_ID || 'ANONYMOUS';
+                const headers = {
+                    'moquiSessionToken': this.resolveCsrfToken(),
+                    'Content-Type': 'application/json'
+                };
                 const jsonStringPayload = JSON.stringify(activeBlueprint);
 
                 try {
@@ -977,30 +1015,40 @@
                         metaJsonBuffer: jsonStringPayload
                     }, { headers });
 
-                    if (fileSaveResponse.data?.status === 'SUCCESS') {
+                    if (fileSaveResponse.data?.status === 'SUCCESS' || fileSaveResponse.status === 200) {
                         this.isDirty = false;
                         this.$q?.notify({
                             type: 'positive',
                             message: 'Screen XML successfully compiled and saved to disk!'
                         });
+
+                        if (this.contextBus) {
+                            this.contextBus.postMessage({
+                                event: 'artifact-saved-to-disk',
+                                artifactUri: this.localScreenPath
+                            });
+                        }
                     }
                 } catch (err) {
                     this.$q?.notify({
                         type: 'negative',
-                        message: 'Failed to write workspace modifications to disk.'
+                        message: err.response?.data?.errors || err.message || 'Failed to write workspace modifications to disk.'
                     });
                 }
             },
 
             async handleThemeSave(payload) {
-                const headers = { 'X-CSRF-Token': window.AGI_SERVER_CSRF_TOKEN };
+                const headers = {
+                    'moquiSessionToken': this.resolveCsrfToken(),
+                    'Content-Type': 'application/json'
+                };
                 try {
                     const resp = await axios.post('/rest/s1/agi-ide/saveThemeJson', {
                         artifactUri: payload.themeUri || this.themeArtifactPath,
                         themeData: payload
                     }, { headers });
 
-                    if (resp.data?.status === 'SUCCESS') {
+                    if (resp.data?.status === 'SUCCESS' || resp.status === 200) {
                         this.$q?.notify({
                             type: 'positive',
                             message: 'Theme artifact successfully saved to disk!'
@@ -1009,7 +1057,7 @@
                 } catch (err) {
                     this.$q?.notify({
                         type: 'negative',
-                        message: 'Failed to save theme artifact.'
+                        message: err.response?.data?.errors || err.message || 'Failed to save theme artifact.'
                     });
                 }
             },
@@ -1078,6 +1126,7 @@
                     });
                 }
             },
+
             triggerTestRunnerOverlay() {
                 if (this.contextBus) {
                     this.contextBus.postMessage({
