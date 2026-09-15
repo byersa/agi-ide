@@ -60,7 +60,7 @@
                     AgiEntityEditor: false,
                     AgiComponentEditor: false,
                     AgiStyleEditor: false,
-                    AgiPromptEditor: false,
+                    AgiStudio: false,
                     MoquiXmlHost: true,
                     AgiArtifactPalette: false,
                     AgiWorkEffortDetail: false,
@@ -75,7 +75,7 @@
                     AgiEntityEditor: null,
                     AgiComponentEditor: null,
                     AgiStyleEditor: null,
-                    AgiPromptEditor: null,
+                    AgiStudio: null,
                     AgiArtifactPalette: null,
                     MoquiXmlHost: null,
                     AgiWorkEffortDetail: null,
@@ -171,7 +171,7 @@
                     return;
                 }
 
-                // Focus/Bring Editor Into View from AgiPromptEditor Viewport badges
+                // Focus/Bring Editor Into View from AgiStudio Viewport badges
                 if (event.data.event === 'focus-editor-panel' && event.data.panelName) {
                     const target = event.data.panelName;
                     if (!vm.activeScreens.includes(target)) {
@@ -593,12 +593,12 @@
                     <!-- 4. Docked AGI Command Studio (APE) Tray -->
                     <q-slide-transition>
                         <div 
-                            v-if="showPromptStudio && editorConstructors.AgiPromptEditor" 
+                            v-if="showPromptStudio && editorConstructors.AgiStudio" 
                             class="col-12 rounded-borders overflow-hidden shadow-10 q-mt-xs"
                             style="height: 520px; border: 2px solid #334155;"
                         >
                             <component 
-                                :is="editorConstructors.AgiPromptEditor" 
+                                :is="editorConstructors.AgiStudio" 
                                 :active-artifact="localScreenPath"
                                 :target-component-prop="targetComponentName"
                                 @close="showPromptStudio = false"
@@ -767,11 +767,11 @@
                     { name: 'AgiArtifactPalette', url: '/agi-ide-assets/AgiArtifactPalette.qvt.js', globalVar: 'AgiArtifactPalette' },
                     { name: 'MoquiXmlHost', url: '/agi-ai-assets/moqui-xml-host.qvt.js', globalVar: 'MoquiXmlHost' },
                     { name: 'AgiWorkEffortDetail', url: '/agi-ai-assets/AgiWorkEffortDetail.qvt.js', globalVar: 'AgiWorkEffortDetail' },
-                    { name: 'DiscussionDetail', url: '/agi-ai-assets/DiscussionDetail.qvt.js', globalVar: 'DiscussionDetail' },
-                    { name: 'DiscussionTree', url: '/agi-ai-assets/DiscussionTree.qvt.js', globalVar: 'DiscussionTree' },
+                    { name: 'AiTurnDetail', url: '/agi-ide-assets/AiTurnDetail.qvt.js', globalVar: 'AiTurnDetail' },
+                    { name: 'AiTurnTree', url: '/agi-ide-assets/AiTurnTree.qvt.js', globalVar: 'AiTurnTree' },
                     { name: 'AgiNewComponentWizard', url: '/agi-ide-assets/AgiNewComponentWizard.qvt.js', globalVar: 'AgiNewComponentWizard' },
                     { name: 'AgiIntentDetail', url: '/agi-ide-assets/AgiIntentDetail.qvt.js', globalVar: 'AgiIntentDetail' },
-                    { name: 'AgiPromptEditor', url: '/agi-ide-assets/AgiPromptEditor.qvt.js', globalVar: 'AgiPromptEditor' },
+                    { name: 'AgiStudio', url: '/agi-ide-assets/AgiStudio.qvt.js', globalVar: 'AgiStudio' },
                     { name: 'AgiInstructions', url: '/agi-ide-assets/AgiInstructions.qvt.js', globalVar: 'AgiInstructions' },
                     { name: 'AgiTestRunner', url: '/agi-ide-assets/util/AgiTestRunner.qvt.js', globalVar: 'AgiTestRunner' },
                 ];

@@ -17,11 +17,10 @@
                 String targetUri = artifactUri ?: artifactPath
                 String activeUserId = ec.user.getUserId() ?: "system_ide_user"
                 
-                // 1. Store updated blueprint into WorkspaceBuffer
+                // Store updated blueprint into WorkspaceBuffer
                 ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer")
                     .parameters([artifactUri: targetUri, userId: activeUserId, metaJsonBuffer: metaJsonData])
                     .call()
-
             ]]></script>
         </actions>
     </service>
@@ -52,9 +51,8 @@
                 import groovy.json.JsonOutput
 
                 String activeUserId = ec.user.getUserId() ?: "system_ide_user"
-                String activeSessionId = context.sessionId ?: ec.context.sessionId
 
-                // 🎯 A. RESOLVE TARGET URI
+                // A. RESOLVE TARGET URI
                 String targetUri = context.artifactUri ?: ""
                 if (!targetUri && targetNodeId && targetNodeId.contains("#") && targetNodeId.startsWith("component://")) {
                     targetUri = targetNodeId.split("#")[0]
@@ -67,26 +65,9 @@
                     targetUri = (ec.context.get("activeArtifactLocation") ?: "").toString()
                 }
 
-                // 🎯 B. HYDRATE BUFFER (ADK Session State -> DB Fallback -> Disk Fallback)
+                // B. HYDRATE BUFFER (Context Buffer -> DB WorkspaceBuffer -> Disk Fallback)
                 String currentMetaJsonStr = context.activeLayoutBuffer
                 String bufferId = context.activeLayoutBufferId
-
-                if (activeSessionId) {
-                    try {
-                        def runner = org.moqui.adk.AdkManager.runnerForSession(activeSessionId)
-                        if (runner != null) {
-                            def sessionOpt = runner.sessionService().getSession("moqui-adk", activeUserId, activeSessionId, java.util.Optional.empty()).blockingGet()
-                            if (sessionOpt && sessionOpt.isPresent()) {
-                                String stateBuffer = sessionOpt.get().state().get("activeLayoutBuffer")
-                                if (stateBuffer && stateBuffer.startsWith("{")) {
-                                    currentMetaJsonStr = stateBuffer
-                                }
-                            }
-                        }
-                    } catch (Exception adkEx) {
-                        ec.logger.warn("⚠️ [manage#WorkspaceBuffer] Failed reading ADK Session state: ${adkEx.message}")
-                    }
-                }
 
                 if (!currentMetaJsonStr || !currentMetaJsonStr.trim().startsWith("{")) {
                     if (targetUri && targetUri.trim() != "") {
@@ -100,7 +81,7 @@
                     }
                 }
 
-                // 🎯 C. PARSE BUFFER OR INITIALIZE FROM PHYSICAL XML ON DISK
+                // C. PARSE BUFFER OR INITIALIZE FROM PHYSICAL XML ON DISK
                 Map layoutTree = [:]
                 boolean parseFailed = false
 
@@ -115,7 +96,7 @@
                     parseFailed = true
                 }
 
-                // 🎯 RECOVERY: Read directly from physical XML file on disk if buffer is missing
+                // RECOVERY: Read directly from physical XML file on disk if buffer is missing
                 if (parseFailed || layoutTree.isEmpty()) {
                     if (targetUri && targetUri.trim() != "") {
                         try {
@@ -151,7 +132,7 @@
                     }
                 }
 
-                // 🎯 D. EXECUTE TREE MUTATION
+                // D. EXECUTE TREE MUTATION
                 Map mutationResult = ec.service.sync().name("org.moqui.ai.mcp.LayoutServices.mutate#JsonTree")
                     .parameters([layoutTree: layoutTree, targetNodeId: targetNodeId, action: action, payloadNode: payloadNode])
                     .call()
@@ -162,7 +143,7 @@
                 if (isMutated) {
                     String updatedMetaJson = JsonOutput.toJson(layoutTree)
 
-                    // 1. Persist updated tree to WorkspaceBuffer
+                    // Persist updated tree to WorkspaceBuffer
                     ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer")
                         .parameters([
                             workspaceBufferId: bufferId,
@@ -171,29 +152,6 @@
                             metaJsonBuffer: updatedMetaJson
                         ])
                         .call()
-
-//                    // 2. Compile AST and write back to physical XML on disk
-//                    ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.save#ScreenXml")
-//                        .parameters([
-//                            artifactUri: targetUri,
-//                            metaJsonBuffer: updatedMetaJson
-//                        ])
-//                        .call()
-
-                    // 3. ADK Session Memory Sync
-                    if (activeSessionId) {
-                        try {
-                            def runner = org.moqui.adk.AdkManager.runnerForSession(activeSessionId)
-                            if (runner != null) {
-                                def sessionOpt = runner.sessionService().getSession("moqui-adk", activeUserId, activeSessionId, java.util.Optional.empty()).blockingGet()
-                                if (sessionOpt && sessionOpt.isPresent()) {
-                                    sessionOpt.get().state().put("activeLayoutBuffer", updatedMetaJson)
-                                }
-                            }
-                        } catch (Exception adkSyncEx) {
-                            ec.logger.warn("⚠️ [manage#WorkspaceBuffer] ADK Session sync skipped: ${adkSyncEx.message}")
-                        }
-                    }
 
                     context.updatedMetaJson = updatedMetaJson
                     context.targetUri = targetUri
@@ -237,7 +195,7 @@
 
                 String resolvedUri = context.artifactUri ?: (targetNodeId.contains("#") ? targetNodeId.split("#")[0] : (context.activeArtifactLocation ?: ""))
 
-                // 🎯 1. HIPAA PHI / Medical Field Auto-Detection
+                // 1. HIPAA PHI / Medical Field Auto-Detection
                 Set<String> sensitivePhiFields = [
                     "ssn", "socialsecurity", "dob", "birthdate", "medicalhistory",
                     "diagnosis", "diagnosiscode", "prescription", "patientname",
@@ -248,7 +206,7 @@
                 boolean autoPhiEncrypt = "true".equalsIgnoreCase(context.encrypt) || 
                                          sensitivePhiFields.any { normalizedCheck.contains(it) }
 
-                // 🎯 2. Build declarative field node for QMETA AST
+                // 2. Build declarative field node for QMETA AST
                 Map dynamicFieldNode = [
                     _moquiTag: "field",
                     "@type": "m-field",
@@ -356,7 +314,7 @@
         </actions>
     </service>
 
-<!-- ===================================================================== -->
+    <!-- ===================================================================== -->
     <!-- GET SCREEN ARCHETYPE LIST (Discovery MCP Tool)                        -->
     <!-- ===================================================================== -->
     <service verb="get" noun="ScreenArchetypeList" type="inline" read-only="true"
@@ -412,59 +370,5 @@
             ]]></script>
         </actions>
     </service>
-
-    <!-- ===================================================================== -->
-    <!-- GET SCREEN ARCHETYPE (Content Retrieval MCP Tool)                     -->
-    <!-- ===================================================================== -->
-    <!--
-    <service verb="get" noun="ScreenArchetype" type="inline" read-only="true" 
-             name="org.moqui.ai.mcp.LayoutServices.get#ScreenArchetype">
-        <description>Retrieve the XML blueprint content of a specific canonical screen archetype to guide layout generation.</description>
-        <in-parameters>
-            <parameter name="archetypeId" type="String" required="true">
-                <description>The ID or name of the archetype (e.g. 'master-detail', 'lookup-modal', 'find-and-list').</description>
-            </parameter>
-        </in-parameters>
-        <out-parameters>
-            <parameter name="status" type="String"/>
-            <parameter name="archetypeId" type="String"/>
-            <parameter name="xmlContent" type="String"/>
-        </out-parameters>
-        <actions>
-            <script><![CDATA[
-                import org.moqui.resource.ResourceReference
-
-                String cleanId = archetypeId.trim().replace(".xml", "").replace(".json", "")
-                
-                // Check agi-ai, agi-ide, and framework locations
-                List candidatePaths = [
-                    "component://agi-ai/mcp/resources/screen/archetype/${cleanId}.xml",
-                    "component://agi-ide/mcp/resources/screen/archetype/${cleanId}.xml",
-                    "component://nursinghome/mcp/resources/screen/archetype/${cleanId}.xml"
-                ]
-
-                ResourceReference matchedRr = null
-                for (String path : candidatePaths) {
-                    ResourceReference rr = ec.resource.getLocationReference(path)
-                    if (rr != null && rr.exists) {
-                        matchedRr = rr
-                        break
-                    }
-                }
-
-                if (matchedRr == null) {
-                    ec.logger.warn("⚠️ [get#ScreenArchetype] Archetype template '${cleanId}' not found.")
-                    context.status = "NOT_FOUND"
-                    return
-                }
-
-                context.status = "SUCCESS"
-                context.archetypeId = cleanId
-                context.xmlContent = matchedRr.getText()
-                ec.logger.info("📄 [get#ScreenArchetype] Successfully loaded archetype: ${cleanId}")
-            ]]></script>
-        </actions>
-    </service>
-    -->
 
 </services>
