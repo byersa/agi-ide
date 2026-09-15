@@ -1,91 +1,6 @@
 (function () {
     const AiTurnTree = {
         name: 'AiTurnTree',
-        template: `
-            <div class="discussion-tree-root fit q-pa-sm bg-slate-950 text-white font-mono">
-                <!-- Global Tree Toolbar -->
-                <div class="row items-center justify-between q-mb-xs q-px-xs">
-                    <div class="text-caption text-weight-bold text-cyan-3 row items-center">
-                        <q-icon name="hub" class="q-mr-xs" color="cyan-4" />
-                        TOPICS &amp; DISCUSSIONS
-                    </div>
-                    <div class="row q-gutter-xs">
-                        <q-btn size="xs" flat round icon="add" color="amber-4" @click="createRootDiscussion">
-                            <q-tooltip>New Topic / Discussion</q-tooltip>
-                        </q-btn>
-                        <q-btn size="xs" flat round icon="unfold_more" color="slate-400" @click="expandAllNodes">
-                            <q-tooltip>Expand All</q-tooltip>
-                        </q-btn>
-                        <q-btn size="xs" flat round icon="unfold_less" color="slate-400" @click="collapseAllNodes">
-                            <q-tooltip>Collapse All</q-tooltip>
-                        </q-btn>
-                        <q-btn size="xs" flat round icon="refresh" color="cyan-4" @click="fetchTree">
-                            <q-tooltip>Refresh Tree</q-tooltip>
-                        </q-btn>
-                    </div>
-                </div>
-
-                <q-separator class="q-mb-sm bg-slate-800" />
-
-                <!-- Loading State -->
-                <div v-if="loading" class="row justify-center q-my-md">
-                    <q-spinner color="cyan-4" size="2em" />
-                </div>
-
-                <!-- Error State -->
-                <div v-else-if="error" class="text-negative text-caption q-pa-xs">
-                    {{ error }}
-                </div>
-
-                <!-- Empty State -->
-                <div v-else-if="!treeNodes || treeNodes.length === 0" class="text-slate-500 text-caption text-italic q-pa-sm">
-                    No active discussions. Click (+) to start a topic.
-                </div>
-
-                <!-- Main Recursive Tree -->
-                <q-tree
-                    v-else
-                    ref="qTreeRef"
-                    :nodes="treeNodes"
-                    node-key="nodeKey"
-                    label-key="label"
-                    default-expand-all
-                    class="text-caption text-slate-200"
-                >
-                    <template v-slot:default-header="prop">
-                        <div 
-                            class="row items-center full-width q-pa-xs rounded-borders cursor-pointer"
-                            :class="{ 'bg-cyan-10 text-cyan-2 text-weight-bold': selectedNodeId === prop.node.nodeKey }"
-                            @click="selectNode(prop.node)"
-                        >
-                            <q-icon 
-                                :name="prop.node.discussionId && !prop.node.messageId ? 'forum' : 'chat_bubble_outline'" 
-                                :color="prop.node.discussionId && !prop.node.messageId ? 'cyan-4' : 'amber-4'" 
-                                size="16px"
-                                class="q-mr-xs" 
-                            />
-
-                            <div class="col-grow text-caption row items-center">
-                                <span>{{ prop.node.label }}</span>
-                                <q-badge v-if="prop.node.messageCount > 0" color="slate-800" text-color="cyan-3" class="q-ml-xs text-caption" style="font-size: 9px;">
-                                    {{ prop.node.messageCount }}
-                                </q-badge>
-                                <q-badge v-if="prop.node.promotedWorkEffortId" color="positive" text-color="black" class="q-ml-xs text-caption" style="font-size: 9px;">
-                                    WE #{{ prop.node.promotedWorkEffortId }}
-                                </q-badge>
-                            </div>
-
-                            <div class="row items-center q-gutter-x-xs">
-                                <q-btn flat round dense icon="add" size="xs" color="amber-4" @click.stop="addSubTurn(prop.node)">
-                                    <q-tooltip>Add Sub-Topic / Message</q-tooltip>
-                                </q-btn>
-                            </div>
-                        </div>
-                    </template>
-                </q-tree>
-            </div>
-        `,
-
         props: {
             targetComponent: { type: String, default: 'nursinghome' },
             targetArtifactUri: { type: String, default: '' }
@@ -146,6 +61,41 @@
                 }
             },
 
+            // Phase 1: In-memory tree splicing without round-trip network rebuild
+            insertTurnNode(payload) {
+                if (!payload || !payload.userNode) return;
+                const { discussionId, parentMessageId, userNode } = payload;
+
+                const findAndInsert = (nodes) => {
+                    for (const node of nodes) {
+                        // Check for matching discussion container node
+                        if (String(node.discussionId) === String(discussionId) && !node.messageId) {
+                            if (!parentMessageId) {
+                                if (!node.children) node.children = [];
+                                node.children.push(userNode);
+                                return true;
+                            }
+                        }
+                        // Check for parent message node
+                        if (parentMessageId && String(node.messageId) === String(parentMessageId)) {
+                            if (!node.children) node.children = [];
+                            node.children.push(userNode);
+                            return true;
+                        }
+                        if (node.children && node.children.length > 0) {
+                            if (findAndInsert(node.children)) return true;
+                        }
+                    }
+                    return false;
+                };
+
+                const inserted = findAndInsert(this.treeNodes);
+                if (inserted) {
+                    this.selectedNodeId = userNode.nodeKey;
+                    this.selectNode(userNode);
+                }
+            },
+
             createRootDiscussion() {
                 const vm = this;
                 this.$q.dialog({
@@ -188,7 +138,6 @@
                     if (!text.trim()) return;
                     vm.loading = true;
                     try {
-                        // 1. Record User Message
                         const recResp = await axios.post('/rest/s1/agi-ai/discussions/message', {
                             discussionId: discId,
                             parentMessageId: parentMsgId,
@@ -198,7 +147,6 @@
 
                         const userMsgId = recResp.data?.messageId;
 
-                        // 2. Explicitly Dispatch Agent Inference Turn
                         await axios.post('/rest/s1/agi-ai/discussions/dispatch', {
                             discussionId: discId,
                             parentMessageId: userMsgId,
@@ -209,7 +157,6 @@
                         vm.loading = false;
                         await vm.fetchTree();
 
-                        // Automatically select newly created turn node
                         if (userMsgId) {
                             vm.selectNode({
                                 nodeKey: 'msg_' + userMsgId,
@@ -228,7 +175,86 @@
 
             expandAllNodes() { if (this.$refs.qTreeRef) this.$refs.qTreeRef.expandAll(); },
             collapseAllNodes() { if (this.$refs.qTreeRef) this.$refs.qTreeRef.collapseAll(); }
-        }
+        },
+        template: `
+            <div class="discussion-tree-root fit q-pa-sm bg-slate-950 text-white font-mono">
+                <div class="row items-center justify-between q-mb-xs q-px-xs">
+                    <div class="text-caption text-weight-bold text-cyan-3 row items-center">
+                        <q-icon name="hub" class="q-mr-xs" color="cyan-4" />
+                        TOPICS &amp; DISCUSSIONS
+                    </div>
+                    <div class="row q-gutter-xs">
+                        <q-btn size="xs" flat round icon="add" color="amber-4" @click="createRootDiscussion">
+                            <q-tooltip>New Topic / Discussion</q-tooltip>
+                        </q-btn>
+                        <q-btn size="xs" flat round icon="unfold_more" color="slate-400" @click="expandAllNodes">
+                            <q-tooltip>Expand All</q-tooltip>
+                        </q-btn>
+                        <q-btn size="xs" flat round icon="unfold_less" color="slate-400" @click="collapseAllNodes">
+                            <q-tooltip>Collapse All</q-tooltip>
+                        </q-btn>
+                        <q-btn size="xs" flat round icon="refresh" color="cyan-4" @click="fetchTree">
+                            <q-tooltip>Refresh Tree</q-tooltip>
+                        </q-btn>
+                    </div>
+                </div>
+
+                <q-separator class="q-mb-sm bg-slate-800" />
+
+                <div v-if="loading" class="row justify-center q-my-md">
+                    <q-spinner color="cyan-4" size="2em" />
+                </div>
+
+                <div v-else-if="error" class="text-negative text-caption q-pa-xs">
+                    {{ error }}
+                </div>
+
+                <div v-else-if="!treeNodes || treeNodes.length === 0" class="text-slate-500 text-caption text-italic q-pa-sm">
+                    No active discussions. Click (+) to start a topic.
+                </div>
+
+                <q-tree
+                    v-else
+                    ref="qTreeRef"
+                    :nodes="treeNodes"
+                    node-key="nodeKey"
+                    label-key="label"
+                    default-expand-all
+                    class="text-caption text-slate-200"
+                >
+                    <template v-slot:default-header="prop">
+                        <div 
+                            class="row items-center full-width q-pa-xs rounded-borders cursor-pointer"
+                            :class="{ 'bg-cyan-10 text-cyan-2 text-weight-bold': selectedNodeId === prop.node.nodeKey }"
+                            @click="selectNode(prop.node)"
+                        >
+                            <q-icon 
+                                :name="prop.node.discussionId && !prop.node.messageId ? 'forum' : 'chat_bubble_outline'" 
+                                :color="prop.node.discussionId && !prop.node.messageId ? 'cyan-4' : 'amber-4'" 
+                                size="16px"
+                                class="q-mr-xs" 
+                            />
+
+                            <div class="col-grow text-caption row items-center">
+                                <span>{{ prop.node.label }}</span>
+                                <q-badge v-if="prop.node.messageCount > 0" color="slate-800" text-color="cyan-3" class="q-ml-xs text-caption" style="font-size: 9px;">
+                                    {{ prop.node.messageCount }}
+                                </q-badge>
+                                <q-badge v-if="prop.node.promotedWorkEffortId" color="positive" text-color="black" class="q-ml-xs text-caption" style="font-size: 9px;">
+                                    WE #{{ prop.node.promotedWorkEffortId }}
+                                </q-badge>
+                            </div>
+
+                            <div class="row items-center q-gutter-x-xs">
+                                <q-btn flat round dense icon="add" size="xs" color="amber-4" @click.stop="addSubTurn(prop.node)">
+                                    <q-tooltip>Add Sub-Topic / Message</q-tooltip>
+                                </q-btn>
+                            </div>
+                        </div>
+                    </template>
+                </q-tree>
+            </div>
+        `
     };
 
     window.AiTurnTree = AiTurnTree;

@@ -130,16 +130,17 @@
 
                 <!-- 2. SPLIT-PANE CONVERSATION WORKSPACE -->
                 <div class="col row no-wrap overflow-hidden">
-                    <!-- Left: Discussion & Topic Tree -->
+                <!-- Left: Discussion & Topic Tree -->
                     <div class="column overflow-hidden" :style="{ width: splitRatio + '%', borderRight: '1px solid #334155' }">
                         <ai-turn-tree 
+                            ref="treeRef"
                             :target-component="targetComponent"
                             :target-artifact-uri="activeArtifactLocation"
                             @discussion-selected="onDiscussionSelected"
                             @node-selected="onNodeSelected"
                         />
                     </div>
-
+                
                     <!-- Right: Conversational Stream & Action Console -->
                     <div class="col column overflow-hidden">
                         <ai-turn-detail 
@@ -147,6 +148,7 @@
                             :node="activeDiscussionNode"
                             :mode-prop="activeAssistMode"
                             @mode-updated="onChildModeUpdated"
+                            @turn-created="onTurnCreated"
                             @turn-dispatched="onTurnDispatched"
                             @discussion-promoted="onDiscussionPromoted"
                         />
@@ -156,6 +158,11 @@
             </div>
         `,
         methods: {
+            onTurnCreated(payload) {
+                if (this.$refs.treeRef && typeof this.$refs.treeRef.insertTurnNode === 'function') {
+                    this.$refs.treeRef.insertTurnNode(payload);
+                }
+            },
             focusViewport(panelName) {
                 if (this.contextBus) {
                     this.contextBus.postMessage({

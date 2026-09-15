@@ -1,7 +1,7 @@
 (function () {
     const AiTurnDetail = {
         name: 'AiTurnDetail',
-        emits: ['turn-dispatched', 'discussion-promoted', 'mode-updated'],
+        emits: ['turn-dispatched', 'turn-created', 'discussion-promoted', 'mode-updated'],
         props: {
             discussionIdProp: { type: String, default: '' },
             node: { type: Object, default: () => null },
@@ -20,7 +20,6 @@
             };
         },
         computed: {
-            // Determines if the selected tree node represents a specific message/sub-topic
             selectedMessageId() {
                 if (!this.activeNode) return '';
                 if (this.activeNode.messageId) return this.activeNode.messageId;
@@ -30,7 +29,6 @@
                 return '';
             },
 
-            // In AiTurnDetail.qvt.js:
             displayedMessages() {
                 if (!this.allMessages || this.allMessages.length === 0) return [];
                 if (this.selectedMessageId) {
@@ -49,7 +47,97 @@
                     return this.activeNode.label;
                 }
                 return this.discussion?.name || 'Select or Start a Topic';
-            }
+            },
+
+            // Phase 3: Epistemic Stance Configuration (Discuss | Plan | Build)
+            modeConfig() {
+                const mode = (this.modeProp || 'discuss').toLowerCase();
+                if (mode === 'plan') {
+                    return {
+                        mode: 'plan',
+                        color: 'deep-purple-7',
+                        textColor: 'white',
+                        icon: 'architecture',
+                        badgeColor: 'deep-purple-8',
+                        label: this.selectedMessageId ? 'Formulate Plan' : 'Plan Architecture',
+                        tooltip: 'Formulate a structured execution plan grounded in the selected context'
+                    };
+                } else if (mode === 'build') {
+                    return {
+                        mode: 'build',
+                        color: 'amber-9',
+                        textColor: 'black',
+                        icon: 'handyman',
+                        badgeColor: 'amber-8',
+                        label: this.selectedMessageId ? 'Generate & Build' : 'Build Artifact',
+                        tooltip: 'Trigger code generation or mutation against active workspace files'
+                    };
+                }
+                return {
+                    mode: 'discuss',
+                    color: 'primary',
+                    textColor: 'white',
+                    icon: 'chat',
+                    badgeColor: 'cyan-6',
+                    label: this.selectedMessageId ? 'Reply / Discuss' : 'Discuss / Explore',
+                    tooltip: 'Add an exploratory turn to this discussion thread'
+                };
+            },
+
+            // Phase 2: Disambiguation - Extract options/questions from the preceding assistant message
+            suggestedOptions() {
+                if (!this.displayedMessages || !this.displayedMessages.length) return [];
+
+                // 1. Find the latest assistant message safely
+                const lastAssistantMsg = this.displayedMessages
+                    .slice()
+                    .reverse()
+                    .find(function (m) {
+                        return m && (m.senderRoleEnumId === 'AsrAssistant' || m.role === 'assistant');
+                    });
+
+                if (!lastAssistantMsg || !lastAssistantMsg.content) return [];
+
+                const text = this.extractContent(lastAssistantMsg.content);
+                if (!text) return [];
+
+                const options = [];
+
+                // 2. Pattern 1: Numbered choices near the end
+                const regex = /(?:^|\n)\s*(\d+)[\.\)]\s*\*{0,2}([^:\n\*\?]+(?:\:[^\n\*\?]+)?)\*{0,2}/g;
+                let match = null;
+                const matches = [];
+                while ((match = regex.exec(text)) !== null) {
+                    matches.push(match);
+                }
+
+                if (matches.length >= 2) {
+                    const recent = matches.slice(-4);
+                    recent.forEach(function (mItem) {
+                        const num = mItem[1].trim();
+                        let title = mItem[2].trim().replace(/\*\*/g, '').replace(/`/g, '');
+                        if (title.length > 50) title = title.substring(0, 47) + '...';
+                        options.push({
+                            label: num + '. ' + title,
+                            value: 'Proceed with Option ' + num + ': ' + mItem[2].trim()
+                        });
+                    });
+                    if (options.length > 0) return options;
+                }
+
+                // 3. Pattern 2: Binary / Alternative question ("start by A or B?")
+                const orMatch = text.match(/(?:start|begin|proceed)\s+by\s+(?:scaffolding|setting\s+up|designing|creating)?\s*(.+?)\s+or\s+(.+?)\??$/im);
+                if (orMatch) {
+                    const opt1 = orMatch[1].trim().replace(/\*\*/g, '').replace(/`/g, '');
+                    const opt2 = orMatch[2].trim().replace(/\*\*/g, '').replace(/`/g, '');
+                    return [
+                        { label: opt1.length > 40 ? opt1.substring(0, 37) + '...' : opt1, value: 'Proceed with: ' + opt1 },
+                        { label: opt2.length > 40 ? opt2.substring(0, 37) + '...' : opt2, value: 'Proceed with: ' + opt2 }
+                    ];
+                }
+
+                return [];
+            },
         },
         watch: {
             discussionIdProp(val) {
@@ -62,8 +150,8 @@
                     this.activeNode = val;
                     if (val?.discussionId && val.discussionId !== this.discussionId) {
                         this.discussionId = val.discussionId;
+                        this.loadTranscript();
                     }
-                    this.loadTranscript();
                 }
             }
         },
@@ -103,7 +191,6 @@
             extractContent(raw) {
                 if (!raw) return '';
                 let trimmed = String(raw).trim();
-                // If wrapped in JSON envelope, unpack it
                 if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
                     try {
                         const parsed = JSON.parse(trimmed);
@@ -119,7 +206,6 @@
                 let text = this.extractContent(raw);
                 if (!text) return '';
 
-                // 1. If Showdown is available, convert with GitHub flavor (tables, tasklists, stikethrough)
                 if (window.showdown && typeof window.showdown.Converter === 'function') {
                     if (!this._markdownConverter) {
                         this._markdownConverter = new window.showdown.Converter({
@@ -134,38 +220,28 @@
                     }
                     return this._markdownConverter.makeHtml(text);
                 }
-
-                // 2. Fallback Markdown + Table Parser if Showdown script is not yet mounted
                 return this.renderBasicMarkdownWithTables(text);
             },
 
             renderBasicMarkdownWithTables(text) {
-                // Code Blocks
                 text = text.replace(/```([\s\S]*?)```/g, (m, p1) =>
                     `<pre class="bg-slate-900 q-pa-sm rounded-borders overflow-x-auto text-cyan-2" style="border: 1px solid #1e293b;"><code>${p1.trim()}</code></pre>`
                 );
-                // Inline Code
                 text = text.replace(/`([^`]+)`/g, '<code class="bg-slate-900 text-amber-3 q-px-xs rounded-borders">$1</code>');
-
-                // Headers (Numbered & Hash)
                 text = text.replace(/^### (.*$)/gim, '<h4 class="text-subtitle1 text-cyan-3 text-weight-bold q-my-xs">$1</h4>');
                 text = text.replace(/^## (.*$)/gim, '<h3 class="text-subtitle1 text-cyan-2 text-weight-bold q-my-sm" style="border-bottom: 1px solid #334155; padding-bottom: 2px;">$1</h3>');
                 text = text.replace(/^# (.*$)/gim, '<h2 class="text-h6 text-cyan-1 text-weight-bolder q-my-sm" style="border-bottom: 1px solid #0284c7; padding-bottom: 4px;">$1</h2>');
                 text = text.replace(/^(\d+\.\s+[^\n]+)/gim, '<h3 class="text-subtitle2 text-weight-bold text-cyan-3 q-my-sm">$1</h3>');
-
-                // Bold & Italic
                 text = text.replace(/\*\*(.*?)\*\*/g, '<strong class="text-white text-weight-bold">$1</strong>');
                 text = text.replace(/\*(.*?)\*/g, '<em class="text-slate-300">$1</em>');
 
-                // Markdown Tables Parser
                 text = text.replace(/((\|[^\n]+\|\r?\n)+)/g, (tableBlock) => {
                     const lines = tableBlock.trim().split(/\r?\n/).filter(l => l.trim().startsWith('|'));
                     if (lines.length < 2) return tableBlock;
 
                     let html = '<div class="q-my-md overflow-x-auto"><table class="q-table q-table--dense text-caption full-width" style="border: 1px solid #334155; border-collapse: collapse;">';
-
                     lines.forEach((line, idx) => {
-                        if (line.includes(':---') || line.includes('---')) return; // skip delimiter
+                        if (line.includes(':---') || line.includes('---')) return;
                         const cells = line.split('|').slice(1, -1).map(c => c.trim());
                         if (idx === 0) {
                             html += '<thead class="bg-slate-900 text-cyan-3 text-weight-bold"><tr>';
@@ -181,27 +257,52 @@
                     return html;
                 });
 
-                // Bullet Lists
                 text = text.replace(/^\s*\*\s+(.*$)/gim, '<li class="q-ml-md text-slate-200">$1</li>');
                 text = text.replace(/^\s*-\s+(.*$)/gim, '<li class="q-ml-md text-slate-200">$1</li>');
-
-                // Horizontal Rules
                 text = text.replace(/^---$/gim, '<hr class="q-my-sm" style="border: 0; border-top: 1px solid #334155;" />');
-
-                // Line breaks
                 text = text.replace(/\n\n/g, '<div class="q-my-xs"></div>');
                 text = text.replace(/\n/g, '<br/>');
-
                 return text;
+            },
+
+            selectOption(opt) {
+                this.newInput = opt.value || opt.label;
+            },
+
+            validateAndDisambiguate(rawText) {
+                const normalized = rawText.trim().toLowerCase();
+                const ambiguousWords = ['yes', 'yeah', 'sure', 'ok', 'okay', 'yep', 'proceed', 'continue', '1', '2', '3', '4'];
+
+                if (ambiguousWords.includes(normalized)) {
+                    const numMatch = normalized.match(/^(\d+)$/);
+                    if (numMatch && this.suggestedOptions.length > 0) {
+                        const idx = parseInt(numMatch[1], 10) - 1;
+                        if (idx >= 0 && idx < this.suggestedOptions.length) {
+                            return this.suggestedOptions[idx].value;
+                        }
+                    }
+
+                    if (this.suggestedOptions.length > 0) {
+                        this.$q.notify({
+                            type: 'warning',
+                            message: 'Please select one of the specific options above instead of a plain confirmation.',
+                            timeout: 4000
+                        });
+                        return null;
+                    }
+                }
+                return rawText.trim();
             },
 
             async sendMessage() {
                 if (!this.newInput.trim() || !this.discussionId) return;
-                const promptText = this.newInput.trim();
+
+                const promptText = this.validateAndDisambiguate(this.newInput);
+                if (!promptText) return;
+
                 this.newInput = '';
                 this.isSending = true;
 
-                // Find the latest message in the active thread to maintain conversational ancestry
                 let targetParentId = null;
                 if (this.displayedMessages && this.displayedMessages.length > 0) {
                     const lastMsg = this.displayedMessages[this.displayedMessages.length - 1];
@@ -209,6 +310,9 @@
                 } else if (this.selectedMessageId) {
                     targetParentId = this.selectedMessageId;
                 }
+
+                // Epistemic mode stance
+                const activeMode = (this.modeProp || 'discuss').toLowerCase();
 
                 try {
                     // 1. Record user turn
@@ -219,19 +323,82 @@
                         content: promptText
                     }, { headers: { 'moquiSessionToken': this.resolveCsrf() } });
 
-                    const userMsgId = userTurnResp.data?.messageId;
-                    await this.loadTranscript();
+                    const userMsgId = String(userTurnResp.data?.messageId);
+                    const nowFormatted = new Date().toISOString().replace('T', ' ').substring(0, 19);
 
-                    // 2. Dispatch AI agent turn with explicit parent
-                    await axios.post('/rest/s1/agi-ai/discussions/dispatch', {
+                    const localUserMsg = {
+                        messageId: userMsgId,
+                        parentMessageId: targetParentId,
+                        senderRoleEnumId: 'AsrUser',
+                        role: 'user',
+                        partyId: (window.moqui && window.moqui.userId) || 'User',
+                        statusId: 'AmsActive',
+                        entryDate: nowFormatted,
+                        content: promptText,
+                        contents: [{ messageId: userMsgId, bodyText: promptText, contentTypeEnumId: 'mctMarkdown' }]
+                    };
+
+                    this.allMessages.push(localUserMsg);
+
+                    if (!this.selectedMessageId) {
+                        this.activeNode = {
+                            nodeKey: 'msg_' + userMsgId,
+                            id: userMsgId,
+                            messageId: userMsgId,
+                            discussionId: this.discussionId,
+                            label: promptText.slice(0, 40)
+                        };
+                    }
+
+                    // 2. Dispatch agent inference turn with explicit mode parameter
+                    const dispatchResp = await axios.post('/rest/s1/agi-ai/discussions/dispatch', {
                         discussionId: this.discussionId,
                         parentMessageId: userMsgId,
                         userPrompt: promptText,
-                        mode: this.modeProp || 'discuss'
+                        mode: activeMode
                     }, { headers: { 'moquiSessionToken': this.resolveCsrf() } });
 
+                    const assistantMsgId = String(dispatchResp.data?.assistantMessageId);
+                    const completionRaw = dispatchResp.data?.completionText || '';
+
+                    const localAssistantMsg = {
+                        messageId: assistantMsgId,
+                        parentMessageId: userMsgId,
+                        senderRoleEnumId: 'AsrAssistant',
+                        role: 'assistant',
+                        statusId: 'AmsActive',
+                        entryDate: new Date().toISOString().replace('T', ' ').substring(0, 19),
+                        content: completionRaw,
+                        contents: [{ messageId: assistantMsgId, bodyText: completionRaw, contentTypeEnumId: 'mctMarkdown' }]
+                    };
+
+                    this.allMessages.push(localAssistantMsg);
+
+                    // 3. Notify Studio and Tree to splice node in memory
+                    this.$emit('turn-created', {
+                        discussionId: this.discussionId,
+                        parentMessageId: targetParentId,
+                        userNode: {
+                            nodeKey: 'msg_' + userMsgId,
+                            id: userMsgId,
+                            messageId: userMsgId,
+                            discussionId: this.discussionId,
+                            label: promptText.slice(0, 40),
+                            senderRoleEnumId: 'AsrUser',
+                            statusId: 'AmsActive',
+                            entryDate: nowFormatted,
+                            children: []
+                        }
+                    });
+
+                    this.$emit('turn-dispatched', {
+                        discussionId: this.discussionId,
+                        userMsgId: userMsgId,
+                        assistantMsgId: assistantMsgId,
+                        mode: activeMode
+                    });
+
                     this.isSending = false;
-                    await this.loadTranscript();
                 } catch (e) {
                     this.isSending = false;
                     this.$q.notify({ type: 'negative', message: 'Turn failed: ' + (e.response?.data?.errors || e.message) });
@@ -277,7 +444,6 @@
         },
         template: `
             <div class="discussion-detail fit column no-wrap bg-slate-950 text-white font-mono overflow-hidden">
-                
                 <!-- 1. TOP SUMMARY BAR -->
                 <div class="row items-center justify-between q-pa-sm bg-slate-900" style="border-bottom: 1px solid #334155;">
                     <div class="row items-center q-gutter-x-sm">
@@ -285,14 +451,12 @@
                         <span class="text-subtitle2 text-weight-bold text-cyan-2 ellipsis" style="max-width: 480px;">
                             {{ activeTitle }}
                         </span>
-
                         <q-badge v-if="selectedMessageId" color="slate-800" text-color="cyan-3" class="text-caption">
                             Node #{{ selectedMessageId }}
                         </q-badge>
                     </div>
 
                     <div class="row items-center q-gutter-x-xs">
-                        <!-- Toggle All vs Thread Scope -->
                         <q-btn 
                             v-if="selectedMessageId"
                             flat dense no-caps
@@ -303,13 +467,13 @@
                             class="q-px-xs"
                             @click="filterToSelectedNode = !filterToSelectedNode"
                         >
-                            <q-tooltip>{{ filterToSelectedNode ? 'Click to show all messages in container' : 'Click to scope to selected node' }}</q-tooltip>
+                            <q-tooltip>{{ filterToSelectedNode ? 'Show all messages in container' : 'Scope to selected node' }}</q-tooltip>
                         </q-btn>
 
                         <q-btn 
                             v-if="discussion && !discussion.promotedWorkEffortId" 
                             color="positive" 
-                            text-color="black"
+                            text-color="black" 
                             size="xs" 
                             icon="assignment_turned_in" 
                             label="Promote to WorkEffort"
@@ -321,7 +485,7 @@
                         </q-btn>
 
                         <q-btn flat round dense icon="refresh" size="xs" color="cyan-4" @click="loadTranscript">
-                            <q-tooltip>Refresh Transcript</q-tooltip>
+                            <q-tooltip>Manual Transcript Refresh</q-tooltip>
                         </q-btn>
                     </div>
                 </div>
@@ -329,19 +493,16 @@
                 <!-- 2. MODE & FACET BAR -->
                 <div class="row items-center justify-between q-px-sm q-py-xs" style="background-color: #082f49; border-bottom: 1px solid #0369a1;">
                     <div class="row items-center q-gutter-x-xs">
-                        <q-icon name="info" color="cyan-3" size="14px" />
-                        <span class="text-caption text-weight-bold text-cyan-2" style="font-size: 11px;">MODE:</span>
-                        
-                        <q-badge color="cyan-6" text-color="black" class="text-weight-bolder" style="font-size: 10px;">
-                            {{ (modeProp || 'discuss').toUpperCase() }}
+                        <q-icon :name="modeConfig.icon" :color="modeConfig.color" size="14px" />
+                        <span class="text-caption text-weight-bold text-cyan-2" style="font-size: 11px;">STANCE:</span>
+                        <q-badge :color="modeConfig.badgeColor" :text-color="modeConfig.textColor" class="text-weight-bolder" style="font-size: 10px;">
+                            {{ modeConfig.mode.toUpperCase() }}
                         </q-badge>
-
                         <span class="text-caption text-slate-300 q-ml-sm italic" style="font-size: 10px;">
                             {{ selectedMessageId ? 'Scoped to selected topic branch' : 'Viewing root discussion thread' }}
                         </span>
                     </div>
 
-                    <!-- Facets Chips -->
                     <div v-if="containerFacets && Object.keys(containerFacets).length > 0" class="row items-center q-gutter-x-xs">
                         <span class="text-caption text-slate-400" style="font-size: 10px;">FACETS:</span>
                         <q-chip 
@@ -378,11 +539,23 @@
                                     {{ msg.role === 'assistant' ? 'Moqui AI Architect' : (msg.partyId || 'User') }}
                                 </span>
                                 <span class="text-slate-500 text-caption q-ml-xs">#{{ msg.messageId }}</span>
+
+                                <!-- Phase 4: Staged Plan Payload Badge -->
+                                <q-badge 
+                                    v-if="msg.stagedPayloadId" 
+                                    color="deep-purple-8" 
+                                    text-color="white" 
+                                    class="q-ml-sm text-weight-bold cursor-pointer"
+                                    style="font-size: 10px;"
+                                >
+                                    <q-icon name="architecture" size="12px" class="q-mr-xs" />
+                                    PLAN PAYLOAD #{{ msg.stagedPayloadId }}
+                                    <q-tooltip>Structured plan formulation stored in AgiPayload</q-tooltip>
+                                </q-badge>
                             </div>
                             <span class="text-slate-400" style="font-size: 11px;">{{ msg.entryDate }}</span>
                         </div>
 
-                        <!-- Formatted Markdown Content Area -->
                         <div 
                             class="text-slate-100 markdown-body" 
                             style="font-size: 13px; line-height: 1.6; word-break: break-word;"
@@ -391,8 +564,27 @@
                     </div>
                 </div>
 
-                <!-- 4. INPUT CONSOLE -->
+                <!-- 4. INPUT CONSOLE & OPTION CHIPS -->
                 <div class="q-pa-sm bg-slate-900" style="border-top: 1px solid #334155;">
+                    <!-- Suggested Semantic Options Bar -->
+                    <div v-if="suggestedOptions.length > 0" class="row items-center q-gutter-x-xs q-mb-xs">
+                        <span class="text-caption text-slate-400" style="font-size: 10px;">OPTIONS:</span>
+                        <q-chip
+                            v-for="(opt, idx) in suggestedOptions"
+                            :key="idx"
+                            clickable
+                            dense
+                            size="sm"
+                            color="slate-950"
+                            text-color="cyan-3"
+                            style="border: 1px solid #0284c7;"
+                            @click="selectOption(opt)"
+                        >
+                            <q-icon name="arrow_forward" size="12px" class="q-mr-xs" />
+                            {{ opt.label }}
+                        </q-chip>
+                    </div>
+
                     <div class="row items-center q-gutter-x-sm">
                         <q-input 
                             v-model="newInput" 
@@ -405,15 +597,17 @@
                             input-style="color: #f1f5f9; background-color: #020617; caret-color: #38bdf8;"
                             style="background-color: #020617; border-radius: 4px;"
                             :placeholder="selectedMessageId 
-                                ? 'Reply to #' + selectedMessageId + ' (Ctrl+Enter to post)...' 
-                                : 'Enter discussion message, question, or design requirement (Ctrl+Enter to post)...'"
+                                ? 'Target: #' + selectedMessageId + ' (' + modeConfig.label + ')...' 
+                                : 'Enter ' + modeConfig.mode + ' instruction (Ctrl+Enter to send)...'"
                             :disable="isSending || !discussionId"
                             @keydown.ctrl.enter="sendMessage"
                         />
+                        <!-- Phase 3: Action Button Dynamically Bound to modeConfig -->
                         <q-btn 
-                            color="primary" 
-                            icon="chat" 
-                            :label="selectedMessageId ? 'Reply' : 'Reply / Discuss'" 
+                            :color="modeConfig.color"
+                            :text-color="modeConfig.textColor"
+                            :icon="modeConfig.icon" 
+                            :label="modeConfig.label" 
                             dense no-caps
                             class="q-px-md font-mono text-weight-bold"
                             style="height: 48px;"
@@ -421,7 +615,7 @@
                             :disable="!discussionId"
                             @click="sendMessage"
                         >
-                            <q-tooltip>{{ selectedMessageId ? 'Reply to selected topic #' + selectedMessageId : 'Add turn to discussion' }}</q-tooltip>
+                            <q-tooltip>{{ modeConfig.tooltip }}</q-tooltip>
                         </q-btn>
                     </div>
                 </div>
@@ -432,14 +626,15 @@
 
     window.AiTurnDetail = AiTurnDetail;
     if (!window.AgiComponents) window.AgiComponents = {};
+    window.AiComponents = window.AiComponents || {};
     window.AgiComponents['ai-turn-detail'] = AiTurnDetail;
 
-    const registerDiscussionDetail = () => {
+    const registerComp = () => {
         if (window.moqui && window.moqui.webrootVueApp) {
             window.moqui.webrootVueApp.component('ai-turn-detail', AiTurnDetail);
         } else {
-            setTimeout(registerDiscussionDetail, 50);
+            setTimeout(registerComp, 50);
         }
     };
-    registerDiscussionDetail();
+    registerComp();
 })();
