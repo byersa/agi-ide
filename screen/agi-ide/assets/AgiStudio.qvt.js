@@ -11,14 +11,11 @@
                 activeArtifactLocation: this.activeArtifact || '',
                 activeDiscussionId: '',
                 activeDiscussionNode: null,
-                splitRatio: 28, // 28% Tree, 72% Detail
+                splitRatio: 30,
 
-                // Active Assist Mode: 'discuss' | 'plan' | 'build'
                 activeAssistMode: 'discuss',
-                // Mode memory cache keyed by discussionId: { [discussionId]: 'discuss' | 'plan' | 'build' }
                 modeMemoryCache: {},
 
-                // Quick Viewport Switchers for AgiWorkspace
                 viewports: [
                     { name: 'AgiCanvasEditor', label: 'Canvas', icon: 'preview', color: 'cyan-4' },
                     { name: 'AgiScreenEditor', label: 'Screen XML', icon: 'code', color: 'amber-4' },
@@ -58,7 +55,6 @@
                 
                 <!-- 1. STUDIO HEADER -->
                 <div class="row items-center justify-between q-pa-xs bg-black" style="border-bottom: 1px solid #1e293b; min-height: 42px;">
-                    <!-- Left: Identity, App Anchor & Active Mode Toggle -->
                     <div class="row items-center q-gutter-x-sm">
                         <q-icon name="psychology" color="primary" size="sm" />
                         <span class="text-subtitle2 text-weight-bold text-cyan-3">AGI STUDIO</span>
@@ -67,7 +63,7 @@
 
                         <q-separator vertical dark class="q-mx-xs" />
 
-                        <!-- 🎯 INTERACTIVE ASSIST MODE SWITCHER -->
+                        <!-- 🎯 4-MODE ASSIST SWITCHER -->
                         <q-btn-toggle
                             v-model="activeAssistMode"
                             dense rounded no-caps
@@ -78,6 +74,7 @@
                             class="text-weight-bold"
                             style="border: 1px solid #334155;"
                             :options="[
+                                { label: 'Search', value: 'search', icon: 'search' },
                                 { label: 'Discuss', value: 'discuss', icon: 'chat' },
                                 { label: 'Plan', value: 'plan', icon: 'architecture' },
                                 { label: 'Build', value: 'build', icon: 'handyman' }
@@ -85,7 +82,6 @@
                             @update:model-value="onModeChanged"
                         />
 
-                        <!-- Promoted Work Effort Tag -->
                         <q-badge 
                             v-if="isPromoted" 
                             color="positive" 
@@ -102,7 +98,6 @@
                         </div>
                     </div>
 
-                    <!-- Center: Workspace Viewport Focus Buttons -->
                     <div class="row items-center q-gutter-x-xs">
                         <span class="text-caption text-slate-500" style="font-size: 10px;">FOCUS:</span>
                         <q-btn 
@@ -120,7 +115,6 @@
                         </q-btn>
                     </div>
 
-                    <!-- Right: Dismiss Button -->
                     <div class="row items-center">
                         <q-btn flat round dense icon="close" text-color="white" size="xs" @click="$emit('close')">
                             <q-tooltip>Close Studio</q-tooltip>
@@ -130,18 +124,18 @@
 
                 <!-- 2. SPLIT-PANE CONVERSATION WORKSPACE -->
                 <div class="col row no-wrap overflow-hidden">
-                <!-- Left: Discussion & Topic Tree -->
                     <div class="column overflow-hidden" :style="{ width: splitRatio + '%', borderRight: '1px solid #334155' }">
                         <ai-turn-tree 
                             ref="treeRef"
                             :target-component="targetComponent"
                             :target-artifact-uri="activeArtifactLocation"
+                            :active-mode="activeAssistMode"
                             @discussion-selected="onDiscussionSelected"
                             @node-selected="onNodeSelected"
+                            @mode-filter-selected="onChildModeUpdated"
                         />
                     </div>
                 
-                    <!-- Right: Conversational Stream & Action Console -->
                     <div class="col column overflow-hidden">
                         <ai-turn-detail 
                             :discussion-id-prop="activeDiscussionId"
@@ -159,6 +153,14 @@
         `,
         methods: {
             onTurnCreated(payload) {
+                // If subplans were batch-spawned, refresh the tree from the server
+                if (payload?.createdNodes && payload.createdNodes.length > 0) {
+                    if (this.$refs.treeRef && typeof this.$refs.treeRef.fetchTree === 'function') {
+                        this.$refs.treeRef.fetchTree();
+                    }
+                    return;
+                }
+                // Single in-memory splice fallback
                 if (this.$refs.treeRef && typeof this.$refs.treeRef.insertTurnNode === 'function') {
                     this.$refs.treeRef.insertTurnNode(payload);
                 }
@@ -173,7 +175,6 @@
             },
             onModeChanged(newMode) {
                 if (this.activeDiscussionId) {
-                    // Remember this mode for the active discussion
                     this.modeMemoryCache[this.activeDiscussionId] = newMode;
                 }
             },
@@ -187,7 +188,6 @@
                 this.activeDiscussionId = node.discussionId || node.id;
                 this.activeDiscussionNode = node;
 
-                // Restore remembered mode for this discussion, defaulting to 'discuss'
                 if (this.activeDiscussionId && this.modeMemoryCache[this.activeDiscussionId]) {
                     this.activeAssistMode = this.modeMemoryCache[this.activeDiscussionId];
                 } else {
@@ -208,7 +208,12 @@
                 this.activeDiscussionNode = node;
                 if (node.discussionId) {
                     this.activeDiscussionId = node.discussionId;
-                    if (this.modeMemoryCache[this.activeDiscussionId]) {
+
+                    if (node.mode) {
+                        this.activeAssistMode = node.mode;
+                    } else if (node.stagedPayloadId) {
+                        this.activeAssistMode = 'plan';
+                    } else if (this.modeMemoryCache[this.activeDiscussionId]) {
                         this.activeAssistMode = this.modeMemoryCache[this.activeDiscussionId];
                     }
                 }
@@ -217,10 +222,13 @@
                 if (this.activeDiscussionNode) {
                     this.activeDiscussionNode.promotedWorkEffortId = weId;
                 }
-                // When promoted to a physical task, naturally advance the mode to 'plan' or 'build'
                 this.activeAssistMode = 'plan';
                 if (this.activeDiscussionId) {
                     this.modeMemoryCache[this.activeDiscussionId] = 'plan';
+                }
+                // Refresh left tree to reflect newly persisted subplan nodes
+                if (this.$refs.treeRef && typeof this.$refs.treeRef.fetchTree === 'function') {
+                    this.$refs.treeRef.fetchTree();
                 }
             },
             onTurnDispatched(turnPayload) {
