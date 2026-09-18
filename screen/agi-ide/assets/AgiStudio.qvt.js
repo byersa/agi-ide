@@ -174,8 +174,13 @@
                 }
             },
             onModeChanged(newMode) {
+                this.activeAssistMode = newMode;
                 if (this.activeDiscussionId) {
                     this.modeMemoryCache[this.activeDiscussionId] = newMode;
+                }
+                // If a node is active, align its transient mode to the user's explicit toggle
+                if (this.activeDiscussionNode) {
+                    this.activeDiscussionNode.mode = newMode;
                 }
             },
             onChildModeUpdated(newMode) {
@@ -209,12 +214,20 @@
                 if (node.discussionId) {
                     this.activeDiscussionId = node.discussionId;
 
-                    if (node.mode) {
-                        this.activeAssistMode = node.mode;
-                    } else if (node.stagedPayloadId) {
+                    const label = (node.label || '').toLowerCase();
+                    const isPlan = node.mode === 'plan'
+                        || !!node.stagedPayloadId
+                        || label.startsWith('📋 plan:')
+                        || label.includes('formulate the formal implementation plan');
+
+                    if (isPlan) {
                         this.activeAssistMode = 'plan';
+                    } else if (node.mode === 'build') {
+                        this.activeAssistMode = 'build';
                     } else if (this.modeMemoryCache[this.activeDiscussionId]) {
                         this.activeAssistMode = this.modeMemoryCache[this.activeDiscussionId];
+                    } else {
+                        this.activeAssistMode = node.mode || 'discuss';
                     }
                 }
             },

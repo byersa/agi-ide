@@ -64,17 +64,13 @@
                 return !!planMsg;
             },
 
+            // 4-Mode Epistemic Stance Configuration (Search | Discuss | Plan | Build)
             modeConfig() {
+                // Priority:
+                // 1. Explicit modeProp passed from parent AgiStudio toggle (user's explicit intent)
+                // 2. Active node mode / staged payload
+                // 3. Fallback to discuss
                 let mode = (this.modeProp || 'discuss').toLowerCase();
-                if (mode !== 'build' && mode !== 'search') {
-                    if (this.activeNode?.mode === 'build') {
-                        mode = 'build';
-                    } else if (this.hasPlanPayload) {
-                        mode = 'plan';
-                    } else if (this.activeNode?.mode) {
-                        mode = this.activeNode.mode.toLowerCase();
-                    }
-                }
 
                 if (mode === 'search') {
                     return {
@@ -93,8 +89,8 @@
                         textColor: 'white',
                         icon: 'architecture',
                         badgeColor: 'deep-purple-8',
-                        label: this.selectedMessageId ? 'Refine Plan' : 'Plan Architecture',
-                        tooltip: 'Refine or iterate on this architecture plan'
+                        label: this.selectedMessageId ? 'Formulate Plan' : 'Plan Architecture',
+                        tooltip: 'Formulate or iterate on this architecture plan'
                     };
                 } else if (mode === 'build') {
                     return {
@@ -182,6 +178,24 @@
                         this.discussionId = val.discussionId;
                         this.loadTranscript();
                     }
+                    this.$nextTick(() => {
+                        if (this.hasPlanPayload && this.modeProp !== 'plan' && this.modeProp !== 'build') {
+                            this.$emit('mode-updated', 'plan');
+                        }
+                    });
+                }
+            },
+            modeProp(newMode) {
+                const mode = (newMode || '').toLowerCase();
+                const targetTopic = this.activeTitle || this.discussion?.name || 'this topic';
+
+                if (mode === 'plan' && !this.newInput.trim()) {
+                    this.newInput = `Formulate the formal implementation plan and artifact breakdown for: ${targetTopic}`;
+                } else if (mode === 'build' && !this.newInput.trim()) {
+                    const targetPayloadId = this.activeNode?.stagedPayloadId
+                        || (this.displayedMessages.find(m => m.stagedPayloadId)?.stagedPayloadId)
+                        || 'active';
+                    this.newInput = `Execute build phase for Plan Payload #${targetPayloadId}: Generate root artifacts and screens.`;
                 }
             }
         },
@@ -223,19 +237,25 @@
                 });
             };
 
-            // Key-based safe subplan spawner
-            window.__spawnSubplansByKey = async (cacheKey) => {
+            // Safe subplan spawner with double-click guard and Undo capability
+            window.__spawnSubplansByKey = async (cacheKey, btnElement) => {
+                const subplansList = (window.__agiPlanCache && window.__agiPlanCache[cacheKey]) || [];
+                if (!subplansList || subplansList.length === 0) {
+                    this.$q.notify({ type: 'warning', message: 'Subplan payload not found in memory cache.' });
+                    return;
+                }
+
+                // 1. Frontend Double-Click Guard: Disable target button immediately
+                if (btnElement) {
+                    btnElement.disabled = true;
+                    btnElement.classList.add('opacity-50');
+                }
+
+                const targetParentId = this.selectedMessageId
+                    || this.activeNode?.messageId
+                    || (this.displayedMessages.length > 0 ? this.displayedMessages[0].messageId : null);
+
                 try {
-                    const subplansList = (window.__agiPlanCache && window.__agiPlanCache[cacheKey]) || [];
-                    if (!subplansList || subplansList.length === 0) {
-                        this.$q.notify({ type: 'warning', message: 'Subplan payload not found in memory cache.' });
-                        return;
-                    }
-
-                    const targetParentId = this.selectedMessageId
-                        || this.activeNode?.messageId
-                        || (this.displayedMessages.length > 0 ? this.displayedMessages[0].messageId : null);
-
                     const resp = await axios.post('/rest/s1/agi-ai/discussions/spawn-subplans', {
                         discussionId: this.discussionId,
                         parentMessageId: targetParentId,
@@ -243,28 +263,68 @@
                     }, { headers: { 'moquiSessionToken': this.resolveCsrf() } });
 
                     const createdNodes = resp.data?.createdSubplanNodes || [];
-                    this.$q.notify({
-                        type: 'positive',
-                        message: `Instantiated ${createdNodes.length} Subplans into the Tree!`,
-                        icon: 'account_tree',
-                        timeout: 3000
-                    });
+                    const createdIds = createdNodes.map(n => n.messageId);
 
-                    // Trigger transcript refresh and notify tree to reload nodes
+                    if (btnElement) {
+                        btnElement.innerText = '✓ Subplans Instantiated';
+                        btnElement.style.backgroundColor = '#15803d';
+                    }
+
+                    // Emit to tree and refresh view
                     this.$emit('discussion-promoted');
                     this.$emit('turn-created', {
                         discussionId: this.discussionId,
                         parentMessageId: targetParentId,
                         createdNodes: createdNodes
                     });
-
-                    if (window.AgiComponents && this.contextBus) {
-                        this.contextBus.postMessage({ event: 'refresh-discussion-tree' });
-                    }
-
                     this.loadTranscript();
+
+                    // 2. Immediate Undo Toast Action
+                    this.$q.notify({
+                        type: 'positive',
+                        message: `Instantiated ${createdNodes.length} Subplans into tree.`,
+                        icon: 'account_tree',
+                        timeout: 10000,
+                        actions: [
+                            {
+                                label: 'UNDO',
+                                color: 'amber-4',
+                                handler: async () => {
+                                    try {
+                                        await axios.post('/rest/s1/agi-ai/discussions/rollback-batch', {
+                                            messageIds: createdIds
+                                        }, { headers: { 'moquiSessionToken': this.resolveCsrf() } });
+
+                                        this.$q.notify({
+                                            type: 'info',
+                                            message: 'Rolled back instantiated subplans.',
+                                            icon: 'undo'
+                                        });
+
+                                        if (btnElement) {
+                                            btnElement.disabled = false;
+                                            btnElement.classList.remove('opacity-50');
+                                            btnElement.innerText = `🌿 Instantiate All ${subplansList.length} Subplans into Tree`;
+                                            btnElement.style.backgroundColor = '';
+                                        }
+
+                                        this.$emit('discussion-promoted');
+                                        this.loadTranscript();
+                                    } catch (err) {
+                                        this.$q.notify({ type: 'negative', message: 'Rollback failed: ' + err.message });
+                                    }
+                                }
+                            }
+                        ]
+                    });
+
                 } catch (err) {
-                    this.$q.notify({ type: 'negative', message: 'Failed to instantiate subplans: ' + (err.response?.data?.errors || err.message) });
+                    if (btnElement) {
+                        btnElement.disabled = false;
+                        btnElement.classList.remove('opacity-50');
+                    }
+                    const errMsg = err.response?.data?.errors || err.message;
+                    this.$q.notify({ type: 'negative', message: errMsg, timeout: 5000 });
                 }
             };
         },
@@ -298,9 +358,18 @@
                     if (text.startsWith('{') && text.endsWith('}')) {
                         try {
                             const parsed = JSON.parse(text);
-                            if (parsed.message) { text = String(parsed.message).trim(); continue; }
-                            if (parsed.architectureSummary) { text = String(parsed.architectureSummary).trim(); continue; }
-                            if (parsed.rawXmlContent) { text = String(parsed.rawXmlContent).trim(); continue; }
+                            if (parsed.architectureSummary) {
+                                text = String(parsed.architectureSummary).trim();
+                                continue;
+                            }
+                            if (parsed.message) {
+                                text = String(parsed.message).trim();
+                                continue;
+                            }
+                            if (parsed.rawXmlContent) {
+                                text = String(parsed.rawXmlContent).trim();
+                                continue;
+                            }
                         } catch (e) { break; }
                     }
                     break;
@@ -344,79 +413,114 @@
             renderPlanCardHtml(plan) {
                 let html = '<div class="column q-gutter-y-sm">';
 
-                // Title & Objective
-                html += `<div class="text-subtitle2 text-weight-bold text-cyan-2">${plan.title || 'Architecture Execution Plan'}</div>`;
-                if (plan.objective) {
-                    html += `<div class="text-caption text-slate-300 q-mb-sm">${plan.objective}</div>`;
+                // 1. Title & Summary / Objectives
+                const titleText = plan.planTitle || plan.title || 'Architecture Execution Plan';
+                html += `<div class="text-subtitle2 text-weight-bold text-cyan-2">${titleText}</div>`;
+
+                const summaryText = plan.summary || plan.objective || (Array.isArray(plan.objectives) ? plan.objectives.join(' ') : '');
+                if (summaryText) {
+                    html += `<div class="text-caption text-slate-300 q-mb-xs" style="font-size: 11px; line-height: 1.4;">${summaryText}</div>`;
                 }
 
-                // Operational Pillars
+                // 2. Operational Pillars
                 if (plan.operationalPillars && plan.operationalPillars.length) {
-                    html += `<div class="text-caption text-weight-bold text-amber-3 q-mt-xs">OPERATIONAL PILLARS:</div>`;
+                    html += `<div class="text-caption text-weight-bold text-amber-3 q-mt-xs font-mono" style="font-size: 10px;">OPERATIONAL PILLARS:</div>`;
                     html += `<div class="row q-gutter-xs q-mb-xs">`;
-                    plan.operationalPillars.forEach(p => {
+                    plan.operationalPillars.forEach((p, idx) => {
+                        const pillarIndex = p.menuIndex || (idx + 1);
+                        const pillarTitle = p.title || p.menuTitle || p.name || 'Pillar';
+                        const pillarLoc = p.screenPath || p.menuLocation || '';
+                        const caps = p.capabilities || p.coreCapabilities || [];
+
                         html += `<div class="col-12 q-pa-xs rounded-borders bg-slate-900" style="border: 1px solid #334155;">
                             <div class="row items-center justify-between">
-                                <span class="text-weight-bold text-cyan-3">${p.menuIndex}. ${p.menuTitle} (${p.pillarId})</span>
-                                <span class="text-caption text-slate-400 font-mono" style="font-size: 10px;">${p.screenPath || ''}</span>
+                                <span class="text-weight-bold text-cyan-3" style="font-size: 12px;">${pillarIndex}. ${pillarTitle} <span class="text-slate-400 font-mono" style="font-size: 10px;">(${p.pillarId || ''})</span></span>
+                                <span class="text-caption text-slate-400 font-mono" style="font-size: 10px;">${pillarLoc}</span>
                             </div>
-                            <div class="text-caption text-slate-300" style="font-size: 11px;">${(p.coreCapabilities || []).join(' • ')}</div>
+                            ${caps.length ? `<div class="text-caption text-slate-300 q-mt-xs" style="font-size: 11px;">${caps.join(' • ')}</div>` : ''}
                         </div>`;
                     });
                     html += `</div>`;
                 }
 
-                // Target Artifacts Table with Per-Artifact Build Triggers
-                if (plan.artifactBreakdown && plan.artifactBreakdown.screens) {
-                    html += `<div class="text-caption text-weight-bold text-purple-3 q-mt-xs">TARGET ARTIFACTS:</div>`;
+                // 3. Flatten & Render Target Artifacts (Handles both grouped categories & flat lists)
+                let flatArtifacts = [];
+                if (Array.isArray(plan.artifactBreakdown)) {
+                    plan.artifactBreakdown.forEach(item => {
+                        if (item.artifacts && Array.isArray(item.artifacts)) {
+                            item.artifacts.forEach(art => {
+                                flatArtifacts.push(Object.assign({ category: item.category }, art));
+                            });
+                        } else if (item.path) {
+                            flatArtifacts.push(item);
+                        }
+                    });
+                } else if (plan.artifactBreakdown && plan.artifactBreakdown.screens) {
+                    flatArtifacts = plan.artifactBreakdown.screens;
+                }
+
+                if (flatArtifacts.length) {
+                    html += `<div class="text-caption text-weight-bold text-purple-3 q-mt-xs font-mono" style="font-size: 10px;">TARGET ARTIFACTS:</div>`;
                     html += `<div class="q-my-xs overflow-x-auto"><table class="q-table q-table--dense text-caption full-width" style="border: 1px solid #334155; border-collapse: collapse;">
                         <thead class="bg-slate-900 text-cyan-3"><tr>
-                            <th class="q-pa-xs text-left">Action</th>
-                            <th class="q-pa-xs text-left">Artifact Path</th>
-                            <th class="q-pa-xs text-left">Description</th>
-                            <th class="q-pa-xs text-right">Build</th>
+                            <th class="q-pa-xs text-left" style="font-size: 10px;">Action</th>
+                            <th class="q-pa-xs text-left" style="font-size: 10px;">Artifact Path</th>
+                            <th class="q-pa-xs text-left" style="font-size: 10px;">Purpose / Description</th>
+                            <th class="q-pa-xs text-right" style="font-size: 10px;">Build</th>
                         </tr></thead><tbody>`;
-                    plan.artifactBreakdown.screens.forEach(s => {
-                        const badgeColor = s.action === 'CREATE' ? 'text-positive' : 'text-amber-4';
-                        const safePath = (s.path || '').replace(/'/g, "\\'");
-                        const safeAction = (s.action || 'CREATE').replace(/'/g, "\\'");
+                    flatArtifacts.forEach(s => {
+                        const act = (s.action || 'CREATE').toUpperCase();
+                        const badgeColor = act === 'CREATE' ? 'text-positive' : (act === 'DELETE' ? 'text-negative' : 'text-amber-4');
+                        const path = s.path || s.artifactPath || '';
+                        const desc = s.purpose || s.description || s.category || '';
+                        const safePath = path.replace(/'/g, "\\'");
+                        const safeAction = act.replace(/'/g, "\\'");
+
                         html += `<tr style="border-bottom: 1px solid #1e293b;">
-                            <td class="q-pa-xs ${badgeColor} text-weight-bold">${s.action}</td>
-                            <td class="q-pa-xs font-mono text-cyan-2" style="font-size: 11px;">${s.path}</td>
-                            <td class="q-pa-xs text-slate-300">${s.description}</td>
+                            <td class="q-pa-xs ${badgeColor} text-weight-bold font-mono" style="font-size: 10px;">${act}</td>
+                            <td class="q-pa-xs font-mono text-cyan-2" style="font-size: 10px;">${path}</td>
+                            <td class="q-pa-xs text-slate-300" style="font-size: 11px;">${desc}</td>
                             <td class="q-pa-xs text-right">
-                                <button 
-                                    class="q-btn q-btn--dense text-caption bg-amber-9 text-black text-weight-bold rounded-borders q-px-xs" 
-                                    style="border: none; cursor: pointer; font-size: 10px;"
-                                    onclick="window.__stageArtifactBuild('${safePath}', '${safeAction}')"
-                                >
-                                    🔨 Build
-                                </button>
+                                ${act !== 'DELETE' ? `
+                                    <button 
+                                        class="q-btn q-btn--dense text-caption bg-amber-9 text-black text-weight-bold rounded-borders q-px-xs" 
+                                        style="border: none; cursor: pointer; font-size: 9px;"
+                                        onclick="window.__stageArtifactBuild('${safePath}', '${safeAction}')"
+                                    >
+                                        🔨 Build
+                                    </button>
+                                ` : ''}
                             </td>
                         </tr>`;
                     });
                     html += `</tbody></table></div>`;
                 }
 
-                // Phased Roadmap with Per-Phase Subplan Triggers
+                // 4. Phased Roadmap
                 if (plan.implementationPhases && plan.implementationPhases.length) {
-                    html += `<div class="text-caption text-weight-bold text-cyan-3 q-mt-xs">PHASED ROADMAP:</div>`;
+                    html += `<div class="text-caption text-weight-bold text-cyan-3 q-mt-xs font-mono" style="font-size: 10px;">PHASED ROADMAP:</div>`;
                     plan.implementationPhases.forEach(ph => {
-                        const safeName = (ph.name || '').replace(/'/g, "\\'");
+                        const phaseName = ph.name || ph.title || '';
+                        const safeName = phaseName.replace(/'/g, "\\'");
+                        const phaseNum = ph.phase || '';
+
                         html += `<div class="q-pa-xs q-mb-xs rounded-borders bg-slate-900" style="border: 1px solid #334155;">
                             <div class="row items-center justify-between">
-                                <span class="text-weight-bold text-slate-200" style="font-size: 12px;">Phase ${ph.phase}: ${ph.name}</span>
+                                <span class="text-weight-bold text-slate-200" style="font-size: 11px;">Phase ${phaseNum}: ${phaseName}</span>
                                 <button 
                                     class="q-btn q-btn--dense text-caption bg-deep-purple-7 text-white text-weight-bold rounded-borders q-px-xs" 
-                                    style="border: none; cursor: pointer; font-size: 10px;"
-                                    onclick="window.__stagePhaseSubplan(${ph.phase}, '${safeName}')"
+                                    style="border: none; cursor: pointer; font-size: 9px;"
+                                    onclick="window.__stagePhaseSubplan(${phaseNum}, '${safeName}')"
                                 >
                                     📋 Create Subplan
                                 </button>
                             </div>
-                            <ul class="q-my-none q-pl-md text-slate-400" style="font-size: 11px;">
-                                ${(ph.deliverables || []).map(d => `<li>${d}</li>`).join('')}
-                            </ul>
+                            ${ph.description ? `<div class="text-caption text-slate-300 q-my-xs" style="font-size: 11px;">${ph.description}</div>` : ''}
+                            ${ph.deliverables && ph.deliverables.length ? `
+                                <ul class="q-my-none q-pl-md text-slate-400" style="font-size: 10px;">
+                                    ${ph.deliverables.map(d => `<li>${d}</li>`).join('')}
+                                </ul>
+                            ` : ''}
                         </div>`;
                     });
                 }
@@ -464,11 +568,11 @@
                                     <span class="text-weight-bold text-slate-100 font-mono" style="font-size: 12px;">${sp.phase ? sp.phase + ': ' : ''}${sp.title}</span>
                                 </div>
                                 <button 
-                                    class="q-btn q-btn--dense text-caption bg-purple-9 text-white text-weight-bold rounded-borders q-px-xs" 
-                                    style="border: none; cursor: pointer; font-size: 10px;"
-                                    onclick="window.__spawnSubplansByKey('${itemKey}')"
+                                    class="q-btn q-btn--dense text-caption bg-deep-purple-7 text-white text-weight-bold rounded-borders q-px-sm q-py-xs" 
+                                    style="border: none; cursor: pointer; font-size: 11px;"
+                                    onclick="window.__spawnSubplansByKey('${planKey}', this)"
                                 >
-                                    ➕ Instantiate
+                                    🌿 Instantiate All ${subplans.length} Subplans into Tree
                                 </button>
                             </div>
                             <div class="text-caption text-slate-300 q-mb-xs" style="font-size: 11px;">${sp.description || ''}</div>
@@ -574,9 +678,33 @@
             },
 
             async sendMessage(overrideMode, targetParentOverride) {
-                if (!this.newInput.trim() || !this.discussionId) return;
+                if (!this.discussionId) return;
 
-                const promptText = this.validateAndDisambiguate(this.newInput);
+                const activeMode = (overrideMode || this.modeProp || 'discuss').toLowerCase();
+                let promptText = this.newInput.trim();
+
+                // Context-Aware Default Fallback when input is left empty
+                if (!promptText) {
+                    const targetTopic = this.activeTitle || this.discussion?.name || 'this topic';
+                    if (activeMode === 'plan') {
+                        promptText = `Formulate the formal implementation plan and artifact breakdown for: ${targetTopic}`;
+                    } else if (activeMode === 'build') {
+                        const targetPayloadId = this.activeNode?.stagedPayloadId
+                            || (this.displayedMessages.find(m => m.stagedPayloadId)?.stagedPayloadId)
+                            || 'active';
+                        promptText = `Execute build phase for Plan Payload #${targetPayloadId}: Generate root artifacts and screen definitions for ${targetTopic}.`;
+                    } else {
+                        // In Discuss or Search mode, a prompt is required
+                        this.$q.notify({
+                            type: 'warning',
+                            message: `Please enter a ${activeMode} directive or question.`,
+                            timeout: 2500
+                        });
+                        return;
+                    }
+                }
+
+                promptText = this.validateAndDisambiguate(promptText);
                 if (!promptText) return;
 
                 this.newInput = '';
@@ -591,8 +719,6 @@
                         targetParentId = userMsgs.length > 0 ? userMsgs[userMsgs.length - 1].messageId : this.displayedMessages[this.displayedMessages.length - 1].messageId;
                     }
                 }
-
-                const activeMode = (overrideMode || this.modeProp || 'discuss').toLowerCase();
 
                 try {
                     const userTurnResp = await axios.post('/rest/s1/agi-ai/discussions/message', {
