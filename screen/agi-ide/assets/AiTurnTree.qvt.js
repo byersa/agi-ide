@@ -2,7 +2,7 @@
     const AiTurnTree = {
         name: 'AiTurnTree',
         props: {
-            targetComponent: { type: String, default: 'nursinghome' },
+            targetComponent: { type: String, default: '' },
             targetArtifactUri: { type: String, default: '' },
             activeMode: { type: String, default: 'discuss' }
         },
@@ -103,7 +103,6 @@
         },
         watch: {
             targetComponent() { this.fetchTree(); },
-            targetArtifactUri() { this.fetchTree(); },
             showArchived() { this.fetchTree(); }
         },
         methods: {
@@ -145,27 +144,25 @@
 
             async fetchTree() {
                 this.loading = true;
-                this.error = null;
-                const vm = this;
-
                 try {
-                    const response = await axios.get('/rest/s1/agi-ai/discussions', {
-                        params: {
-                            targetComponent: vm.targetComponent || 'nursinghome',
-                            targetArtifactUri: vm.targetArtifactUri || null,
-                            includeArchived: vm.showArchived ? 'Y' : 'N'
-                        },
+                    const params = {
+                        includeArchived: this.showArchived ? 'Y' : 'N'
+                    };
+                    if (this.targetComponent) {
+                        params.targetComponent = this.targetComponent;
+                    }
+
+                    const resp = await axios.get('/rest/s1/agi-ai/discussions/tree', {
+                        params: params,
                         headers: { 'moquiSessionToken': this.resolveCsrf() }
                     });
 
-                    vm.loading = false;
-                    vm.rawTreeNodes = response.data?.treeNodes || [];
-                    vm.$nextTick(() => {
-                        if (vm.$refs.qTreeRef) vm.$refs.qTreeRef.expandAll();
-                    });
+                    this.rawTreeNodes = resp.data?.treeNodes || [];
                 } catch (err) {
-                    vm.loading = false;
-                    vm.error = "Failed to load discussions: " + (err.response?.data?.errors || err.message);
+                    console.error("Failed to load discussion tree:", err);
+                    this.error = err.message;
+                } finally {
+                    this.loading = false;
                 }
             },
 
@@ -202,7 +199,6 @@
                 this.hoistedRootNode = this.rootHistory[this.rootHistory.length - 1];
             },
 
-            // Cascade Soft-Archive Branch
             confirmArchiveBranch(node) {
                 const isMsg = !!node.messageId;
                 const title = isMsg ? `Archive Turn #${node.messageId}?` : `Archive Discussion: ${node.label}?`;
@@ -233,7 +229,6 @@
                 });
             },
 
-            // Cascade Restore / Unarchive Branch
             async restoreBranch(node) {
                 const isMsg = !!node.messageId;
                 try {
@@ -302,12 +297,21 @@
                     if (!topicName.trim()) return;
                     vm.loading = true;
                     try {
-                        await axios.post('/rest/s1/agi-ai/discussions', {
+                        const payload = {
                             name: topicName.trim(),
-                            targetComponent: vm.targetComponent,
-                            targetArtifactUri: vm.targetArtifactUri,
-                            facets: { domain: vm.targetComponent }
-                        }, { headers: { 'moquiSessionToken': vm.resolveCsrf() } });
+                            facets: {}
+                        };
+                        if (vm.targetComponent) {
+                            payload.targetComponent = vm.targetComponent;
+                            payload.facets.domain = vm.targetComponent;
+                        }
+                        if (vm.targetArtifactUri) {
+                            payload.targetArtifactUri = vm.targetArtifactUri;
+                        }
+
+                        await axios.post('/rest/s1/agi-ai/discussions', payload, {
+                            headers: { 'moquiSessionToken': vm.resolveCsrf() }
+                        });
 
                         vm.fetchTree();
                     } catch (e) {

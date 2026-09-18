@@ -560,19 +560,24 @@
                     const itemKey = planKey + '_' + idx;
                     window.__agiPlanCache[itemKey] = [sp];
 
+                    // Resolve contextual title across naming conventions
+                    const phaseNum = sp.phase || sp.phaseNumber || (idx + 1);
+                    const phaseTitle = sp.title || sp.name || sp.phaseName || sp.summary || `Phase ${phaseNum} Implementation`;
+                    const displayHeader = sp.phase ? `Phase ${sp.phase}: ${phaseTitle}` : phaseTitle;
+
                     html += `
                         <div class="q-pa-xs rounded-borders bg-slate-900" style="border: 1px solid #334155; border-left: 3px solid #8b5cf6;">
                             <div class="row items-center justify-between q-mb-xs">
                                 <div class="row items-center q-gutter-x-xs">
-                                    <span class="text-caption text-weight-bolder text-purple-3 font-mono" style="font-size: 11px;">${sp.subplanId || (idx + 1)}</span>
-                                    <span class="text-weight-bold text-slate-100 font-mono" style="font-size: 12px;">${sp.phase ? sp.phase + ': ' : ''}${sp.title}</span>
+                                    <span class="text-caption text-weight-bolder text-purple-3 font-mono" style="font-size: 11px;">#${phaseNum}</span>
+                                    <span class="text-weight-bold text-slate-100 font-mono" style="font-size: 12px;">${displayHeader}</span>
                                 </div>
                                 <button 
-                                    class="q-btn q-btn--dense text-caption bg-deep-purple-7 text-white text-weight-bold rounded-borders q-px-sm q-py-xs" 
-                                    style="border: none; cursor: pointer; font-size: 11px;"
-                                    onclick="window.__spawnSubplansByKey('${planKey}', this)"
+                                    class="q-btn q-btn--dense text-caption bg-purple-9 text-white text-weight-bold rounded-borders q-px-xs" 
+                                    style="border: none; cursor: pointer; font-size: 10px;"
+                                    onclick="window.__spawnSubplansByKey('${itemKey}', this)"
                                 >
-                                    🌿 Instantiate All ${subplans.length} Subplans into Tree
+                                    ➕ Instantiate
                                 </button>
                             </div>
                             <div class="text-caption text-slate-300 q-mb-xs" style="font-size: 11px;">${sp.description || ''}</div>
@@ -859,7 +864,15 @@
             promoteToBuild() {
                 this.$emit('mode-updated', 'build');
                 const targetPayload = this.activeNode?.stagedPayloadId || 'active';
-                this.newInput = `Execute build phase for Plan Payload #${targetPayload}: Generate root NursingHomeApp.xml referencing the 5 operational pillars.`;
+
+                // Seed prompt with node context so the LLM doesn't waste turns running unmapped discovery tools
+                let planSummary = "";
+                if (this.activeNode?.label) {
+                    planSummary = ` Target Scope: ${this.activeNode.label}.`;
+                }
+
+                this.newInput = `Execute build phase for Plan Payload #${targetPayload}:${planSummary} Generate root NursingHomeApp.xml referencing the operational pillars. Return the complete, valid XML screen definition.`;
+
                 this.$q.notify({
                     type: 'info',
                     message: 'Stance shifted to BUILD mode. Review prompt below and click "Generate & Build".',
@@ -868,7 +881,7 @@
                     textColor: 'black',
                     timeout: 3500
                 });
-            }
+            },
         },
         template: `
             <div class="discussion-detail fit column no-wrap bg-slate-950 text-white font-mono overflow-hidden">

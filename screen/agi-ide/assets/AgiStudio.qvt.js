@@ -3,18 +3,23 @@
         name: 'AgiStudio',
         props: {
             activeArtifact: { type: String, default: '' },
-            targetComponentProp: { type: String, default: 'nursinghome' }
+            targetComponentProp: { type: String, default: '' }
         },
         data() {
             return {
-                targetComponent: this.targetComponentProp || 'nursinghome',
+                targetComponent: this.targetComponentProp || '',
                 activeArtifactLocation: this.activeArtifact || '',
                 activeDiscussionId: '',
                 activeDiscussionNode: null,
-                splitRatio: 30,
+                splitRatio: 28,
 
                 activeAssistMode: 'discuss',
                 modeMemoryCache: {},
+
+                // Viewport Dock State
+                activePanel: null, // 'AgiCanvasEditor' | 'AgiScreenEditor' | 'AgiServiceEditor' | 'AgiEntityEditor' | null
+                stagedXmlSource: '',
+                stagedLayoutTree: null,
 
                 viewports: [
                     { name: 'AgiCanvasEditor', label: 'Canvas', icon: 'preview', color: 'cyan-4' },
@@ -59,11 +64,11 @@
                         <q-icon name="psychology" color="primary" size="sm" />
                         <span class="text-subtitle2 text-weight-bold text-cyan-3">AGI STUDIO</span>
                         
-                        <q-badge color="deep-purple-8" text-color="white" :label="targetComponent" class="text-caption text-weight-bold" />
+                        <q-badge v-if="targetComponent" color="deep-purple-8" text-color="white" :label="targetComponent" class="text-caption text-weight-bold" />
 
                         <q-separator vertical dark class="q-mx-xs" />
 
-                        <!-- 🎯 4-MODE ASSIST SWITCHER -->
+                        <!-- 4-MODE ASSIST SWITCHER -->
                         <q-btn-toggle
                             v-model="activeAssistMode"
                             dense rounded no-caps
@@ -98,20 +103,23 @@
                         </div>
                     </div>
 
+                    <!-- VIEWPORT TOGGLES -->
                     <div class="row items-center q-gutter-x-xs">
-                        <span class="text-caption text-slate-500" style="font-size: 10px;">FOCUS:</span>
+                        <span class="text-caption text-slate-500" style="font-size: 10px;">VIEWPORTS:</span>
                         <q-btn 
                             v-for="vp in viewports" 
                             :key="vp.name"
                             flat dense no-caps
                             :icon="vp.icon"
                             :label="vp.label"
-                            :color="vp.color"
+                            :color="activePanel === vp.name ? 'white' : vp.color"
+                            :class="activePanel === vp.name ? 'bg-slate-800 text-weight-bolder' : ''"
                             size="xs"
-                            class="q-px-xs"
+                            class="q-px-xs rounded-borders"
+                            style="border: 1px solid rgba(255,255,255,0.1);"
                             @click="focusViewport(vp.name)"
                         >
-                            <q-tooltip>Bring {{ vp.label }} into focus</q-tooltip>
+                            <q-tooltip>{{ activePanel === vp.name ? 'Close' : 'Open' }} {{ vp.label }}</q-tooltip>
                         </q-btn>
                     </div>
 
@@ -122,13 +130,14 @@
                     </div>
                 </div>
 
-                <!-- 2. SPLIT-PANE CONVERSATION WORKSPACE -->
+                <!-- 2. MAIN WORKSPACE (SPLIT: CONVERSATION ON LEFT, ACTIVE VIEWPORT ON RIGHT) -->
                 <div class="col row no-wrap overflow-hidden">
+                    
+                    <!-- Left: Turn Tree -->
                     <div class="column overflow-hidden" :style="{ width: splitRatio + '%', borderRight: '1px solid #334155' }">
                         <ai-turn-tree 
                             ref="treeRef"
                             :target-component="targetComponent"
-                            :target-artifact-uri="activeArtifactLocation"
                             :active-mode="activeAssistMode"
                             @discussion-selected="onDiscussionSelected"
                             @node-selected="onNodeSelected"
@@ -136,7 +145,8 @@
                         />
                     </div>
                 
-                    <div class="col column overflow-hidden">
+                    <!-- Center: Turn Detail & Conversation -->
+                    <div class="col column overflow-hidden" :style="activePanel ? 'border-right: 1px solid #334155;' : ''">
                         <ai-turn-detail 
                             :discussion-id-prop="activeDiscussionId"
                             :node="activeDiscussionNode"
@@ -147,25 +157,52 @@
                             @discussion-promoted="onDiscussionPromoted"
                         />
                     </div>
+
+                    <!-- Right: Embedded Viewport Panel (Canvas / Screen / Service / Entity) -->
+                    <div v-if="activePanel" class="col column overflow-hidden bg-slate-900" style="max-width: 50%;">
+                        <div class="row items-center justify-between q-pa-xs bg-slate-950" style="border-bottom: 1px solid #334155;">
+                            <span class="text-caption text-weight-bold text-cyan-3 font-mono q-ml-xs">
+                                {{ activePanel.replace('Agi', '').replace('Editor', '') }} Dock
+                            </span>
+                            <q-btn flat round dense icon="close" size="xs" color="slate-400" @click="activePanel = null" />
+                        </div>
+
+                        <div class="col overflow-hidden relative-position">
+                            <agi-canvas-editor 
+                                v-if="activePanel === 'AgiCanvasEditor'"
+                                :screen-path="activeArtifactLocation"
+                                :layout-tree="stagedLayoutTree"
+                            />
+                            <agi-screen-editor 
+                                v-else-if="activePanel === 'AgiScreenEditor'"
+                                :screen-path="activeArtifactLocation"
+                                :layout-tree="stagedLayoutTree"
+                            />
+                            <div v-else class="fit row flex-center text-slate-500 text-caption font-mono">
+                                Editor for {{ activePanel }} active on {{ activeArtifactLocation }}
+                            </div>
+                        </div>
+                    </div>
+
                 </div>
 
             </div>
         `,
         methods: {
             onTurnCreated(payload) {
-                // If subplans were batch-spawned, refresh the tree from the server
                 if (payload?.createdNodes && payload.createdNodes.length > 0) {
                     if (this.$refs.treeRef && typeof this.$refs.treeRef.fetchTree === 'function') {
                         this.$refs.treeRef.fetchTree();
                     }
                     return;
                 }
-                // Single in-memory splice fallback
                 if (this.$refs.treeRef && typeof this.$refs.treeRef.insertTurnNode === 'function') {
                     this.$refs.treeRef.insertTurnNode(payload);
                 }
             },
             focusViewport(panelName) {
+                this.activePanel = (this.activePanel === panelName) ? null : panelName;
+
                 if (this.contextBus) {
                     this.contextBus.postMessage({
                         event: 'focus-editor-panel',
@@ -178,7 +215,6 @@
                 if (this.activeDiscussionId) {
                     this.modeMemoryCache[this.activeDiscussionId] = newMode;
                 }
-                // If a node is active, align its transient mode to the user's explicit toggle
                 if (this.activeDiscussionNode) {
                     this.activeDiscussionNode.mode = newMode;
                 }
@@ -239,17 +275,43 @@
                 if (this.activeDiscussionId) {
                     this.modeMemoryCache[this.activeDiscussionId] = 'plan';
                 }
-                // Refresh left tree to reflect newly persisted subplan nodes
                 if (this.$refs.treeRef && typeof this.$refs.treeRef.fetchTree === 'function') {
                     this.$refs.treeRef.fetchTree();
                 }
             },
-            onTurnDispatched(turnPayload) {
-                if (turnPayload?.targetArtifactUri && this.contextBus) {
+            async onTurnDispatched(turnPayload) {
+                let targetUri = turnPayload?.targetArtifactUri || turnPayload?.createdArtifactUri;
+                if (!targetUri) {
+                    targetUri = this.activeArtifactLocation || (this.targetComponent ? `component://${this.targetComponent}/screen/${this.targetComponent}.xml` : '');
+                }
+
+                this.activeArtifactLocation = targetUri;
+
+                if (turnPayload?.rawXmlContent) {
+                    this.stagedXmlSource = turnPayload.rawXmlContent;
+
+                    if (!this.activePanel) {
+                        this.activePanel = 'AgiScreenEditor';
+                    }
+
+                    try {
+                        const headers = {};
+                        if (window.AGI_SERVER_CSRF_TOKEN) headers['X-CSRF-Token'] = window.AGI_SERVER_CSRF_TOKEN;
+                        const resp = await axios.post('/rest/s1/agi-ide/parseXmlToTree', {
+                            xmlText: this.stagedXmlSource,
+                            artifactLocation: targetUri
+                        }, { headers });
+                        this.stagedLayoutTree = resp.data?.layoutTree || null;
+                    } catch (e) {
+                        console.warn("Could not parse XML to AST layout tree:", e);
+                    }
+                }
+
+                if (this.contextBus) {
                     this.contextBus.postMessage({
                         event: 'artifact-state-mutated',
-                        artifactUri: turnPayload.targetArtifactUri,
-                        rawXmlText: turnPayload.rawXmlContent || ''
+                        artifactUri: targetUri,
+                        rawXmlText: turnPayload?.rawXmlContent || ''
                     });
                 }
             }
