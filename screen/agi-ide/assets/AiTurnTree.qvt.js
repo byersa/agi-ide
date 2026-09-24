@@ -411,10 +411,10 @@
             collapseAllNodes() { if (this.$refs.qTreeRef) this.$refs.qTreeRef.collapseAll(); }
         },
         template: `
-            <div class="bg-slate-950 text-white font-mono" style="display: grid; grid-template-rows: auto auto 1fr; height: 100%; width: 100%; overflow: hidden;">
+            <div class="fit column no-wrap bg-slate-950 text-white font-mono overflow-hidden" style="height: 100%; max-height: 100%; min-height: 0; width: 100%;">
                 
-                <!-- 1. MULTI-FILTER SEARCH HEADER -->
-                <div class="q-pa-xs bg-slate-900" style="border-bottom: 1px solid #334155;">
+                <!-- 1. MULTI-FILTER SEARCH HEADER (FIXED HEIGHT) -->
+                <div class="q-pa-xs bg-slate-900" style="border-bottom: 1px solid #334155; flex: 0 0 auto;">
                     <!-- Filter Input & Actions -->
                     <div class="row items-center q-gutter-x-xs q-mb-xs">
                         <q-input 
@@ -494,8 +494,8 @@
                     </div>
                 </div>
 
-                <!-- 2. ROOT SCOPE BREADCRUMB BAR -->
-                <div v-if="hoistedRootNode || rootHistory.length > 0" class="row items-center justify-between q-px-sm q-py-xs bg-slate-900 text-caption" style="border-bottom: 1px solid #1e293b;">
+                <!-- 2. ROOT SCOPE BREADCRUMB BAR (CONDITIONAL) -->
+                <div v-if="hoistedRootNode || rootHistory.length > 0" class="row items-center justify-between q-px-sm q-py-xs bg-slate-900 text-caption" style="border-bottom: 1px solid #1e293b; flex: 0 0 auto;">
                     <div class="row items-center q-gutter-x-xs ellipsis col">
                         <q-btn flat round dense icon="arrow_back" size="xs" color="cyan-3" @click="popRootScope">
                             <q-tooltip>Up one level</q-tooltip>
@@ -517,113 +517,117 @@
                         <q-tooltip>Reset to Full Component Tree</q-tooltip>
                     </q-btn>
                 </div>
-                <div v-else style="display: none;"></div>
 
-                <!-- 3. TREE CONTAINER (Grid-Bounded Scroll Cell) -->
-                <div class="q-pa-xs scroll" style="min-height: 0; overflow-y: auto !important; overflow-x: hidden; height: 100%;">
-                    <div v-if="loading" class="row justify-center q-my-md">
-                        <q-spinner color="cyan-4" size="2em" />
-                    </div>
-
-                    <div v-else-if="error" class="text-negative text-caption q-pa-xs">
-                        {{ error }}
-                    </div>
-
-                    <div v-else-if="!visibleNodes || visibleNodes.length === 0" class="text-slate-500 text-caption text-italic q-pa-sm text-center q-my-md">
-                        No matches found.
-                    </div>
-
-                    <q-tree
-                        v-else
-                        ref="qTreeRef"
-                        :nodes="visibleNodes"
-                        node-key="nodeKey"
-                        label-key="label"
-                        default-expand-all
-                        class="text-caption text-slate-200"
+                <!-- 3. TREE VIEWPORT WITH NATIVE VIRTUAL SCROLL AREA -->
+                <div class="col" style="flex: 1 1 0%; min-height: 0; height: 100%; position: relative; overflow: hidden;">
+                    <q-scroll-area 
+                        class="fit" 
+                        :thumb-style="{ right: '2px', borderRadius: '4px', backgroundColor: '#0284c7', width: '5px', opacity: 0.75 }"
+                        :bar-style="{ right: '0px', borderRadius: '4px', backgroundColor: '#0f172a', width: '5px', opacity: 0.2 }"
                     >
-                        <template v-slot:default-header="prop">
-                            <div 
-                                class="row items-center full-width q-pa-xs rounded-borders cursor-pointer"
-                                :class="{
-                                    'bg-cyan-10 text-cyan-2 text-weight-bold': selectedNodeId === prop.node.nodeKey,
-                                    'text-strike text-slate-500': prop.node.isArchived
-                                }"
-                                :style="prop.node.isArchived ? 'opacity: 0.45;' : ''"
-                                @click="selectNode(prop.node)"
-                            >
-                                <q-icon 
-                                    :name="getNodeIcon(prop.node)" 
-                                    :color="getNodeColor(prop.node)" 
-                                    size="15px"
-                                    class="q-mr-xs" 
-                                />
-
-                                <div class="col-grow text-caption row items-center ellipsis">
-                                    <!-- Visible DB ID Badges -->
-                                    <span v-if="prop.node.messageId" class="text-caption font-mono text-cyan-4 q-mr-xs text-weight-medium" style="font-size: 10px;">
-                                        #{{ prop.node.messageId }}
-                                    </span>
-                                    <span v-else-if="prop.node.discussionId" class="text-caption font-mono text-slate-400 q-mr-xs text-weight-medium" style="font-size: 10px;">
-                                        D#{{ prop.node.discussionId }}
-                                    </span>
-
-                                    <span class="ellipsis" :class="{ 'text-purple-2 text-weight-bold': isPlanNode(prop.node) && !prop.node.isArchived }">
-                                        {{ prop.node.label }}
-                                    </span>
-                                    
-                                    <q-badge v-if="prop.node.stagedPayloadId" color="deep-purple-9" text-color="amber-3" class="q-ml-xs font-mono text-caption" style="font-size: 8px;">
-                                        P#{{ prop.node.stagedPayloadId }}
-                                    </q-badge>
-
-                                    <q-badge v-if="prop.node.messageCount > 0" color="slate-800" text-color="cyan-3" class="q-ml-xs text-caption" style="font-size: 9px;">
-                                        {{ prop.node.messageCount }}
-                                    </q-badge>
-
-                                    <q-badge v-if="prop.node.isArchived" color="rose-9" text-color="white" class="q-ml-xs text-caption text-weight-bold" style="font-size: 8px;">
-                                        ARCHIVED
-                                    </q-badge>
-                                    
-                                    <q-badge v-else-if="isPlanNode(prop.node)" color="deep-purple-9" text-color="white" class="q-ml-xs text-caption text-weight-bold" style="font-size: 8px;">
-                                        PLAN
-                                    </q-badge>
-                                </div>
-
-                                <!-- Action Buttons -->
-                                <div class="row items-center q-gutter-x-xs">
-                                    <q-btn flat round dense icon="filter_center_focus" size="xs" color="cyan-3" @click.stop="hoistAsRoot(prop.node)">
-                                        <q-tooltip>Hoist as Scope Root</q-tooltip>
-                                    </q-btn>
-                                    
-                                    <q-btn v-if="!prop.node.isArchived" flat round dense icon="add" size="xs" color="amber-4" @click.stop="addSubTurn(prop.node)">
-                                        <q-tooltip>Add Sub-Topic / Turn</q-tooltip>
-                                    </q-btn>
-
-                                    <!-- Archive / Restore Buttons -->
-                                    <q-btn 
-                                        v-if="!prop.node.isArchived"
-                                        flat round dense 
-                                        icon="archive" 
-                                        size="xs" 
-                                        color="slate-500" 
-                                        @click.stop="confirmArchiveBranch(prop.node)"
-                                    >
-                                        <q-tooltip>Archive Branch</q-tooltip>
-                                    </q-btn>
-                                    <q-btn 
-                                        v-else
-                                        flat round dense 
-                                        icon="unarchive" 
-                                        size="xs" 
-                                        color="positive" 
-                                        @click.stop="restoreBranch(prop.node)"
-                                    >
-                                        <q-tooltip>Restore Branch to Active</q-tooltip>
-                                    </q-btn>
-                                </div>
+                        <div class="q-pa-xs">
+                            <div v-if="loading" class="row justify-center q-my-md">
+                                <q-spinner color="cyan-4" size="2em" />
                             </div>
-                        </template>
-                    </q-tree>
+
+                            <div v-else-if="error" class="text-negative text-caption q-pa-xs">
+                                {{ error }}
+                            </div>
+
+                            <div v-else-if="!visibleNodes || visibleNodes.length === 0" class="text-slate-500 text-caption text-italic q-pa-sm text-center q-my-md">
+                                No matches found.
+                            </div>
+
+                            <q-tree
+                                v-else
+                                ref="qTreeRef"
+                                :nodes="visibleNodes"
+                                node-key="nodeKey"
+                                label-key="label"
+                                default-expand-all
+                                class="text-caption text-slate-200"
+                            >
+                                <template v-slot:default-header="prop">
+                                    <div 
+                                        class="row items-center full-width q-pa-xs rounded-borders cursor-pointer"
+                                        :class="{
+                                            'bg-cyan-10 text-cyan-2 text-weight-bold': selectedNodeId === prop.node.nodeKey,
+                                            'text-strike text-slate-500': prop.node.isArchived
+                                        }"
+                                        :style="prop.node.isArchived ? 'opacity: 0.45;' : ''"
+                                        @click="selectNode(prop.node)"
+                                    >
+                                        <q-icon 
+                                            :name="getNodeIcon(prop.node)" 
+                                            :color="getNodeColor(prop.node)" 
+                                            size="15px"
+                                            class="q-mr-xs" 
+                                        />
+
+                                        <div class="col-grow text-caption row items-center ellipsis">
+                                            <span v-if="prop.node.messageId" class="text-caption font-mono text-cyan-4 q-mr-xs text-weight-medium" style="font-size: 10px;">
+                                                #{{ prop.node.messageId }}
+                                            </span>
+                                            <span v-else-if="prop.node.discussionId" class="text-caption font-mono text-slate-400 q-mr-xs text-weight-medium" style="font-size: 10px;">
+                                                D#{{ prop.node.discussionId }}
+                                            </span>
+
+                                            <span class="ellipsis" :class="{ 'text-purple-2 text-weight-bold': isPlanNode(prop.node) && !prop.node.isArchived }">
+                                                {{ prop.node.label }}
+                                            </span>
+                                            
+                                            <q-badge v-if="prop.node.stagedPayloadId" color="deep-purple-9" text-color="amber-3" class="q-ml-xs font-mono text-caption" style="font-size: 8px;">
+                                                P#{{ prop.node.stagedPayloadId }}
+                                            </q-badge>
+
+                                            <q-badge v-if="prop.node.messageCount > 0" color="slate-800" text-color="cyan-3" class="q-ml-xs text-caption" style="font-size: 9px;">
+                                                {{ prop.node.messageCount }}
+                                            </q-badge>
+
+                                            <q-badge v-if="prop.node.isArchived" color="rose-9" text-color="white" class="q-ml-xs text-caption text-weight-bold" style="font-size: 8px;">
+                                                ARCHIVED
+                                            </q-badge>
+                                            
+                                            <q-badge v-else-if="isPlanNode(prop.node)" color="deep-purple-9" text-color="white" class="q-ml-xs text-caption text-weight-bold" style="font-size: 8px;">
+                                                PLAN
+                                            </q-badge>
+                                        </div>
+
+                                        <div class="row items-center q-gutter-x-xs">
+                                            <q-btn flat round dense icon="filter_center_focus" size="xs" color="cyan-3" @click.stop="hoistAsRoot(prop.node)">
+                                                <q-tooltip>Hoist as Scope Root</q-tooltip>
+                                            </q-btn>
+                                            
+                                            <q-btn v-if="!prop.node.isArchived" flat round dense icon="add" size="xs" color="amber-4" @click.stop="addSubTurn(prop.node)">
+                                                <q-tooltip>Add Sub-Topic / Turn</q-tooltip>
+                                            </q-btn>
+
+                                            <q-btn 
+                                                v-if="!prop.node.isArchived"
+                                                flat round dense 
+                                                icon="archive" 
+                                                size="xs" 
+                                                color="slate-500" 
+                                                @click.stop="confirmArchiveBranch(prop.node)"
+                                            >
+                                                <q-tooltip>Archive Branch</q-tooltip>
+                                            </q-btn>
+                                            <q-btn 
+                                                v-else
+                                                flat round dense 
+                                                icon="unarchive" 
+                                                size="xs" 
+                                                color="positive" 
+                                                @click.stop="restoreBranch(prop.node)"
+                                            >
+                                                <q-tooltip>Restore Branch to Active</q-tooltip>
+                                            </q-btn>
+                                        </div>
+                                    </div>
+                                </template>
+                            </q-tree>
+                        </div>
+                    </q-scroll-area>
                 </div>
 
             </div>

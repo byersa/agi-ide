@@ -390,7 +390,7 @@
                 </div>
 
                 <!-- 3. Active Workspace Workspace Panes -->
-                <div v-else class="col column fit no-wrap overflow-hidden" style="min-height: 80vh;">
+                <div v-else class="col column fit no-wrap overflow-hidden" style="height: calc(100vh - 80px); min-height: 0;">
         
                     <div v-if="!localScreenPath || localScreenPath === ''" class="column justify-center items-center col q-gutter-md bg-grey-1 text-center rounded-borders">
                         <q-icon name="folder_open" size="64px" color="primary" />
@@ -402,7 +402,8 @@
                     </div>
 
                     <!-- Main Editor Workspace Layout -->
-                    <div v-else class="col row q-col-gutter-md fit items-stretch align-content-start overflow-y-auto">
+                    <div v-else class="row q-col-gutter-md items-stretch align-content-start overflow-y-auto scroll" 
+                         :style="{ flex: showPromptStudio ? '1 1 45%' : '1 1 100%', minHeight: '0', maxHeight: showPromptStudio ? '50%' : '100%' }">
                         
                         <!-- Canvas Renderer Panel -->
                         <div 
@@ -595,7 +596,7 @@
                         <div 
                             v-if="showPromptStudio && editorConstructors.AgiStudio" 
                             class="col-12 rounded-borders overflow-hidden shadow-10 q-mt-xs"
-                            style="height: 520px; border: 2px solid #334155;"
+                            style="height: 480px; max-height: 480px; min-height: 480px; width: 100%; border: 2px solid #334155; flex: 0 0 480px;"
                         >
                             <component 
                                 :is="editorConstructors.AgiStudio" 
@@ -1095,11 +1096,8 @@
 
                 if (uri.endsWith('.xml')) {
                     this.localScreenPath = uri;
-                    const lastSlash = uri.lastIndexOf('/');
-                    const dir = uri.substring(0, lastSlash);
-                    const fileName = uri.substring(lastSlash + 1).replace('.xml', '');
-                    this.companionQvtPath = `${dir}/assets/${fileName}.qvt.js`;
-
+                    // Do not assume companion QVT exists for standard XML screens
+                    this.companionQvtPath = '';
                 } else if (uri.endsWith('.qvt.js')) {
                     this.companionQvtPath = uri;
                     if (uri.includes('/assets/')) {

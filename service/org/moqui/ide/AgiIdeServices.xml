@@ -774,7 +774,7 @@ ${widgetsSb.toString()}    </widgets>
     <!-- ===================================================================== -->
     <!-- PARSE XML SCREEN FILE / BUFFER TO META-JSON TREE                     -->
     <!-- ===================================================================== -->
-    <service verb="parse" noun="XmlToTree" type="inline">
+    <service verb="parse" noun="XmlToTree" type="inline" authenticate="anonymous-all">
         <description>
             Parses screen XML text (or reads from artifactUri) into native Meta-JSON AST,
             extracts root subscreens cleanly, and stamps canonical mariaIds.
