@@ -27,22 +27,14 @@
                                 v-for="(childNode, idx) in canvasWidgetNodes" 
                                 :key="childNode.mariaId || idx"
                                 :node="childNode" 
-                                :context="{ 
-                                    selectedMariaId: selectedMariaId,
-                                    currentPathList: dynamicSubscreenPath,
-                                    subscreens: parsedTree.subscreens
-                                }"
+                                :context="blueprintContext"
                             ></m-blueprint-node>
                         </template>
                 
                         <m-blueprint-node 
                             v-else
                             :node="effectiveTree" 
-                            :context="{ 
-                                selectedMariaId: selectedMariaId,
-                                currentPathList: dynamicSubscreenPath,
-                                subscreens: effectiveTree.subscreens
-                            }"
+                            :context="blueprintContext"
                         ></m-blueprint-node>
                     </template>
                 </div>
@@ -55,6 +47,7 @@
         data() {
             return {
                 selectedMariaId: '',
+                activeTabModel: '',
                 contextBus: null
             };
         },
@@ -69,30 +62,92 @@
             effectiveTree() {
                 return this.parsedTree;
             },
+            subscreenItems() {
+                const tree = this.parsedTree;
+                if (!tree) return [];
+                const subs = tree.subscreens;
+                if (!subs) return [];
+                let rawList = [];
+                if (Array.isArray(subs.children)) rawList = subs.children;
+                else if (Array.isArray(subs)) rawList = subs;
+
+                return rawList.map(item => {
+                    const attrs = item.attributes || {};
+                    const realName = (item.name && item.name !== 'subscreens-item')
+                        ? item.name
+                        : (attrs.name || '');
+                    const title = (item.menuTitle && item.menuTitle !== 'subscreens-item')
+                        ? item.menuTitle
+                        : (attrs['menu-title'] || attrs.menuTitle || realName);
+                    return {
+                        ...item,
+                        name: realName,
+                        menuTitle: title,
+                        label: title
+                    };
+                });
+            },
+            defaultSubscreenItem() {
+                const tree = this.parsedTree;
+                return tree?.subscreens?.defaultItem
+                    || (this.subscreenItems.length > 0 ? (this.subscreenItems[0].name || '') : '');
+            },
+            dynamicSubscreenPath() {
+                const def = this.defaultSubscreenItem;
+                return def ? [def] : [];
+            },
+            blueprintContext() {
+                const tree = this.parsedTree || {};
+                return {
+                    selectedMariaId: this.selectedMariaId,
+                    currentPathList: this.dynamicSubscreenPath,
+                    subscreens: tree.subscreens,
+                    subscreenList: this.subscreenItems,
+                    defaultSubscreen: this.defaultSubscreenItem
+                };
+            },
             canvasWidgetNodes() {
                 const rawTree = this.parsedTree;
                 if (!rawTree) return [];
                 const rootTag = rawTree._moquiTag || rawTree.name || rawTree.tag;
+
+                const enrichWithSubscreens = (nodes) => {
+                    if (!nodes || !Array.isArray(nodes)) return [];
+                    return nodes.map(node => {
+                        const tag = node._moquiTag || node.name || node.tag || node['@type'];
+                        if (tag === 'subscreens-tabs' || tag === 'm-subscreens-tabs') {
+                            const enriched = Object.assign({}, node);
+                            enriched._moquiTag = 'subscreens-tabs';
+                            enriched['@type'] = 'm-subscreens-tabs';
+                            enriched.subscreenList = this.subscreenItems;
+                            enriched.defaultItem = this.defaultSubscreenItem;
+                            return enriched;
+                        }
+                        if (node.children && Array.isArray(node.children)) {
+                            const cloned = Object.assign({}, node);
+                            cloned.children = enrichWithSubscreens(node.children);
+                            return cloned;
+                        }
+                        if (node.widgets && Array.isArray(node.widgets)) {
+                            const cloned = Object.assign({}, node);
+                            cloned.widgets = enrichWithSubscreens(node.widgets);
+                            return cloned;
+                        }
+                        return node;
+                    });
+                };
+
                 if (rootTag === 'screen' && Array.isArray(rawTree.children)) {
                     const widgetsNode = rawTree.children.find(c => (c._moquiTag || c.name || c.tag) === 'widgets');
                     if (widgetsNode && Array.isArray(widgetsNode.children)) {
-                        return widgetsNode.children;
+                        return enrichWithSubscreens(widgetsNode.children);
                     }
-                    return rawTree.children.filter(c => !['transition', 'actions', 'subscreens'].includes(c._moquiTag || c.name || c.tag));
+                    return enrichWithSubscreens(rawTree.children.filter(c => !['transition', 'actions', 'subscreens'].includes(c._moquiTag || c.name || c.tag)));
                 }
                 if (rootTag === 'widgets' && Array.isArray(rawTree.children)) {
-                    return rawTree.children;
+                    return enrichWithSubscreens(rawTree.children);
                 }
-                return [rawTree];
-            },
-            dynamicSubscreenPath() {
-                const tree = this.parsedTree;
-                if (!tree) return [];
-                const defaultSub = tree.subscreens?.defaultItem;
-                if (defaultSub && defaultSub.length > 0) return [defaultSub];
-                const subChildren = tree.subscreens?.children || [];
-                if (subChildren.length > 0 && subChildren[0].name) return [subChildren[0].name];
-                return [];
+                return enrichWithSubscreens([rawTree]);
             }
         },
         mounted() {

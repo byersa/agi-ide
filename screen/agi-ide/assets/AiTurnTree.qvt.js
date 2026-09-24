@@ -49,6 +49,7 @@
                 }
 
                 const query = this.filterQuery.toLowerCase().trim();
+                const cleanQ = query.replace(/^#/, '');
                 const now = new Date();
 
                 const matchesFilter = (node) => {
@@ -56,7 +57,15 @@
                     if (query) {
                         const lbl = (node.label || '').toLowerCase();
                         const sName = (node.shortName || '').toLowerCase();
-                        matchText = lbl.includes(query) || sName.includes(query);
+                        const mId = String(node.messageId || '');
+                        const dId = String(node.discussionId || '');
+                        const pId = String(node.stagedPayloadId || '');
+
+                        matchText = lbl.includes(query)
+                            || sName.includes(query)
+                            || (mId && mId.includes(cleanQ))
+                            || (dId && dId.includes(cleanQ))
+                            || (pId && pId.includes(cleanQ));
                     }
 
                     let matchTime = true;
@@ -171,6 +180,33 @@
                 this.$emit('node-selected', node);
                 if (node.discussionId) {
                     this.$emit('discussion-selected', node);
+                }
+            },
+
+            jumpToQueriedId() {
+                const q = (this.filterQuery || '').trim().replace(/^#/, '');
+                if (!q) return;
+
+                const findNode = (nodes) => {
+                    for (const n of nodes) {
+                        if (String(n.messageId) === q || String(n.discussionId) === q || String(n.stagedPayloadId) === q || n.nodeKey === q || n.nodeKey === ('msg_' + q)) {
+                            return n;
+                        }
+                        if (n.children && n.children.length > 0) {
+                            const found = findNode(n.children);
+                            if (found) return found;
+                        }
+                    }
+                    return null;
+                };
+
+                const target = findNode(this.rawTreeNodes);
+                if (target) {
+                    this.expandAllNodes();
+                    this.selectNode(target);
+                    this.$q.notify({ type: 'info', message: `Jumped to Node #${target.messageId || target.discussionId}`, timeout: 2000 });
+                } else {
+                    this.$q.notify({ type: 'warning', message: `ID #${q} not found in active tree.`, timeout: 2000 });
                 }
             },
 
@@ -375,7 +411,7 @@
             collapseAllNodes() { if (this.$refs.qTreeRef) this.$refs.qTreeRef.collapseAll(); }
         },
         template: `
-            <div class="fit column no-wrap bg-slate-950 text-white font-mono overflow-hidden">
+            <div class="bg-slate-950 text-white font-mono" style="display: grid; grid-template-rows: auto auto 1fr; height: 100%; width: 100%; overflow: hidden;">
                 
                 <!-- 1. MULTI-FILTER SEARCH HEADER -->
                 <div class="q-pa-xs bg-slate-900" style="border-bottom: 1px solid #334155;">
@@ -383,13 +419,14 @@
                     <div class="row items-center q-gutter-x-xs q-mb-xs">
                         <q-input 
                             v-model="filterQuery" 
-                            placeholder="Filter discussions, plans, turns..." 
+                            placeholder="Filter text or #ID (Enter to jump)..." 
                             dense dark outlined 
                             color="cyan-3"
                             class="col text-caption font-mono"
                             input-class="text-caption font-mono text-slate-200"
                             style="background-color: #020617; border-radius: 4px;"
                             clearable
+                            @keydown.enter="jumpToQueriedId"
                         >
                             <template v-slot:prepend>
                                 <q-icon name="search" size="14px" color="cyan-4" />
@@ -398,6 +435,9 @@
 
                         <q-btn size="xs" flat round icon="add" color="amber-4" @click="createRootDiscussion">
                             <q-tooltip>New Topic / Discussion</q-tooltip>
+                        </q-btn>
+                        <q-btn size="xs" flat round icon="unfold_more" color="slate-400" @click="expandAllNodes">
+                            <q-tooltip>Expand All</q-tooltip>
                         </q-btn>
                         <q-btn size="xs" flat round icon="refresh" color="cyan-4" @click="fetchTree">
                             <q-tooltip>Refresh Tree</q-tooltip>
@@ -413,11 +453,6 @@
                                 :class="modeFilter === 'all' ? 'bg-cyan-9 text-white text-weight-bold' : 'text-slate-400'"
                                 @click="modeFilter = 'all'"
                             >All</span>
-                            <span 
-                                class="cursor-pointer q-px-xs rounded-borders" 
-                                :class="modeFilter === 'search' ? 'bg-sky-9 text-white text-weight-bold' : 'text-slate-400'"
-                                @click="modeFilter = 'search'"
-                            >Search</span>
                             <span 
                                 class="cursor-pointer q-px-xs rounded-borders" 
                                 :class="modeFilter === 'discuss' ? 'bg-blue-9 text-white text-weight-bold' : 'text-slate-400'"
@@ -482,9 +517,10 @@
                         <q-tooltip>Reset to Full Component Tree</q-tooltip>
                     </q-btn>
                 </div>
+                <div v-else style="display: none;"></div>
 
-                <!-- 3. TREE CONTAINER -->
-                <div class="col overflow-y-auto q-pa-xs">
+                <!-- 3. TREE CONTAINER (Grid-Bounded Scroll Cell) -->
+                <div class="q-pa-xs scroll" style="min-height: 0; overflow-y: auto !important; overflow-x: hidden; height: 100%;">
                     <div v-if="loading" class="row justify-center q-my-md">
                         <q-spinner color="cyan-4" size="2em" />
                     </div>
@@ -524,10 +560,22 @@
                                 />
 
                                 <div class="col-grow text-caption row items-center ellipsis">
+                                    <!-- Visible DB ID Badges -->
+                                    <span v-if="prop.node.messageId" class="text-caption font-mono text-cyan-4 q-mr-xs text-weight-medium" style="font-size: 10px;">
+                                        #{{ prop.node.messageId }}
+                                    </span>
+                                    <span v-else-if="prop.node.discussionId" class="text-caption font-mono text-slate-400 q-mr-xs text-weight-medium" style="font-size: 10px;">
+                                        D#{{ prop.node.discussionId }}
+                                    </span>
+
                                     <span class="ellipsis" :class="{ 'text-purple-2 text-weight-bold': isPlanNode(prop.node) && !prop.node.isArchived }">
                                         {{ prop.node.label }}
                                     </span>
                                     
+                                    <q-badge v-if="prop.node.stagedPayloadId" color="deep-purple-9" text-color="amber-3" class="q-ml-xs font-mono text-caption" style="font-size: 8px;">
+                                        P#{{ prop.node.stagedPayloadId }}
+                                    </q-badge>
+
                                     <q-badge v-if="prop.node.messageCount > 0" color="slate-800" text-color="cyan-3" class="q-ml-xs text-caption" style="font-size: 9px;">
                                         {{ prop.node.messageCount }}
                                     </q-badge>

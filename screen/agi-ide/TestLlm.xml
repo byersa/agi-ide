@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        standalone="true">
+
+    <transition name="runTest" read-only="true">
+        <actions>
+            <service-call name="org.moqui.ide.LlmClientServices.test#AllProfiles" out-map="testOut"/>
+            <script>
+                ec.web.sendJsonResponse(testOut.results)
+            </script>
+        </actions>
+        <default-response type="none"/>
+    </transition>
+
+    <widgets>
+        <!-- Keep empty so no blueprint nodes get created -->
+    </widgets>
+</screen>

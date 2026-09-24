@@ -56,7 +56,7 @@
             if (this.contextBus) this.contextBus.close();
         },
         template: `
-            <div class="fit column no-wrap bg-slate-950 text-white font-mono overflow-hidden" style="border-top: 1px solid #334155;">
+            <div class="column no-wrap bg-slate-950 text-white font-mono overflow-hidden" style="height: 78vh; max-height: 78vh; min-height: 400px; width: 100%; border-top: 1px solid #334155;">
                 
                 <!-- 1. STUDIO HEADER -->
                 <div class="row items-center justify-between q-pa-xs bg-black" style="border-bottom: 1px solid #1e293b; min-height: 42px;">
@@ -131,10 +131,11 @@
                 </div>
 
                 <!-- 2. MAIN WORKSPACE (SPLIT: CONVERSATION ON LEFT, ACTIVE VIEWPORT ON RIGHT) -->
-                <div class="col row no-wrap overflow-hidden">
+                <div class="row no-wrap overflow-hidden" style="flex: 1 1 0%; height: calc(100% - 42px); max-height: calc(100% - 42px); width: 100%; min-height: 0;">
                     
-                    <!-- Left: Turn Tree -->
-                    <div class="column overflow-hidden" :style="{ width: splitRatio + '%', borderRight: '1px solid #334155' }">
+                    <!-- Left: Turn Tree (Strict Viewport Boundary) -->
+                    <div class="column no-wrap overflow-hidden" 
+                         :style="{ width: splitRatio + '%', flex: '0 0 ' + splitRatio + '%', maxWidth: splitRatio + '%', height: '100%', minHeight: '0', borderRight: '1px solid #334155' }">
                         <ai-turn-tree 
                             ref="treeRef"
                             :target-component="targetComponent"
@@ -146,7 +147,8 @@
                     </div>
                 
                     <!-- Center: Turn Detail & Conversation -->
-                    <div class="col column overflow-hidden" :style="activePanel ? 'border-right: 1px solid #334155;' : ''">
+                    <div class="col column no-wrap overflow-hidden" 
+                         :style="activePanel ? 'border-right: 1px solid #334155; height: 100%; min-height: 0;' : 'height: 100%; min-height: 0;'">
                         <ai-turn-detail 
                             :discussion-id-prop="activeDiscussionId"
                             :node="activeDiscussionNode"
@@ -157,17 +159,17 @@
                             @discussion-promoted="onDiscussionPromoted"
                         />
                     </div>
-
-                    <!-- Right: Embedded Viewport Panel (Canvas / Screen / Service / Entity) -->
-                    <div v-if="activePanel" class="col column overflow-hidden bg-slate-900" style="max-width: 50%;">
-                        <div class="row items-center justify-between q-pa-xs bg-slate-950" style="border-bottom: 1px solid #334155;">
+    
+                    <!-- Right: Embedded Viewport Panel -->
+                    <div v-if="activePanel" class="col column no-wrap overflow-hidden bg-slate-900" style="max-width: 50%; height: 100%; min-height: 0;">
+                        <div class="row items-center justify-between q-pa-xs bg-slate-950" style="border-bottom: 1px solid #334155; height: 32px;">
                             <span class="text-caption text-weight-bold text-cyan-3 font-mono q-ml-xs">
                                 {{ activePanel.replace('Agi', '').replace('Editor', '') }} Dock
                             </span>
                             <q-btn flat round dense icon="close" size="xs" color="slate-400" @click="activePanel = null" />
                         </div>
-
-                        <div class="col overflow-hidden relative-position">
+    
+                        <div class="col overflow-hidden relative-position" style="height: calc(100% - 32px);">
                             <agi-canvas-editor 
                                 v-if="activePanel === 'AgiCanvasEditor'"
                                 :screen-path="activeArtifactLocation"
@@ -183,9 +185,8 @@
                             </div>
                         </div>
                     </div>
-
+    
                 </div>
-
             </div>
         `,
         methods: {

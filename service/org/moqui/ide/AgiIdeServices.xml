@@ -295,10 +295,10 @@
     </service>
 
     <!-- ===================================================================== -->
-    <!-- GET WORKSPACE BUFFER (With Disk Timestamp Invalidation)               -->
+    <!-- GET WORKSPACE BUFFER (With Self-Healing Invalidation)                 -->
     <!-- ===================================================================== -->
     <service verb="get" noun="WorkspaceBuffer" type="inline">
-        <description>Retrieves active Meta-JSON layout tree, falling back to disk or invalidating stale buffer if physical file was modified.</description>
+        <description>Retrieves active Meta-JSON layout tree, self-healing stale or corrupted buffers automatically.</description>
         <in-parameters>
             <parameter name="artifactUri" required="true"/>
             <parameter name="userId"/>
@@ -341,17 +341,18 @@
                     }
                 }
 
-                boolean isStubOrEmpty = false
+                // 🛠️ SELF-HEALING: Detect corrupted tag names or stub projections in existing buffer
                 if (bufferRow?.metaJsonBuffer && !forceReload) {
                     String rawJson = bufferRow.metaJsonBuffer
-                    if (rawJson.contains('"children":[]') && !rawJson.contains('form-single') && !rawJson.contains('field')) {
-                        isStubOrEmpty = true
+                    if (rawJson.contains('"name":"subscreens-item"') || (rawJson.contains('"children":[]') && !rawJson.contains('form-single') && !rawJson.contains('field') && !rawJson.contains('subscreens'))) {
+                        ec.logger.warn("🩹 [Self-Healing] Detected corrupted or stub AST in WorkspaceBuffer for: ${artifactUri}. Auto-healing from disk.")
+                        forceReload = true
                     }
                 } else {
-                    isStubOrEmpty = true
+                    forceReload = true
                 }
     
-                if (!isStubOrEmpty && bufferRow?.metaJsonBuffer && !forceReload) {
+                if (bufferRow?.metaJsonBuffer && !forceReload) {
                     context.workspaceBufferId = bufferRow.workspaceBufferId
                     context.metaJsonBuffer = bufferRow.metaJsonBuffer
                     context.isDiskNewer = false
@@ -445,7 +446,8 @@
     <service verb="compile" noun="TreeToXml" type="inline">
         <description>
             Recursively processes FreeMarker templates (.ftl) by expanding include directives,
-            or converts a layoutTree AST map into standard Moqui screen XML adhering to xml-screen-3.xsd.
+            or converts a layoutTree AST map into standard Moqui screen XML strictly adhering 
+            to xml-screen-3.xsd schema order: parameter*, transition*, subscreens?, actions?, widgets.
         </description>
         <in-parameters>
             <parameter name="location" type="String" required="false"/>
@@ -593,12 +595,16 @@
                     String defaultAttr = subsMap.defaultItem ? " default-item=\"${escapeXml(subsMap.defaultItem.toString())}\"" : ""
                     StringBuilder ssb = new StringBuilder("    <subscreens${defaultAttr}>\n")
                     
-                    List subItems = subsMap.children ?: subsMap.widgets ?: []
+                    List subItems = []
+                    if (subsMap.children instanceof List) subItems.addAll(subsMap.children)
+                    else if (subsMap.widgets instanceof List) subItems.addAll(subsMap.widgets)
+
                     subItems.each { Object item ->
                         if (item instanceof Map) {
-                            String sName = item.name ?: ""
-                            String sLoc = item.location ?: ""
-                            String sTitle = item.menuTitle ?: ""
+                            Map itemAttrs = (item.attributes instanceof Map) ? (item.attributes as Map) : [:]
+                            String sName = (item.name && item.name != "subscreens-item") ? item.name : (itemAttrs.get('name') ?: "")
+                            String sLoc = item.location ?: itemAttrs.get('location') ?: ""
+                            String sTitle = item.menuTitle ?: itemAttrs.get('menu-title') ?: itemAttrs.get('menuTitle') ?: ""
                             
                             ssb.append("        <subscreens-item")
                             if (sName) ssb.append(" name=\"${escapeXml(sName)}\"")
@@ -614,18 +620,24 @@
                 if (location) {
                     xmlText = resolveFtlIncludes(location, new HashSet<String>())
                 } else if (layoutTree) {
-                    List topTransitions = []
-                    List topActions     = []
-                    List widgetNodes    = []
+                    List topParameters   = []
+                    List topTransitions  = []
+                    Map  topSubscreens   = (layoutTree.subscreens instanceof Map) ? (layoutTree.subscreens as Map) : null
+                    List topActions      = []
+                    List widgetNodes     = []
 
                     def collectNodes
                     collectNodes = { Object nodeObj ->
                         if (!(nodeObj instanceof Map)) return
                         Map node = (Map) nodeObj
-                        String tag = node.name ?: (node._moquiTag ?: (node.tagName ?: node.type ?: "")).toString().replaceAll("^@", "")
+                        String tag = node._moquiTag ?: (node.tagName ?: node.type ?: node.name ?: "").toString().replaceAll("^@", "")
 
-                        if (tag == "transition") {
+                        if (tag == "parameter") {
+                            topParameters.add(node)
+                        } else if (tag == "transition") {
                             topTransitions.add(node)
+                        } else if (tag == "subscreens") {
+                            if (!topSubscreens) topSubscreens = node
                         } else if (tag == "actions") {
                             topActions.add(node)
                         } else if (tag == "screen" || tag == "widgets") {
@@ -640,14 +652,19 @@
 
                     collectNodes(layoutTree)
 
+                    StringBuilder paramsSb = new StringBuilder()
+                    topParameters.each { Map pNode ->
+                        paramsSb.append(buildXmlNode(pNode, 1))
+                    }
+
                     StringBuilder transitionsSb = new StringBuilder()
                     topTransitions.each { Map tNode ->
                         transitionsSb.append(buildXmlNode(tNode, 1))
                     }
 
                     String subscreensText = ""
-                    if (layoutTree.subscreens instanceof Map) {
-                        subscreensText = buildSubscreensXml(layoutTree.subscreens as Map)
+                    if (topSubscreens) {
+                        subscreensText = buildSubscreensXml(topSubscreens)
                     }
 
                     StringBuilder actionsSb = new StringBuilder()
@@ -660,9 +677,10 @@
                         widgetsSb.append(buildXmlNode(wNode, 2))
                     }
 
+                    // STRICT SCHEMA SEQUENCE: parameter*, transition*, subscreens?, actions?, widgets?
                     xmlText = """<?xml version="1.0" encoding="UTF-8"?>
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
-${transitionsSb.toString()}${subscreensText}${actionsSb.toString()}    <widgets>
+${paramsSb.toString()}${transitionsSb.toString()}${subscreensText}${actionsSb.toString()}    <widgets>
 ${widgetsSb.toString()}    </widgets>
 </screen>"""
                 } else {
@@ -758,8 +776,8 @@ ${widgetsSb.toString()}    </widgets>
     <!-- ===================================================================== -->
     <service verb="parse" noun="XmlToTree" type="inline">
         <description>
-            Parses screen XML text (or reads from artifactUri) into native Meta-JSON AST 
-            and stamps canonical mariaIds.
+            Parses screen XML text (or reads from artifactUri) into native Meta-JSON AST,
+            extracts root subscreens cleanly, and stamps canonical mariaIds.
         </description>
         <in-parameters>
             <parameter name="artifactUri" type="String" required="true"/>
@@ -834,6 +852,35 @@ ${widgetsSb.toString()}    </widgets>
                     return m
                 }
 
+                def extractSubscreensBlock = { Map parsedNode ->
+                    Map sAttrs = (parsedNode.attributes instanceof Map) ? (parsedNode.attributes as Map) : [:]
+                    String defItem = sAttrs.get('default-item') ?: sAttrs.get('defaultItem') ?: ""
+                    
+                    List cleanSubItems = []
+                    (parsedNode.children ?: []).each { subChild ->
+                        if (subChild instanceof Map) {
+                            Map cAttrs = (subChild.attributes instanceof Map) ? (subChild.attributes as Map) : [:]
+                            String realName = cAttrs.get('name') ?: (subChild.name != 'subscreens-item' ? subChild.name : "") ?: ""
+                            String menuTitle = cAttrs.get('menu-title') ?: cAttrs.get('menuTitle') ?: realName
+                            
+                            cleanSubItems.add([
+                                _moquiTag : "subscreens-item",
+                                '@type'   : "m-subscreens-item",
+                                name      : realName,
+                                menuTitle : menuTitle,
+                                location  : cAttrs.get('location') ?: "",
+                                attributes: cAttrs
+                            ])
+                        }
+                    }
+
+                    return [
+                        _moquiTag  : "subscreens",
+                        defaultItem: defItem,
+                        children   : cleanSubItems
+                    ]
+                }
+
                 try {
                     Map finalTree = null
 
@@ -844,14 +891,24 @@ ${widgetsSb.toString()}    </widgets>
                         groovy.util.Node rootXml = parser.parseText(effectiveXml)
 
                         List rootChildren = []
+                        Map rootSubscreens = null
+
                         rootXml.children().each { ch ->
-                            if (ch instanceof groovy.util.Node) rootChildren.add(parseXmlNodeDirect(ch))
+                            if (ch instanceof groovy.util.Node) {
+                                Map parsed = parseXmlNodeDirect(ch)
+                                if (parsed._moquiTag == "subscreens") {
+                                    rootSubscreens = extractSubscreensBlock(parsed)
+                                } else {
+                                    rootChildren.add(parsed)
+                                }
+                            }
                         }
 
                         finalTree = [
                             _moquiTag : "screen",
                             screen    : artifactUri ? artifactUri.replaceAll('^component://[^/]+/screen/', '').replaceAll('\\.xml$', '') : "GeneratedScreen",
                             location  : artifactUri,
+                            subscreens: rootSubscreens,
                             children  : rootChildren
                         ]
                     }
@@ -865,14 +922,24 @@ ${widgetsSb.toString()}    </widgets>
                             groovy.util.Node rootXml = parser.parseText(rr.getText())
 
                             List rootChildren = []
+                            Map rootSubscreens = null
+
                             rootXml.children().each { ch ->
-                                if (ch instanceof groovy.util.Node) rootChildren.add(parseXmlNodeDirect(ch))
+                                if (ch instanceof groovy.util.Node) {
+                                    Map parsed = parseXmlNodeDirect(ch)
+                                    if (parsed._moquiTag == "subscreens") {
+                                        rootSubscreens = extractSubscreensBlock(parsed)
+                                    } else {
+                                        rootChildren.add(parsed)
+                                    }
+                                }
                             }
 
                             finalTree = [
                                 _moquiTag : "screen",
                                 screen    : artifactUri.replaceAll('^component://[^/]+/screen/', '').replaceAll('\\.xml$', ''),
                                 location  : artifactUri,
+                                subscreens: rootSubscreens,
                                 children  : rootChildren
                             ]
                         }

@@ -140,7 +140,7 @@ ${scriptIncludeTag}
                 }
 
                 // Initial Seed of WorkspaceBuffer AST
-                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.parse#XmlToTree")
+                ec.service.sync().name("org.moqui.ide.AgiIdeServices.parse#XmlToTree")
                     .parameter("artifactUri", fullArtifactUri)
                     .call()
 
@@ -296,7 +296,7 @@ ${scriptIncludeTag}
 
                 // 🎯 1. Clear old buffer row explicitly to prevent resurrection on save
                 try {
-                    ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.clear#WorkspaceBuffer")
+                    ec.service.sync().name("org.moqui.ide.AgiIdeServices.clear#WorkspaceBuffer")
                         .parameter("artifactUri", srcUri)
                         .call()
                 } catch (Exception clearEx) {
@@ -417,7 +417,7 @@ ${scriptIncludeTag}
                 ec.logger.info("✏️ [MCP /attach-qvt-asset] Updated ${physicalPath} to include ${scriptTag}")
 
                 // Re-sync AST
-                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.parse#XmlToTree")
+                ec.service.sync().name("org.moqui.ide.AgiIdeServices.parse#XmlToTree")
                     .parameter("artifactUri", srcUri)
                     .call()
 
@@ -481,7 +481,7 @@ ${scriptIncludeTag}
                 import groovy.json.JsonOutput
 
                 // 1. Fetch current AST layout tree from WorkspaceBuffer
-                Map bufResult = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.get#WorkspaceBuffer")
+                Map bufResult = ec.service.sync().name("org.moqui.ide.AgiIdeServices.get#WorkspaceBuffer")
                     .parameter("artifactUri", artifactUri)
                     .call()
 
@@ -537,11 +537,11 @@ ${scriptIncludeTag}
                 // 4. Save updated AST buffer and compile back to physical XML
                 String updatedJson = JsonOutput.toJson(layoutTree)
 
-                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer")
+                ec.service.sync().name("org.moqui.ide.AgiIdeServices.store#WorkspaceBuffer")
                     .parameters([artifactUri: artifactUri, metaJsonBuffer: updatedJson])
                     .call()
 
-                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.save#ScreenXml")
+                ec.service.sync().name("org.moqui.ide.AgiIdeServices.save#ScreenXml")
                     .parameters([artifactUri: artifactUri, metaJsonBuffer: updatedJson])
                     .call()
 
@@ -609,7 +609,7 @@ ${scriptIncludeTag}
                 boolean setAsDefault = isDefault || (defaultSubscreen && defaultSubscreen.toString().contains(name))
 
                 // 1. Fetch current AST layout tree
-                Map bufResult = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.get#WorkspaceBuffer")
+                Map bufResult = ec.service.sync().name("org.moqui.ide.AgiIdeServices.get#WorkspaceBuffer")
                     .parameter("artifactUri", artifactUri)
                     .call()
 
@@ -680,11 +680,11 @@ ${scriptIncludeTag}
                 // 4. Save and compile
                 String updatedJson = JsonOutput.toJson(layoutTree)
 
-                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer")
+                ec.service.sync().name("org.moqui.ide.AgiIdeServices.store#WorkspaceBuffer")
                     .parameters([artifactUri: artifactUri, metaJsonBuffer: updatedJson])
                     .call()
 
-                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.save#ScreenXml")
+                ec.service.sync().name("org.moqui.ide.AgiIdeServices.save#ScreenXml")
                     .parameters([artifactUri: artifactUri, metaJsonBuffer: updatedJson])
                     .call()
 
@@ -783,7 +783,7 @@ ${scriptIncludeTag}
                 import groovy.json.JsonOutput
 
                 // 1. Fetch current AST layout tree
-                Map bufResult = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.get#WorkspaceBuffer")
+                Map bufResult = ec.service.sync().name("org.moqui.ide.AgiIdeServices.get#WorkspaceBuffer")
                     .parameter("artifactUri", artifactUri)
                     .call()
 
@@ -825,11 +825,11 @@ ${scriptIncludeTag}
                 // 3. Save and compile
                 String updatedJson = JsonOutput.toJson(layoutTree)
 
-                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer")
+                ec.service.sync().name("org.moqui.ide.AgiIdeServices.store#WorkspaceBuffer")
                     .parameters([artifactUri: artifactUri, metaJsonBuffer: updatedJson])
                     .call()
 
-                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.save#ScreenXml")
+                ec.service.sync().name("org.moqui.ide.AgiIdeServices.save#ScreenXml")
                     .parameters([artifactUri: artifactUri, metaJsonBuffer: updatedJson])
                     .call()
 
@@ -862,7 +862,7 @@ ${scriptIncludeTag}
                 import groovy.json.JsonOutput
     
                 // 1. Hydrate AST from WorkspaceBuffer
-                Map bufResult = ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.get#WorkspaceBuffer")
+                Map bufResult = ec.service.sync().name("org.moqui.ide.AgiIdeServices.get#WorkspaceBuffer")
                     .parameter("artifactUri", artifactUri)
                     .call()
     
@@ -917,11 +917,11 @@ ${scriptIncludeTag}
                 // 5. Persist AST to WorkspaceBuffer & compile XML to disk
                 String updatedJson = JsonOutput.toJson(layoutTree)
     
-                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.store#WorkspaceBuffer")
+                ec.service.sync().name("org.moqui.ide.AgiIdeServices.store#WorkspaceBuffer")
                     .parameters([artifactUri: artifactUri, metaJsonBuffer: updatedJson])
                     .call()
     
-                ec.service.sync().name("org.moqui.ide.AgiWorkspaceServices.save#ScreenXml")
+                ec.service.sync().name("org.moqui.ide.AgiIdeServices.save#ScreenXml")
                     .parameters([artifactUri: artifactUri, metaJsonBuffer: updatedJson])
                     .call()
     

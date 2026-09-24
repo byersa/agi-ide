@@ -64,12 +64,35 @@
                 return !!planMsg;
             },
 
+            // Smart JSON Payload Inspection
+            detectedJsonPayload() {
+                const trimmed = (this.newInput || '').trim();
+                if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
+                try {
+                    const parsed = JSON.parse(trimmed);
+                    if (typeof parsed === 'object' && parsed !== null) {
+                        return parsed;
+                    }
+                } catch (e) { }
+                return null;
+            },
+
             // 4-Mode Epistemic Stance Configuration (Search | Discuss | Plan | Build)
             modeConfig() {
-                // Priority:
-                // 1. Explicit modeProp passed from parent AgiStudio toggle (user's explicit intent)
-                // 2. Active node mode / staged payload
-                // 3. Fallback to discuss
+                // If a valid JSON payload was entered with an explicit mode, reflect it
+                if (this.detectedJsonPayload && this.detectedJsonPayload.mode) {
+                    const explicitMode = String(this.detectedJsonPayload.mode).toLowerCase();
+                    return {
+                        mode: explicitMode,
+                        color: 'purple-9',
+                        textColor: 'white',
+                        icon: 'data_object',
+                        badgeColor: 'deep-purple-10',
+                        label: 'Dispatch Payload',
+                        tooltip: `Dispatch structured payload envelope with explicit mode: ${explicitMode}`
+                    };
+                }
+
                 let mode = (this.modeProp || 'discuss').toLowerCase();
 
                 if (mode === 'search') {
@@ -210,7 +233,6 @@
                 this.loadTranscript();
             }
 
-            // Expose global bridge for clicks triggered inside rendered HTML cards
             window.__stageArtifactBuild = (artifactPath, action) => {
                 this.$emit('mode-updated', 'build');
                 this.newInput = `${action === 'CREATE' ? 'Create' : 'Modify'} artifact ${artifactPath} according to the specifications in this plan.`;
@@ -237,7 +259,6 @@
                 });
             };
 
-            // Safe subplan spawner with double-click guard and Undo capability
             window.__spawnSubplansByKey = async (cacheKey, btnElement) => {
                 const subplansList = (window.__agiPlanCache && window.__agiPlanCache[cacheKey]) || [];
                 if (!subplansList || subplansList.length === 0) {
@@ -245,7 +266,6 @@
                     return;
                 }
 
-                // 1. Frontend Double-Click Guard: Disable target button immediately
                 if (btnElement) {
                     btnElement.disabled = true;
                     btnElement.classList.add('opacity-50');
@@ -270,7 +290,6 @@
                         btnElement.style.backgroundColor = '#15803d';
                     }
 
-                    // Emit to tree and refresh view
                     this.$emit('discussion-promoted');
                     this.$emit('turn-created', {
                         discussionId: this.discussionId,
@@ -279,7 +298,6 @@
                     });
                     this.loadTranscript();
 
-                    // 2. Immediate Undo Toast Action
                     this.$q.notify({
                         type: 'positive',
                         message: `Instantiated ${createdNodes.length} Subplans into tree.`,
@@ -413,7 +431,6 @@
             renderPlanCardHtml(plan) {
                 let html = '<div class="column q-gutter-y-sm">';
 
-                // 1. Title & Summary / Objectives
                 const titleText = plan.planTitle || plan.title || 'Architecture Execution Plan';
                 html += `<div class="text-subtitle2 text-weight-bold text-cyan-2">${titleText}</div>`;
 
@@ -422,7 +439,6 @@
                     html += `<div class="text-caption text-slate-300 q-mb-xs" style="font-size: 11px; line-height: 1.4;">${summaryText}</div>`;
                 }
 
-                // 2. Operational Pillars
                 if (plan.operationalPillars && plan.operationalPillars.length) {
                     html += `<div class="text-caption text-weight-bold text-amber-3 q-mt-xs font-mono" style="font-size: 10px;">OPERATIONAL PILLARS:</div>`;
                     html += `<div class="row q-gutter-xs q-mb-xs">`;
@@ -443,7 +459,6 @@
                     html += `</div>`;
                 }
 
-                // 3. Flatten & Render Target Artifacts (Handles both grouped categories & flat lists)
                 let flatArtifacts = [];
                 if (Array.isArray(plan.artifactBreakdown)) {
                     plan.artifactBreakdown.forEach(item => {
@@ -496,7 +511,6 @@
                     html += `</tbody></table></div>`;
                 }
 
-                // 4. Phased Roadmap
                 if (plan.implementationPhases && plan.implementationPhases.length) {
                     html += `<div class="text-caption text-weight-bold text-cyan-3 q-mt-xs font-mono" style="font-size: 10px;">PHASED ROADMAP:</div>`;
                     plan.implementationPhases.forEach(ph => {
@@ -538,7 +552,6 @@
 
                 let html = '<div class="column q-gutter-y-sm">';
 
-                // Header & Batch Action
                 html += `
                     <div class="q-pa-sm rounded-borders bg-slate-900 row items-center justify-between" style="border: 1px solid #7c3aed;">
                         <div>
@@ -555,12 +568,10 @@
                     </div>
                 `;
 
-                // Subplan Cards
                 subplans.forEach((sp, idx) => {
                     const itemKey = planKey + '_' + idx;
                     window.__agiPlanCache[itemKey] = [sp];
 
-                    // Resolve contextual title across naming conventions
                     const phaseNum = sp.phase || sp.phaseNumber || (idx + 1);
                     const phaseTitle = sp.title || sp.name || sp.phaseName || sp.summary || `Phase ${phaseNum} Implementation`;
                     const displayHeader = sp.phase ? `Phase ${sp.phase}: ${phaseTitle}` : phaseTitle;
@@ -683,12 +694,19 @@
             },
 
             async sendMessage(overrideMode, targetParentOverride) {
-                if (!this.discussionId) return;
+                let jsonOverride = this.detectedJsonPayload;
+                let activeMode = (overrideMode || (jsonOverride && jsonOverride.mode) || this.modeProp || 'discuss').toLowerCase();
+                let promptText = '';
 
-                const activeMode = (overrideMode || this.modeProp || 'discuss').toLowerCase();
-                let promptText = this.newInput.trim();
+                // 1. Resolve effective prompt & parameters
+                if (jsonOverride) {
+                    promptText = jsonOverride.userPrompt || jsonOverride.prompt || '';
+                    if (!promptText && jsonOverride.message) promptText = jsonOverride.message;
+                } else {
+                    promptText = this.newInput.trim();
+                }
 
-                // Context-Aware Default Fallback when input is left empty
+                // Fallback default prompts if input was empty
                 if (!promptText) {
                     const targetTopic = this.activeTitle || this.discussion?.name || 'this topic';
                     if (activeMode === 'plan') {
@@ -699,23 +717,27 @@
                             || 'active';
                         promptText = `Execute build phase for Plan Payload #${targetPayloadId}: Generate root artifacts and screen definitions for ${targetTopic}.`;
                     } else {
-                        // In Discuss or Search mode, a prompt is required
                         this.$q.notify({
                             type: 'warning',
-                            message: `Please enter a ${activeMode} directive or question.`,
+                            message: `Please enter a ${activeMode} directive, question, or JSON payload envelope.`,
                             timeout: 2500
                         });
                         return;
                     }
                 }
 
-                promptText = this.validateAndDisambiguate(promptText);
-                if (!promptText) return;
+                if (!jsonOverride) {
+                    promptText = this.validateAndDisambiguate(promptText);
+                    if (!promptText) return;
+                }
 
-                this.newInput = '';
-                this.isSending = true;
+                const effectiveDiscussionId = (jsonOverride && jsonOverride.discussionId) || this.discussionId;
+                if (!effectiveDiscussionId) {
+                    this.$q.notify({ type: 'warning', message: 'No target discussion container selected.' });
+                    return;
+                }
 
-                let targetParentId = targetParentOverride || null;
+                let targetParentId = (jsonOverride && jsonOverride.parentMessageId) || targetParentOverride || null;
                 if (!targetParentId) {
                     if (this.selectedMessageId) {
                         targetParentId = this.selectedMessageId;
@@ -725,9 +747,13 @@
                     }
                 }
 
+                this.newInput = '';
+                this.isSending = true;
+
                 try {
+                    // Record User Message Turn
                     const userTurnResp = await axios.post('/rest/s1/agi-ai/discussions/message', {
-                        discussionId: this.discussionId,
+                        discussionId: effectiveDiscussionId,
                         parentMessageId: targetParentId,
                         senderRoleEnumId: 'AsrUser',
                         content: promptText
@@ -750,12 +776,26 @@
 
                     this.allMessages.push(localUserMsg);
 
-                    const dispatchResp = await axios.post('/rest/s1/agi-ai/discussions/dispatch', {
-                        discussionId: this.discussionId,
+                    // Build Dispatch Payload with Smart Overlays
+                    let dispatchPayload = {
+                        discussionId: effectiveDiscussionId,
                         parentMessageId: userMsgId,
                         userPrompt: promptText,
                         mode: activeMode
-                    }, { headers: { 'moquiSessionToken': this.resolveCsrf() } });
+                    };
+
+                    if (jsonOverride) {
+                        dispatchPayload = Object.assign({}, dispatchPayload, jsonOverride, {
+                            discussionId: effectiveDiscussionId,
+                            parentMessageId: userMsgId,
+                            userPrompt: promptText,
+                            mode: activeMode
+                        });
+                    }
+
+                    const dispatchResp = await axios.post('/rest/s1/agi-ai/discussions/dispatch', dispatchPayload, {
+                        headers: { 'moquiSessionToken': this.resolveCsrf() }
+                    });
 
                     const assistantMsgId = String(dispatchResp.data?.assistantMessageId);
                     const completionRaw = dispatchResp.data?.completionText || '';
@@ -781,13 +821,13 @@
                         : (activeMode === 'build' ? '🔨 Build: ' + promptText.slice(0, 35) : promptText.slice(0, 40));
 
                     this.$emit('turn-created', {
-                        discussionId: this.discussionId,
+                        discussionId: effectiveDiscussionId,
                         parentMessageId: targetParentId || this.selectedMessageId,
                         userNode: {
                             nodeKey: 'msg_' + userMsgId,
                             id: userMsgId,
                             messageId: userMsgId,
-                            discussionId: this.discussionId,
+                            discussionId: effectiveDiscussionId,
                             label: nodeLabel,
                             senderRoleEnumId: 'AsrUser',
                             mode: activeMode,
@@ -799,7 +839,7 @@
                     });
 
                     this.$emit('turn-dispatched', {
-                        discussionId: this.discussionId,
+                        discussionId: effectiveDiscussionId,
                         userMsgId: userMsgId,
                         assistantMsgId: assistantMsgId,
                         stagedPayloadId: stagedId,
@@ -865,13 +905,12 @@
                 this.$emit('mode-updated', 'build');
                 const targetPayload = this.activeNode?.stagedPayloadId || 'active';
 
-                // Seed prompt with node context so the LLM doesn't waste turns running unmapped discovery tools
                 let planSummary = "";
                 if (this.activeNode?.label) {
                     planSummary = ` Target Scope: ${this.activeNode.label}.`;
                 }
 
-                this.newInput = `Execute build phase for Plan Payload #${targetPayload}:${planSummary} Generate root NursingHomeApp.xml referencing the operational pillars. Return the complete, valid XML screen definition.`;
+                this.newInput = `Execute build phase for Plan Payload #${targetPayload}:${planSummary} Generate root application screen referencing the operational pillars. Return the complete, valid XML screen definition.`;
 
                 this.$q.notify({
                     type: 'info',
@@ -991,6 +1030,19 @@
                         <q-badge :color="modeConfig.badgeColor" :text-color="modeConfig.textColor" class="text-weight-bolder" style="font-size: 10px;">
                             {{ modeConfig.mode.toUpperCase() }}
                         </q-badge>
+                        
+                        <!-- JSON Payload Detected Badge -->
+                        <q-badge 
+                            v-if="detectedJsonPayload" 
+                            color="purple-9" 
+                            text-color="amber-3" 
+                            class="text-weight-bold q-ml-xs animate-pulse"
+                            style="border: 1px solid #a855f7; font-size: 10px;"
+                        >
+                            <q-icon name="data_object" size="12px" class="q-mr-xs" />
+                            JSON PAYLOAD OVERRIDE
+                        </q-badge>
+
                         <span class="text-caption text-slate-300 q-ml-sm italic" style="font-size: 10px;">
                             {{ selectedMessageId ? 'Scoped to selected topic branch' : 'Viewing root discussion thread' }}
                         </span>
@@ -1087,9 +1139,11 @@
                             input-class="text-slate-100 placeholder-slate-500 font-mono"
                             input-style="color: #f1f5f9; background-color: #020617; caret-color: #38bdf8;"
                             style="background-color: #020617; border-radius: 4px;"
-                            :placeholder="selectedMessageId 
-                                ? 'Target: #' + selectedMessageId + ' (' + modeConfig.label + ')...' 
-                                : 'Enter ' + modeConfig.mode + ' query/directive (Ctrl+Enter to send)...'"
+                            :placeholder="detectedJsonPayload 
+                                ? 'Structured JSON envelope detected. Ctrl+Enter to dispatch payload...'
+                                : (selectedMessageId 
+                                    ? 'Target: #' + selectedMessageId + ' (' + modeConfig.label + ')...' 
+                                    : 'Enter ' + modeConfig.mode + ' query/directive, or paste JSON payload (Ctrl+Enter to send)...')"
                             :disable="isSending || !discussionId"
                             @keydown.ctrl.enter="sendMessage()"
                         />

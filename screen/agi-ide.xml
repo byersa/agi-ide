@@ -42,6 +42,7 @@
         <subscreens-item name="AgiDashboard" location="component://agi-ide/screen/agi-ide/AgiDashboard.xml"/>
         <subscreens-item name="AgiWorkspace" location="component://agi-ide/screen/agi-ide/AgiWorkspace.xml"/>
         <subscreens-item name="AgiInstructions" location="component://agi-ide/screen/agi-ide/AgiInstructions.xml"/>
+        <subscreens-item name="TestLlm" location="component://agi-ide/screen/agi-ide/TestLlm.xml"/>
     </subscreens>
 
     <!-- 🎯 FIX: Wrapped children cleanly into the macro output block -->

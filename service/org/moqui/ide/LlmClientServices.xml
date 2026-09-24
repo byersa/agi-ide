@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="test" noun="LlmClient" transaction-timeout="120">
+        <in-parameters>
+            <parameter name="profileName" default-value="gemini"/>
+            <parameter name="systemPrompt" default-value="You are a helpful assistant. Keep answers concise."/>
+            <parameter name="userPrompt" default-value="Respond with 'Connection successful' and identify your model."/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="profile" type="String"/>
+            <parameter name="responseContent" type="String"/>
+            <parameter name="durationMs" type="Long"/>
+            <parameter name="success" type="Boolean"/>
+            <parameter name="errorMessage" type="String"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                success = false
+                errorMessage = null
+                profile = profileName
+                responseContent = null
+                boolean txSuspended = false
+
+                if (ec.transaction.isTransactionInPlace()) {
+                    txSuspended = ec.transaction.suspend()
+                }
+
+                long start = System.currentTimeMillis()
+                try {
+                    def client = (profileName && profileName != "default") ? ec.llm.getClient(profileName) : ec.llm.getDefault()
+                    if (client == null) {
+                        errorMessage = "Could not obtain LlmClient for profile: ${profileName}"
+                        return
+                    }
+
+                    def response = client
+                            .system(systemPrompt)
+                            .user(userPrompt)
+                            .call()
+
+                    durationMs = System.currentTimeMillis() - start
+                    responseContent = response?.getContent() ?: response?.toString()
+                    success = true
+                } catch (Exception e) {
+                    durationMs = System.currentTimeMillis() - start
+                    errorMessage = e.getMessage()
+                    ec.logger.error("Error executing test#LlmClient for [${profileName}]: ${e.message}", e)
+                } finally {
+                    if (txSuspended) {
+                        ec.transaction.resume()
+                    }
+                }
+            ]]></script>
+        </actions>
+    </service>
+
+    <service verb="test" noun="AllProfiles" transaction-timeout="240">
+        <out-parameters>
+            <parameter name="results" type="List"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                results = []
+
+                for (String pName in ["ollama", "gemini"]) {
+                    Map testRes = ec.service.sync().name("org.moqui.ide.LlmClientServices.test#LlmClient")
+                            .parameters([
+                                profileName: pName,
+                                userPrompt: "Confirm connection and report active model name."
+                            ])
+                            .call()
+
+                    results.add([
+                        profile: pName,
+                        success: testRes.success,
+                        durationMs: testRes.durationMs,
+                        response: testRes.responseContent,
+                        error: testRes.errorMessage
+                    ])
+                }
+            ]]></script>
+        </actions>
+    </service>
+
+</services>
