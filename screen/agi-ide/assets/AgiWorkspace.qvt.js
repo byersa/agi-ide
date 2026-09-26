@@ -54,6 +54,9 @@
                     metaJsonBuffer: null
                 },
                 loadedComponents: {
+                    AgiPipelineIndex: false,
+                    AgiPipelineCanvas: false,
+                    AgiStageInspector: false,
                     AgiCanvasEditor: false,
                     AgiScreenEditor: false,
                     AgiServiceEditor: false,
@@ -69,6 +72,9 @@
                     AgiTestRunner: false,
                 },
                 editorConstructors: {
+                    AgiPipelineIndex: null,
+                    AgiPipelineCanvas: null,
+                    AgiStageInspector: null,
                     AgiCanvasEditor: null,
                     AgiScreenEditor: null,
                     AgiServiceEditor: null,
@@ -759,6 +765,9 @@
                 const markRaw = (window.Vue && window.Vue.markRaw) ? window.Vue.markRaw : (obj) => obj;
 
                 const assets = [
+                    { name: 'AgiPipelineIndex', url: '/agi-ide-assets/AgiPipelineIndex.qvt.js', globalVar: 'AgiPipelineIndex' },
+                    { name: 'AgiPipelineCanvas', url: '/agi-ide-assets/AgiPipelineCanvas.qvt.js', globalVar: 'AgiPipelineCanvas' },
+                    { name: 'AgiStageInspector', url: '/agi-ide-assets/AgiStageInspector.qvt.js', globalVar: 'AgiStageInspector' },
                     { name: 'AgiStyleEditor', url: '/agi-ide-assets/AgiStyleEditor.qvt.js', fallbackUrl: '/apps/agi-ide/assets/AgiStyleEditor.qvt.js', globalVar: 'AgiStyleEditor' },
                     { name: 'AgiCanvasEditor', url: '/agi-ide-assets/AgiCanvasEditor.qvt.js', globalVar: 'AgiCanvasEditor' },
                     { name: 'AgiScreenEditor', url: '/agi-ide-assets/AgiScreenEditor.qvt.js', globalVar: 'AgiScreenEditor' },
@@ -768,8 +777,6 @@
                     { name: 'AgiArtifactPalette', url: '/agi-ide-assets/AgiArtifactPalette.qvt.js', globalVar: 'AgiArtifactPalette' },
                     { name: 'MoquiXmlHost', url: '/agi-ai-assets/moqui-xml-host.qvt.js', globalVar: 'MoquiXmlHost' },
                     { name: 'AgiWorkEffortDetail', url: '/agi-ai-assets/AgiWorkEffortDetail.qvt.js', globalVar: 'AgiWorkEffortDetail' },
-                    { name: 'AiTurnDetail', url: '/agi-ide-assets/AiTurnDetail.qvt.js', globalVar: 'AiTurnDetail' },
-                    { name: 'AiTurnTree', url: '/agi-ide-assets/AiTurnTree.qvt.js', globalVar: 'AiTurnTree' },
                     { name: 'AgiNewComponentWizard', url: '/agi-ide-assets/AgiNewComponentWizard.qvt.js', globalVar: 'AgiNewComponentWizard' },
                     { name: 'AgiIntentDetail', url: '/agi-ide-assets/AgiIntentDetail.qvt.js', globalVar: 'AgiIntentDetail' },
                     { name: 'AgiStudio', url: '/agi-ide-assets/AgiStudio.qvt.js', globalVar: 'AgiStudio' },

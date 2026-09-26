@@ -17,6 +17,7 @@
                 newInput: '',
                 isSending: false,
                 filterToSelectedNode: true,
+                showArchived: false, // <-- Exclude archived turns by default
                 _markdownConverter: null
             };
         },
@@ -32,15 +33,21 @@
 
             displayedMessages() {
                 if (!this.allMessages || this.allMessages.length === 0) return [];
+
+                // Filter out archived turns unless showArchived is true
+                const baseMessages = this.showArchived
+                    ? this.allMessages
+                    : this.allMessages.filter(m => m.statusId !== 'AmsArchived' && !m.isArchived);
+
                 if (this.selectedMessageId) {
                     const selId = String(this.selectedMessageId);
-                    return this.allMessages.filter(m => {
+                    return baseMessages.filter(m => {
                         const mId = String(m.messageId);
                         const pId = m.parentMessageId ? String(m.parentMessageId) : null;
                         return mId === selId || (pId === selId && (m.senderRoleEnumId === 'AsrAssistant' || m.role === 'assistant'));
                     });
                 }
-                return this.allMessages.filter(m => !m.parentMessageId);
+                return baseMessages.filter(m => !m.parentMessageId);
             },
 
             activeTitle() {
@@ -698,7 +705,6 @@
                 let activeMode = (overrideMode || (jsonOverride && jsonOverride.mode) || this.modeProp || 'discuss').toLowerCase();
                 let promptText = '';
 
-                // 1. Resolve effective prompt & parameters
                 if (jsonOverride) {
                     promptText = jsonOverride.userPrompt || jsonOverride.prompt || '';
                     if (!promptText && jsonOverride.message) promptText = jsonOverride.message;
@@ -706,7 +712,6 @@
                     promptText = this.newInput.trim();
                 }
 
-                // Fallback default prompts if input was empty
                 if (!promptText) {
                     const targetTopic = this.activeTitle || this.discussion?.name || 'this topic';
                     if (activeMode === 'plan') {
@@ -751,7 +756,6 @@
                 this.isSending = true;
 
                 try {
-                    // Record User Message Turn
                     const userTurnResp = await axios.post('/rest/s1/agi-ai/discussions/message', {
                         discussionId: effectiveDiscussionId,
                         parentMessageId: targetParentId,
@@ -776,7 +780,6 @@
 
                     this.allMessages.push(localUserMsg);
 
-                    // Build Dispatch Payload with Smart Overlays
                     let dispatchPayload = {
                         discussionId: effectiveDiscussionId,
                         parentMessageId: userMsgId,
@@ -923,7 +926,7 @@
             },
         },
         template: `
-            <div class="discussion-detail fit column no-wrap bg-slate-950 text-white font-mono overflow-hidden">
+            <div class="discussion-detail fit column no-wrap bg-slate-950 text-white font-mono overflow-hidden" style="height: 100%; max-height: 100%; min-height: 0;">
                 <component :is="'style'">
                     .discussion-detail .markdown-body h1 { font-size: 15px; margin: 8px 0 4px 0; font-weight: 700; color: #38bdf8; }
                     .discussion-detail .markdown-body h2 { font-size: 14px; margin: 6px 0 4px 0; font-weight: 700; color: #38bdf8; }
@@ -935,8 +938,8 @@
                     .discussion-detail .markdown-body li { margin-bottom: 2px; font-size: 12px; }
                 </component>
 
-                <!-- 1. TOP SUMMARY BAR -->
-                <div class="row items-center justify-between q-pa-sm bg-slate-900" style="border-bottom: 1px solid #334155;">
+                <!-- 1. TOP SUMMARY BAR (FIXED) -->
+                <div class="row items-center justify-between q-pa-sm bg-slate-900" style="border-bottom: 1px solid #334155; flex: 0 0 auto;">
                     <div class="row items-center q-gutter-x-sm">
                         <q-icon :name="selectedMessageId ? 'chat_bubble_outline' : 'forum'" color="cyan-4" size="sm" />
                         <span class="text-subtitle2 text-weight-bold text-cyan-2 ellipsis" style="max-width: 420px;">
@@ -959,6 +962,17 @@
                             @click="filterToSelectedNode = !filterToSelectedNode"
                         >
                             <q-tooltip>{{ filterToSelectedNode ? 'Show all messages in container' : 'Scope to selected node' }}</q-tooltip>
+                        </q-btn>
+                        <q-btn 
+                            flat dense no-caps
+                            size="xs"
+                            :icon="showArchived ? 'archive' : 'unarchive'"
+                            :label="showArchived ? 'Hide Archived' : 'Show Archived'"
+                            :color="showArchived ? 'rose-4' : 'slate-400'"
+                            class="q-px-xs"
+                            @click="showArchived = !showArchived"
+                        >
+                            <q-tooltip>{{ showArchived ? 'Hide archived messages' : 'Include archived turns in transcript' }}</q-tooltip>
                         </q-btn>
 
                         <!-- Promote to Plan -->
@@ -991,7 +1005,7 @@
                             <q-tooltip>Decompose this architecture plan into atomic, bite-sized Subplans</q-tooltip>
                         </q-btn>
 
-                        <!-- Promote to Build (Non-firing stance shift) -->
+                        <!-- Promote to Build -->
                         <q-btn 
                             v-if="modeProp !== 'build' && hasPlanPayload"
                             color="amber-9" 
@@ -1022,8 +1036,8 @@
                     </div>
                 </div>
 
-                <!-- 2. MODE & FACET BAR -->
-                <div class="row items-center justify-between q-px-sm q-py-xs" style="background-color: #082f49; border-bottom: 1px solid #0369a1;">
+                <!-- 2. MODE & FACET BAR (FIXED WITH HIGH-CONTRAST CHIPS) -->
+                <div class="row items-center justify-between q-px-sm q-py-xs" style="background-color: #082f49; border-bottom: 1px solid #0369a1; flex: 0 0 auto;">
                     <div class="row items-center q-gutter-x-xs">
                         <q-icon :name="modeConfig.icon" :color="modeConfig.color" size="14px" />
                         <span class="text-caption text-weight-bold text-cyan-2" style="font-size: 11px;">STANCE:</span>
@@ -1048,68 +1062,76 @@
                         </span>
                     </div>
 
+                    <!-- Facet Chips with High Contrast -->
                     <div v-if="containerFacets && Object.keys(containerFacets).length > 0" class="row items-center q-gutter-x-xs">
-                        <span class="text-caption text-slate-400" style="font-size: 10px;">FACETS:</span>
+                        <span class="text-caption text-slate-400 font-mono" style="font-size: 10px;">FACETS:</span>
                         <q-chip 
                             v-for="(v, k) in containerFacets" 
                             :key="k" 
-                            dense size="xs" 
-                            color="slate-900" 
-                            text-color="amber-3" 
-                            style="border: 1px solid #38bdf8;"
+                            dense dark square
+                            class="font-mono text-caption"
+                            style="background-color: #020617; border: 1px solid #0284c7; font-size: 10px; padding: 2px 6px;"
                         >
-                            <strong>{{ k }}:</strong>&nbsp;{{ v }}
+                            <span style="color: #38bdf8; font-weight: bold;">{{ k }}:</span>&nbsp;<span style="color: #fbbf24;">{{ v }}</span>
                         </q-chip>
                     </div>
                 </div>
 
-                <!-- 3. CONVERSATION STREAM -->
-                <div class="col overflow-y-auto q-pa-md column q-gutter-y-md">
-                    <div v-if="displayedMessages.length === 0" class="text-slate-500 italic text-caption text-center q-my-xl">
-                        No messages for the selected item. Use the input below to reply, search, or ask a question.
-                    </div>
-
-                    <div 
-                        v-for="msg in displayedMessages" 
-                        :key="msg.messageId"
-                        class="column q-pa-md rounded-borders"
-                        :style="msg.role === 'assistant' 
-                            ? 'background-color: #0c1a2e; border: 1px solid #1e3a5f; border-left: 5px solid #38bdf8;' 
-                            : 'background-color: #0f172a; border: 1px solid #1e293b; border-left: 5px solid #64748b;'"
+                <!-- 3. CONVERSATION STREAM (VIRTUALIZED AUTO-SCROLL AREA) -->
+                <div class="col relative-position overflow-hidden" style="flex: 1 1 0%; min-height: 0; height: 100%;">
+                    <q-scroll-area 
+                        class="fit"
+                        :thumb-style="{ right: '2px', borderRadius: '4px', backgroundColor: '#0284c7', width: '6px', opacity: 0.8 }"
+                        :bar-style="{ right: '0px', borderRadius: '4px', backgroundColor: '#0f172a', width: '6px', opacity: 0.2 }"
                     >
-                        <div class="row items-center justify-between text-caption q-mb-sm pb-xs" style="border-bottom: 1px solid rgba(255,255,255,0.08);">
-                            <div class="row items-center q-gutter-x-xs">
-                                <q-icon :name="msg.role === 'assistant' ? 'smart_toy' : 'person'" size="16px" :color="msg.role === 'assistant' ? 'cyan-3' : 'slate-300'" />
-                                <span class="text-weight-bold" :class="msg.role === 'assistant' ? 'text-cyan-3' : 'text-slate-200'">
-                                    {{ msg.role === 'assistant' ? 'Moqui AI Architect' : (msg.partyId || 'User') }}
-                                </span>
-                                <span class="text-slate-500 text-caption q-ml-xs">#{{ msg.messageId }}</span>
-
-                                <q-badge 
-                                    v-if="msg.stagedPayloadId" 
-                                    color="deep-purple-8" 
-                                    text-color="white" 
-                                    class="q-ml-sm text-weight-bold cursor-pointer"
-                                    style="font-size: 10px;"
-                                >
-                                    <q-icon name="architecture" size="12px" class="q-mr-xs" />
-                                    PLAN PAYLOAD #{{ msg.stagedPayloadId }}
-                                    <q-tooltip>Structured plan formulation stored in AgiPayload</q-tooltip>
-                                </q-badge>
+                        <div class="q-pa-md column q-gutter-y-md">
+                            <div v-if="displayedMessages.length === 0" class="text-slate-500 italic text-caption text-center q-my-xl">
+                                No messages for the selected item. Use the input below to reply, search, or ask a question.
                             </div>
-                            <span class="text-slate-400" style="font-size: 11px;">{{ msg.entryDate }}</span>
-                        </div>
 
-                        <div 
-                            class="text-slate-100 markdown-body" 
-                            style="font-size: 12px; line-height: 1.5; word-break: break-word;"
-                            v-html="formatBody(msg.content)"
-                        ></div>
-                    </div>
+                            <div 
+                                v-for="msg in displayedMessages" 
+                                :key="msg.messageId"
+                                class="column q-pa-md rounded-borders"
+                                :style="msg.role === 'assistant' 
+                                    ? 'background-color: #0c1a2e; border: 1px solid #1e3a5f; border-left: 5px solid #38bdf8;' 
+                                    : 'background-color: #0f172a; border: 1px solid #1e293b; border-left: 5px solid #64748b;'"
+                            >
+                                <div class="row items-center justify-between text-caption q-mb-sm pb-xs" style="border-bottom: 1px solid rgba(255,255,255,0.08);">
+                                    <div class="row items-center q-gutter-x-xs">
+                                        <q-icon :name="msg.role === 'assistant' ? 'smart_toy' : 'person'" size="16px" :color="msg.role === 'assistant' ? 'cyan-3' : 'slate-300'" />
+                                        <span class="text-weight-bold" :class="msg.role === 'assistant' ? 'text-cyan-3' : 'text-slate-200'">
+                                            {{ msg.role === 'assistant' ? 'Moqui AI Architect' : (msg.partyId || 'User') }}
+                                        </span>
+                                        <span class="text-slate-500 text-caption q-ml-xs">#{{ msg.messageId }}</span>
+
+                                        <q-badge 
+                                            v-if="msg.stagedPayloadId" 
+                                            color="deep-purple-8" 
+                                            text-color="white" 
+                                            class="q-ml-sm text-weight-bold cursor-pointer"
+                                            style="font-size: 10px;"
+                                        >
+                                            <q-icon name="architecture" size="12px" class="q-mr-xs" />
+                                            PLAN PAYLOAD #{{ msg.stagedPayloadId }}
+                                            <q-tooltip>Structured plan formulation stored in AgiPayload</q-tooltip>
+                                        </q-badge>
+                                    </div>
+                                    <span class="text-slate-400" style="font-size: 11px;">{{ msg.entryDate }}</span>
+                                </div>
+
+                                <div 
+                                    class="text-slate-100 markdown-body" 
+                                    style="font-size: 12px; line-height: 1.5; word-break: break-word;"
+                                    v-html="formatBody(msg.content)"
+                                ></div>
+                            </div>
+                        </div>
+                    </q-scroll-area>
                 </div>
 
-                <!-- 4. INPUT CONSOLE & OPTION CHIPS -->
-                <div class="q-pa-sm bg-slate-900" style="border-top: 1px solid #334155;">
+                <!-- 4. INPUT CONSOLE & OPTION CHIPS (FIXED) -->
+                <div class="q-pa-sm bg-slate-900" style="border-top: 1px solid #334155; flex: 0 0 auto;">
                     <div v-if="suggestedOptions && suggestedOptions.length > 0" class="row items-center q-gutter-x-xs q-mb-xs">
                         <span class="text-caption text-slate-400" style="font-size: 10px;">OPTIONS:</span>
                         <q-chip

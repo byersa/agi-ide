@@ -1,20 +1,22 @@
 (function () {
     const AgiStudio = {
         name: 'AgiStudio',
+        emits: ['close', 'toggle-fullscreen'],
         props: {
             activeArtifact: { type: String, default: '' },
-            targetComponentProp: { type: String, default: '' }
+            targetComponentProp: { type: String, default: '' },
+            isFullscreen: { type: Boolean, default: false }
         },
         data() {
             return {
-                targetComponent: this.targetComponentProp || '',
+                targetComponent: this.targetComponentProp || 'nursinghome',
                 activeArtifactLocation: this.activeArtifact || '',
                 activeDiscussionId: '',
-                activeDiscussionNode: null,
-                splitRatio: 28,
+                selectedStage: null,
+                selectedEdge: null,
 
-                activeAssistMode: 'discuss',
-                modeMemoryCache: {},
+                // DAG vs Inspector Height Presets
+                dagHeightPreset: 'balanced', // 'full-dag' (60%) | 'balanced' (45%) | 'focus-inspector' (25%) | 'compact' (240px)
 
                 // Viewport Dock State
                 activePanel: null, // 'AgiCanvasEditor' | 'AgiScreenEditor' | 'AgiServiceEditor' | 'AgiEntityEditor' | null
@@ -35,8 +37,18 @@
                 const parts = this.activeArtifactLocation.split('/');
                 return parts[parts.length - 1];
             },
-            isPromoted() {
-                return !!(this.activeDiscussionNode?.promotedWorkEffortId);
+            dagContainerStyle() {
+                if (this.dagHeightPreset === 'full-dag') {
+                    return { flex: '0 0 60%', height: '60%', minHeight: '260px' };
+                }
+                if (this.dagHeightPreset === 'focus-inspector') {
+                    return { flex: '0 0 25%', height: '25%', minHeight: '160px' };
+                }
+                if (this.dagHeightPreset === 'compact') {
+                    return { flex: '0 0 240px', height: '240px', minHeight: '240px' };
+                }
+                // default 'balanced'
+                return { flex: '0 0 45%', height: '45%', minHeight: '220px' };
             }
         },
         mounted() {
@@ -61,16 +73,17 @@
                 <!-- 1. STUDIO HEADER (FIXED 42px) -->
                 <div class="row items-center justify-between q-pa-xs bg-black" style="border-bottom: 1px solid #1e293b; height: 42px; min-height: 42px; max-height: 42px; flex: 0 0 42px;">
                     <div class="row items-center q-gutter-x-sm">
-                        <q-icon name="psychology" color="primary" size="sm" />
-                        <span class="text-subtitle2 text-weight-bold text-cyan-3">AGI STUDIO</span>
+                        <q-icon name="view_timeline" color="primary" size="sm" />
+                        <span class="text-subtitle2 text-weight-bold text-cyan-3">AGI PIPELINE STUDIO</span>
                         
                         <q-badge v-if="targetComponent" color="deep-purple-8" text-color="white" :label="targetComponent" class="text-caption text-weight-bold" />
 
                         <q-separator vertical dark class="q-mx-xs" />
 
-                        <!-- 4-MODE ASSIST SWITCHER -->
+                        <!-- LAYOUT PRESET SWITCHER -->
+                        <span class="text-caption text-slate-500 font-mono" style="font-size: 9px;">DAG VIEW:</span>
                         <q-btn-toggle
-                            v-model="activeAssistMode"
+                            v-model="dagHeightPreset"
                             dense rounded no-caps
                             toggle-color="primary"
                             color="slate-900"
@@ -79,31 +92,22 @@
                             class="text-weight-bold"
                             style="border: 1px solid #334155;"
                             :options="[
-                                { label: 'Search', value: 'search', icon: 'search' },
-                                { label: 'Discuss', value: 'discuss', icon: 'chat' },
-                                { label: 'Plan', value: 'plan', icon: 'architecture' },
-                                { label: 'Build', value: 'build', icon: 'handyman' }
+                                { label: 'Full DAG (60%)', value: 'full-dag' },
+                                { label: 'Balanced (45%)', value: 'balanced' },
+                                { label: 'Focus Inspector', value: 'focus-inspector' },
+                                { label: 'Compact', value: 'compact' }
                             ]"
-                            @update:model-value="onModeChanged"
                         />
 
-                        <q-badge 
-                            v-if="isPromoted" 
-                            color="positive" 
-                            text-color="black" 
-                            class="q-px-sm q-py-xs text-caption text-weight-bold"
-                        >
-                            <q-icon name="assignment_turned_in" size="14px" class="q-mr-xs" />
-                            WE #{{ activeDiscussionNode.promotedWorkEffortId }}
-                        </q-badge>
+                        <q-separator vertical dark class="q-mx-xs" />
 
-                        <div class="row items-center q-gutter-x-xs text-caption text-slate-400 q-ml-xs">
+                        <div class="row items-center q-gutter-x-xs text-caption text-slate-400">
                             <q-icon name="code" size="xs" color="cyan-4" />
                             <span class="text-weight-bold text-slate-300">{{ currentArtifactLabel }}</span>
                         </div>
                     </div>
 
-                    <!-- VIEWPORT TOGGLES -->
+                    <!-- VIEWPORT TOGGLES & FULLSCREEN -->
                     <div class="row items-center q-gutter-x-xs">
                         <span class="text-caption text-slate-500" style="font-size: 10px;">VIEWPORTS:</span>
                         <q-btn 
@@ -121,54 +125,77 @@
                         >
                             <q-tooltip>{{ activePanel === vp.name ? 'Close' : 'Open' }} {{ vp.label }}</q-tooltip>
                         </q-btn>
-                    </div>
 
-                    <div class="row items-center">
+                        <q-separator vertical dark class="q-mx-xs" />
+
+                        <!-- Fullscreen Studio Toggle -->
+                        <q-btn 
+                            flat dense round
+                            :icon="isFullscreen ? 'fullscreen_exit' : 'fullscreen'" 
+                            :color="isFullscreen ? 'amber-4' : 'cyan-4'" 
+                            size="xs" 
+                            @click="$emit('toggle-fullscreen')"
+                        >
+                            <q-tooltip>{{ isFullscreen ? 'Restore Split View' : 'Maximize Studio (Occupies Full Workspace)' }}</q-tooltip>
+                        </q-btn>
+
+                        <!-- Close Button -->
                         <q-btn flat round dense icon="close" text-color="white" size="xs" @click="$emit('close')">
                             <q-tooltip>Close Studio</q-tooltip>
                         </q-btn>
                     </div>
                 </div>
 
-                <!-- 2. MAIN WORKSPACE (EXPLICIT STRICT CALCULATION: 100% - 42px) -->
-                <div class="row no-wrap overflow-hidden" style="height: calc(100% - 42px); max-height: calc(100% - 42px); min-height: 0; width: 100%; flex: 1 1 auto;">
+                <!-- 2. MAIN 3-TIER WORKSPACE (HORIZONTAL + SPLIT VERTICAL) -->
+                <div class="col row no-wrap overflow-hidden" style="height: calc(100% - 42px); min-height: 0; width: 100%;">
                     
-                    <!-- Left: Turn Tree (Strict Viewport Boundary) -->
-                    <div class="column no-wrap overflow-hidden" 
-                         :style="{ width: splitRatio + '%', flex: '0 0 ' + splitRatio + '%', maxWidth: splitRatio + '%', height: '100%', maxHeight: '100%', minHeight: '0', borderRight: '1px solid #334155' }">
-                        <ai-turn-tree 
-                            ref="treeRef"
+                    <!-- PIPELINE ORCHESTRATOR COLUMN -->
+                    <div class="col column no-wrap overflow-hidden" style="height: 100%; min-height: 0;">
+                        
+                        <!-- TIER 1: MASTER PIPELINE INDEX (COLLAPSIBLE MASTER Q-LIST) -->
+                        <agi-pipeline-index 
+                            :active-discussion-id="activeDiscussionId"
                             :target-component="targetComponent"
-                            :active-mode="activeAssistMode"
-                            @discussion-selected="onDiscussionSelected"
-                            @node-selected="onNodeSelected"
-                            @mode-filter-selected="onChildModeUpdated"
+                            @pipeline-selected="onPipelineSelected"
+                            @new-pipeline-created="onPipelineSelected"
                         />
+
+                        <!-- TIER 2: HORIZONTAL BRANCHING DAG VIEWPORT (DYNAMIC HEIGHT PRESETS) -->
+                        <div class="column no-wrap overflow-hidden" :style="dagContainerStyle">
+                            <agi-pipeline-canvas 
+                                ref="canvasRef"
+                                :discussion-id="activeDiscussionId"
+                                :target-component="targetComponent"
+                                :selected-stage-id="selectedStage?.stageId || ''"
+                                :selected-edge-id="selectedEdge?.edgeId || ''"
+                                @stage-selected="onStageSelected"
+                                @edge-selected="onEdgeSelected"
+                            />
+                        </div>
+
+                        <!-- TIER 3: STAGE INSPECTOR & PAYLOAD STAGING (SPLIT PANE) -->
+                        <div class="col column no-wrap overflow-hidden" style="flex: 1 1 0%; min-height: 0;">
+                            <agi-stage-inspector 
+                                :discussion-id="activeDiscussionId"
+                                :selected-stage="selectedStage"
+                                :selected-edge="selectedEdge"
+                                :target-component="targetComponent"
+                                @stage-dispatched="onStageDispatched"
+                                @advance-stance="onAdvanceStance"
+                            />
+                        </div>
+
                     </div>
-                
-                    <!-- Center: Turn Detail & Conversation -->
-                    <div class="col column no-wrap overflow-hidden" 
-                         :style="activePanel ? 'border-right: 1px solid #334155; height: 100%; max-height: 100%; min-height: 0;' : 'height: 100%; max-height: 100%; min-height: 0;'">
-                        <ai-turn-detail 
-                            :discussion-id-prop="activeDiscussionId"
-                            :node="activeDiscussionNode"
-                            :mode-prop="activeAssistMode"
-                            @mode-updated="onChildModeUpdated"
-                            @turn-created="onTurnCreated"
-                            @turn-dispatched="onTurnDispatched"
-                            @discussion-promoted="onDiscussionPromoted"
-                        />
-                    </div>
-    
-                    <!-- Right: Embedded Viewport Panel -->
-                    <div v-if="activePanel" class="col column no-wrap overflow-hidden bg-slate-900" style="max-width: 50%; height: 100%; max-height: 100%; min-height: 0;">
+
+                    <!-- DOCKED VIEWPORT PANEL (RIGHT SIDE DOCK) -->
+                    <div v-if="activePanel" class="col column no-wrap overflow-hidden bg-slate-900" style="max-width: 45%; height: 100%; min-height: 0; border-left: 1px solid #334155;">
                         <div class="row items-center justify-between q-pa-xs bg-slate-950" style="border-bottom: 1px solid #334155; height: 32px; min-height: 32px; max-height: 32px; flex: 0 0 32px;">
                             <span class="text-caption text-weight-bold text-cyan-3 font-mono q-ml-xs">
                                 {{ activePanel.replace('Agi', '').replace('Editor', '') }} Dock
                             </span>
                             <q-btn flat round dense icon="close" size="xs" color="slate-400" @click="activePanel = null" />
                         </div>
-    
+
                         <div class="col overflow-hidden relative-position" style="height: calc(100% - 32px); min-height: 0;">
                             <agi-canvas-editor 
                                 v-if="activePanel === 'AgiCanvasEditor'"
@@ -185,99 +212,36 @@
                             </div>
                         </div>
                     </div>
-    
+
                 </div>
+
             </div>
         `,
         methods: {
-            onTurnCreated(payload) {
-                if (payload?.createdNodes && payload.createdNodes.length > 0) {
-                    if (this.$refs.treeRef && typeof this.$refs.treeRef.fetchTree === 'function') {
-                        this.$refs.treeRef.fetchTree();
-                    }
-                    return;
-                }
-                if (this.$refs.treeRef && typeof this.$refs.treeRef.insertTurnNode === 'function') {
-                    this.$refs.treeRef.insertTurnNode(payload);
+            onPipelineSelected(item) {
+                this.activeDiscussionId = String(item.discussionId);
+                this.selectedStage = null;
+                this.selectedEdge = null;
+                if (item.targetArtifactUri) {
+                    this.activeArtifactLocation = item.targetArtifactUri;
                 }
             },
-            focusViewport(panelName) {
-                this.activePanel = (this.activePanel === panelName) ? null : panelName;
-
-                if (this.contextBus) {
-                    this.contextBus.postMessage({
-                        event: 'focus-editor-panel',
-                        panelName: panelName
-                    });
+            onStageSelected(node) {
+                this.selectedStage = node;
+                this.selectedEdge = null;
+            },
+            onEdgeSelected(edgeData) {
+                this.selectedEdge = edgeData;
+                this.selectedStage = null;
+            },
+            onStageDispatched(payload) {
+                if (this.$refs.canvasRef && typeof this.$refs.canvasRef.fetchPipelineGraph === 'function') {
+                    this.$refs.canvasRef.fetchPipelineGraph();
                 }
             },
-            onModeChanged(newMode) {
-                this.activeAssistMode = newMode;
-                if (this.activeDiscussionId) {
-                    this.modeMemoryCache[this.activeDiscussionId] = newMode;
-                }
-                if (this.activeDiscussionNode) {
-                    this.activeDiscussionNode.mode = newMode;
-                }
-            },
-            onChildModeUpdated(newMode) {
-                this.activeAssistMode = newMode;
-                if (this.activeDiscussionId) {
-                    this.modeMemoryCache[this.activeDiscussionId] = newMode;
-                }
-            },
-            onDiscussionSelected(node) {
-                this.activeDiscussionId = node.discussionId || node.id;
-                this.activeDiscussionNode = node;
-
-                if (this.activeDiscussionId && this.modeMemoryCache[this.activeDiscussionId]) {
-                    this.activeAssistMode = this.modeMemoryCache[this.activeDiscussionId];
-                } else {
-                    this.activeAssistMode = 'discuss';
-                }
-
-                if (node.targetArtifactUri) {
-                    this.activeArtifactLocation = node.targetArtifactUri;
-                    if (this.contextBus) {
-                        this.contextBus.postMessage({
-                            event: 'open-screen-artifact',
-                            artifactUri: node.targetArtifactUri
-                        });
-                    }
-                }
-            },
-            onNodeSelected(node) {
-                this.activeDiscussionNode = node;
-                if (node.discussionId) {
-                    this.activeDiscussionId = node.discussionId;
-
-                    const label = (node.label || '').toLowerCase();
-                    const isPlan = node.mode === 'plan'
-                        || !!node.stagedPayloadId
-                        || label.startsWith('📋 plan:')
-                        || label.includes('formulate the formal implementation plan');
-
-                    if (isPlan) {
-                        this.activeAssistMode = 'plan';
-                    } else if (node.mode === 'build') {
-                        this.activeAssistMode = 'build';
-                    } else if (this.modeMemoryCache[this.activeDiscussionId]) {
-                        this.activeAssistMode = this.modeMemoryCache[this.activeDiscussionId];
-                    } else {
-                        this.activeAssistMode = node.mode || 'discuss';
-                    }
-                }
-            },
-            onDiscussionPromoted(weId) {
-                if (this.activeDiscussionNode) {
-                    this.activeDiscussionNode.promotedWorkEffortId = weId;
-                }
-                this.activeAssistMode = 'plan';
-                if (this.activeDiscussionId) {
-                    this.modeMemoryCache[this.activeDiscussionId] = 'plan';
-                }
-                if (this.$refs.treeRef && typeof this.$refs.treeRef.fetchTree === 'function') {
-                    this.$refs.treeRef.fetchTree();
+            onAdvanceStance(eventData) {
+                if (this.selectedStage) {
+                    this.selectedStage.actionType = eventData.nextStance;
                 }
             },
             async onTurnDispatched(turnPayload) {
@@ -313,6 +277,15 @@
                         event: 'artifact-state-mutated',
                         artifactUri: targetUri,
                         rawXmlText: turnPayload?.rawXmlContent || ''
+                    });
+                }
+            },
+            focusViewport(panelName) {
+                this.activePanel = (this.activePanel === panelName) ? null : panelName;
+                if (this.contextBus) {
+                    this.contextBus.postMessage({
+                        event: 'focus-editor-panel',
+                        panelName: panelName
                     });
                 }
             }
