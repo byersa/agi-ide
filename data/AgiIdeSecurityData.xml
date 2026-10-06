@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-facade-xml type="seed">
+    <!-- 1. Define Artifact Group for AGI IDE Artifacts -->
+    <moqui.security.ArtifactGroup artifactGroupId="AGI_IDE_ALL"
+                                  description="AGI IDE Services, Screens, and REST Endpoints"/>
+
+    <!-- 2. Authorize all backend IDE services (parseXmlToTree, saveScreenXml, getWorkspaceBuffer, etc.) -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AGI_IDE_ALL"
+                                        artifactTypeEnumId="AtmService"
+                                        artifactName="org.moqui.ide.*"
+                                        nameIsPattern="Y"/>
+
+    <!-- 3. Authorize REST endpoints hosted under /rest/s1/agi-ide -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AGI_IDE_ALL"
+                                        artifactTypeEnumId="AtmRestPath"
+                                        artifactName="/rest/s1/agi-ide.*"
+                                        nameIsPattern="Y"/>
+
+    <!-- 4. Authorize all screens and subscreen transitions under agi-ide -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AGI_IDE_ALL"
+                                        artifactTypeEnumId="AtmScreen"
+                                        artifactName="component://agi-ide/.*"
+                                        nameIsPattern="Y"/>
+
+    <!-- 5. Grant ALL_USERS full operational access (View, Create, Update, Delete) -->
+    <moqui.security.ArtifactAuthz artifactGroupId="AGI_IDE_ALL"
+                                  userGroupId="ALL_USERS"
+                                  authzTypeEnumId="AuthzAll"
+                                  authzActionEnumId="AuthzAll"/>
+</entity-facade-xml>

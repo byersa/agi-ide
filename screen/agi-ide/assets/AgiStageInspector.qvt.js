@@ -150,7 +150,7 @@
             }
         },
         template: `
-            <div class="agi-stage-inspector fit column no-wrap bg-slate-950 font-mono text-white overflow-hidden" style="height: 100%; min-height: 0;">
+            <div class="agi-stage-inspector fit column no-wrap bg-slate-950 font-mono text-white overflow-hidden" style="height: 100%; min-height: 0; width: 100%;">
                 
                 <!-- 1. TOP STATUS & CONTEXT BAR (FIXED 34px) -->
                 <div class="row items-center justify-between q-px-sm q-py-xs bg-slate-900" style="border-bottom: 1px solid #334155; height: 34px; min-height: 34px; flex: 0 0 34px;">
@@ -175,7 +175,7 @@
                 </div>
 
                 <!-- 2. SPLIT DUAL-PANE VIEWPORT -->
-                <div class="col row no-wrap overflow-hidden" style="height: calc(100% - 34px); min-height: 0;">
+                <div class="col row no-wrap overflow-hidden relative-position" style="flex: 1 1 0%; min-height: 0; height: 100%;">
                     
                     <!-- LEFT PANE: INPUT CONFIGURATOR (EDITABLE) -->
                     <div class="column no-wrap overflow-hidden" :style="{ width: splitRatio + '%', flex: '0 0 ' + splitRatio + '%', borderRight: '1px solid #334155', height: '100%', minHeight: 0 }">
@@ -188,81 +188,76 @@
                             </span>
                         </div>
 
-                        <div class="col relative-position overflow-hidden" style="flex: 1 1 0%; min-height: 0;">
-                            <q-scroll-area class="fit" :thumb-style="{ right: '2px', borderRadius: '4px', backgroundColor: '#f59e0b', width: '5px', opacity: 0.8 }">
-                                <div class="q-pa-sm column q-gutter-y-sm">
-                                    
-                                    <!-- A. EDGE BRIDGE MODE: INSPECT UPSTREAM OUTPUT -->
-                                    <template v-if="isEdgeMode">
-                                        <div class="q-pa-xs rounded-borders bg-slate-900 text-caption text-slate-300" style="border: 1px solid #334155;">
-                                            <div class="text-weight-bold text-cyan-3 q-mb-xs">Stage #{{ selectedEdge.fromStage.stageId }} Output Artifact:</div>
-                                            <div class="markdown-body font-mono text-caption" v-html="formatOutput(selectedEdge.fromStage.fullText)"></div>
-                                        </div>
+                        <!-- Native Scroll Container (Cannot Collapse) -->
+                        <div class="col q-pa-sm overflow-auto" style="flex: 1 1 0%; min-height: 0; height: 100%; overflow-y: auto !important;">
+                            <div class="column q-gutter-y-sm">
+                                
+                                <!-- A. EDGE BRIDGE MODE: INSPECT UPSTREAM OUTPUT -->
+                                <template v-if="isEdgeMode">
+                                    <div class="q-pa-xs rounded-borders bg-slate-900 text-caption text-slate-300" style="border: 1px solid #334155;">
+                                        <div class="text-weight-bold text-cyan-3 q-mb-xs">Stage #{{ selectedEdge.fromStage.stageId }} Output Artifact:</div>
+                                        <div class="markdown-body font-mono text-caption" v-html="formatOutput(selectedEdge.fromStage.fullText)"></div>
+                                    </div>
 
-                                        <q-btn 
-                                            color="deep-purple-7" 
-                                            text-color="white" 
-                                            icon="forward" 
-                                            label="Map Selected Output to Stage Input" 
-                                            dense no-caps 
-                                            class="text-weight-bold q-py-xs full-width"
-                                            @click="mapUpstreamOutput"
+                                    <q-btn 
+                                        color="deep-purple-7" 
+                                        text-color="white" 
+                                        icon="forward" 
+                                        label="Map Selected Output to Stage Input" 
+                                        dense no-caps 
+                                        class="text-weight-bold q-py-xs full-width"
+                                        @click="mapUpstreamOutput"
+                                    />
+                                </template>
+
+                                <!-- B. NODE MODE: TAILORED INPUT FORM -->
+                                <template v-else>
+                                    <div class="column q-gutter-y-xs">
+                                        <label class="text-caption text-slate-400 font-mono" style="font-size: 10px;">TARGET ARTIFACT LOCATION:</label>
+                                        <q-input 
+                                            v-model="inputTargetArtifact" 
+                                            dense dark outlined 
+                                            color="cyan-3"
+                                            class="font-mono text-caption"
+                                            input-class="font-mono text-cyan-2"
+                                            style="background-color: #020617; border-radius: 4px;"
+                                            placeholder="component://nursinghome/screen/..."
                                         />
-                                    </template>
+                                    </div>
 
-                                    <!-- B. NODE MODE: TAILORED INPUT FORM -->
-                                    <template v-else>
-                                        <!-- Target File / Artifact Anchor -->
-                                        <div class="column q-gutter-y-xs">
-                                            <label class="text-caption text-slate-400 font-mono" style="font-size: 10px;">TARGET ARTIFACT LOCATION:</label>
-                                            <q-input 
-                                                v-model="inputTargetArtifact" 
-                                                dense dark outlined 
-                                                color="cyan-3"
-                                                class="font-mono text-caption"
-                                                input-class="font-mono text-cyan-2"
-                                                style="background-color: #020617; border-radius: 4px;"
-                                                placeholder="component://nursinghome/screen/..."
-                                            />
-                                        </div>
-
-                                        <!-- Directive / Prompt TextArea -->
-                                        <div class="column q-gutter-y-xs">
-                                            <label class="text-caption text-slate-400 font-mono" style="font-size: 10px;">STAGE DIRECTIVE / PROMPT PAYLOAD:</label>
-                                            <q-input 
-                                                v-model="inputDirective" 
-                                                type="textarea" 
-                                                rows="5" 
-                                                dense dark outlined 
-                                                color="cyan-3"
-                                                class="font-mono text-caption"
-                                                input-class="font-mono text-slate-100"
-                                                style="background-color: #020617; border-radius: 4px;"
-                                                placeholder="Enter stage directive or paste input payload..."
-                                            />
-                                        </div>
-
-                                        <!-- Architectural Rules / Mantle Invariants Toggle -->
-                                        <div class="row items-center justify-between q-pa-xs rounded-borders bg-slate-900" style="border: 1px solid #1e293b;">
-                                            <span class="text-caption text-slate-300 font-mono" style="font-size: 10px;">Mantle UDM Invariants Enforced</span>
-                                            <q-toggle v-model="inputMantleInvariants" dense color="cyan-4" />
-                                        </div>
-
-                                        <!-- Dispatch Compute Execution -->
-                                        <q-btn 
-                                            :color="currentActionType === 'build' ? 'amber-9' : (currentActionType === 'plan' ? 'deep-purple-7' : 'primary')"
-                                            :text-color="currentActionType === 'build' ? 'black' : 'white'"
-                                            icon="bolt" 
-                                            :label="'Dispatch ' + currentActionType.toUpperCase() + ' Compute'" 
-                                            dense no-caps 
-                                            class="text-weight-bold q-py-xs full-width font-mono"
-                                            :loading="isDispatching"
-                                            @click="executeComputeStage"
+                                    <div class="column q-gutter-y-xs">
+                                        <label class="text-caption text-slate-400 font-mono" style="font-size: 10px;">STAGE DIRECTIVE / PROMPT PAYLOAD:</label>
+                                        <q-input 
+                                            v-model="inputDirective" 
+                                            type="textarea" 
+                                            rows="5" 
+                                            dense dark outlined 
+                                            color="cyan-3"
+                                            class="font-mono text-caption"
+                                            input-class="font-mono text-slate-100"
+                                            style="background-color: #020617; border-radius: 4px;"
+                                            placeholder="Enter stage directive or paste input payload..."
                                         />
-                                    </template>
+                                    </div>
 
-                                </div>
-                            </q-scroll-area>
+                                    <div class="row items-center justify-between q-pa-xs rounded-borders bg-slate-900" style="border: 1px solid #1e293b;">
+                                        <span class="text-caption text-slate-300 font-mono" style="font-size: 10px;">Mantle UDM Invariants Enforced</span>
+                                        <q-toggle v-model="inputMantleInvariants" dense color="cyan-4" />
+                                    </div>
+
+                                    <q-btn 
+                                        :color="currentActionType === 'build' ? 'amber-9' : (currentActionType === 'plan' ? 'deep-purple-7' : 'primary')"
+                                        :text-color="currentActionType === 'build' ? 'black' : 'white'"
+                                        icon="bolt" 
+                                        :label="'Dispatch ' + currentActionType.toUpperCase() + ' Compute'" 
+                                        dense no-caps 
+                                        class="text-weight-bold q-py-xs full-width font-mono"
+                                        :loading="isDispatching"
+                                        @click="executeComputeStage"
+                                    />
+                                </template>
+
+                            </div>
                         </div>
                     </div>
 
@@ -275,30 +270,25 @@
                             <span class="text-slate-500 text-caption font-mono" style="font-size: 9px;">READ-ONLY ARTIFACT</span>
                         </div>
 
-                        <div class="col relative-position overflow-hidden" style="flex: 1 1 0%; min-height: 0;">
-                            <q-scroll-area class="fit" :thumb-style="{ right: '2px', borderRadius: '4px', backgroundColor: '#0284c7', width: '5px', opacity: 0.8 }">
-                                <div class="q-pa-sm column q-gutter-y-sm">
-                                    
-                                    <!-- A. EDGE BRIDGE: DOWNSTREAM INPUT STAGING -->
-                                    <template v-if="isEdgeMode">
-                                        <div class="text-caption text-slate-300 font-mono">
-                                            Staged Directive for Next Stage (#{{ selectedEdge.toStage.stageId }}):
-                                        </div>
-                                        <pre class="bg-slate-900 q-pa-xs rounded-borders text-cyan-2 font-mono text-caption" style="border: 1px solid #1e293b; white-space: pre-wrap;">{{ inputDirective || selectedEdge.toStage.fullText }}</pre>
-                                    </template>
-
-                                    <!-- B. NODE MODE: DISPLAY OUTPUT -->
-                                    <template v-else>
-                                        <div v-if="selectedStage?.fullText" class="q-pa-xs rounded-borders bg-slate-900 text-caption text-slate-100 font-mono" style="border: 1px solid #1e3a5f;">
-                                            <div class="markdown-body font-mono text-caption" v-html="formatOutput(selectedStage.fullText)"></div>
-                                        </div>
-                                        <div v-else class="text-slate-500 italic text-caption text-center q-my-lg">
-                                            Select a compute stage or transition arrow above to inspect outputs.
-                                        </div>
-                                    </template>
-
+                        <!-- Native Scroll Container (Cannot Collapse) -->
+                        <div class="col q-pa-sm overflow-auto" style="flex: 1 1 0%; min-height: 0; height: 100%; overflow-y: auto !important;">
+                            <!-- A. EDGE BRIDGE: DOWNSTREAM INPUT STAGING -->
+                            <template v-if="isEdgeMode">
+                                <div class="text-caption text-slate-300 font-mono">
+                                    Staged Directive for Next Stage (#{{ selectedEdge.toStage.stageId }}):
                                 </div>
-                            </q-scroll-area>
+                                <pre class="bg-slate-900 q-pa-xs rounded-borders text-cyan-2 font-mono text-caption" style="border: 1px solid #1e293b; white-space: pre-wrap;">{{ inputDirective || selectedEdge.toStage.fullText }}</pre>
+                            </template>
+
+                            <!-- B. NODE MODE: DISPLAY OUTPUT -->
+                            <template v-else>
+                                <div v-if="selectedStage?.fullText" class="q-pa-xs rounded-borders bg-slate-900 text-caption text-slate-100 font-mono" style="border: 1px solid #1e3a5f;">
+                                    <div class="markdown-body font-mono text-caption" v-html="formatOutput(selectedStage.fullText)"></div>
+                                </div>
+                                <div v-else class="text-slate-500 italic text-caption text-center q-my-lg">
+                                    Select a compute stage or transition arrow above to inspect outputs.
+                                </div>
+                            </template>
                         </div>
                     </div>
 

@@ -17,7 +17,7 @@
                 companionQvtPath: '',
                 themeArtifactPath: 'component://nursinghome/theme/default.theme.json',
                 showArtifactPalette: false,
-                showPromptStudio: false,
+                showPromptStudio: true,
                 targetComponentName: 'nursinghome',
                 ignoredFrameworkComponents: ['agi-ide', 'agi-ai', 'moqui-usl', 'mantle-usl', 'webroot', 'tools'],
 
@@ -395,223 +395,60 @@
                     <div class="text-subtitle1 text-grey-8 text-weight-medium">Synchronizing Workspace Components for {{ targetComponentName }}...</div>
                 </div>
 
-                <!-- 3. Active Workspace Workspace Panes -->
-                <div v-else class="col column fit no-wrap overflow-hidden" style="height: calc(100vh - 80px); min-height: 0;">
-        
-                    <div v-if="!localScreenPath || localScreenPath === ''" class="column justify-center items-center col q-gutter-md bg-grey-1 text-center rounded-borders">
-                        <q-icon name="folder_open" size="64px" color="primary" />
-                        <div class="text-h5 text-grey-8 text-weight-bold">Target App: {{ targetComponentName }}</div>
-                        <p class="text-caption text-grey-8 max-w-sm">
-                            No artifact screen selected for <strong>{{ targetComponentName }}</strong>.<br/>
-                            Select an artifact screen from the Blueprint Manager or command palette to begin editing.
-                        </p>
+                <!-- 3. Active Workspace Panes -->
+                <div v-else class="col full-width relative-position overflow-hidden" style="flex: 1 1 0%; height: calc(100vh - 120px); min-height: 0;">
+
+                    <!-- FULL WORKSPACE: AGI STUDIO TIER -->
+                    <div 
+                        v-if="showPromptStudio && editorConstructors.AgiStudio" 
+                        class="fit rounded-borders overflow-hidden shadow-10 relative-position"
+                        style="height: 100%; min-height: 0; width: 100%; border: 1px solid #334155;"
+                    >
+                        <component 
+                            :is="editorConstructors.AgiStudio" 
+                            :active-artifact="localScreenPath"
+                            :target-component-prop="targetComponentName"
+                            @close="showPromptStudio = false"
+                        ></component>
                     </div>
 
-                    <!-- Main Editor Workspace Layout -->
-                    <div v-else class="row q-col-gutter-md items-stretch align-content-start overflow-y-auto scroll" 
-                         :style="{ flex: showPromptStudio ? '1 1 45%' : '1 1 100%', minHeight: '0', maxHeight: showPromptStudio ? '50%' : '100%' }">
-                        
-                        <!-- Canvas Renderer Panel -->
-                        <div 
-                            v-if="isPanelVisible('AgiCanvasEditor')" 
-                            :class="[getPanelClass('AgiCanvasEditor')]" 
-                            style="min-height: 420px;"
-                            @click="focusedPanel = 'AgiCanvasEditor'"
-                        >
-                            <div class="fit column rounded-borders border-dark overflow-hidden bg-grey-10" style="border: 1px solid #334155;">
-                                <div class="bg-black text-white q-pa-xs row items-center justify-between font-mono text-caption">
-                                    <div class="row items-center q-gutter-x-xs">
-                                        <q-icon name="preview" color="info" />
-                                        <span class="text-weight-bold">Canvas Renderer</span>
-                                    </div>
-                                    <div class="row items-center q-gutter-x-xs">
-                                        <q-btn flat dense icon="west" size="xs" color="cyan-4" @click.stop="snapPanel('AgiCanvasEditor', 'left')"><q-tooltip>Snap Left (Super+Left)</q-tooltip></q-btn>
-                                        <q-btn flat dense icon="east" size="xs" color="cyan-4" @click.stop="snapPanel('AgiCanvasEditor', 'right')"><q-tooltip>Snap Right (Super+Right)</q-tooltip></q-btn>
-                                        <q-btn flat dense :icon="activeLayoutGrid.AgiCanvasEditor.state === 'maximized' ? 'fullscreen_exit' : 'fullscreen'" size="xs" color="primary" @click.stop="toggleMaximize('AgiCanvasEditor')"><q-tooltip>Maximize (Super+Up)</q-tooltip></q-btn>
-                                    </div>
-                                </div>
-                                <div class="col overflow-auto">
-                                    <component 
-                                        v-if="editorConstructors.AgiCanvasEditor"
-                                        :is="editorConstructors.AgiCanvasEditor" 
-                                        :screen-path="localScreenPath" 
-                                        :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" 
-                                        @trigger-save="handleChildEditorSave"
-                                    ></component>
-                                </div>
-                            </div>
-                        </div>
-    
-                        <!-- Screen Source Editor Panel -->
-                        <div 
-                            v-if="isPanelVisible('AgiScreenEditor')" 
-                            :class="[getPanelClass('AgiScreenEditor')]" 
-                            style="min-height: 420px;"
-                            @click="focusedPanel = 'AgiScreenEditor'"
-                        >
-                            <div class="fit column rounded-borders border-dark overflow-hidden bg-grey-10" style="border: 1px solid #334155;">
-                                <div class="bg-black text-white q-pa-xs row items-center justify-between font-mono text-caption">
-                                    <div class="row items-center q-gutter-x-xs">
-                                        <q-icon name="code" color="cyan-4" />
-                                        <span class="text-weight-bold">XML Screen Editor</span>
-                                    </div>
-                                    <div class="row items-center q-gutter-x-xs">
-                                        <q-btn flat dense icon="west" size="xs" color="cyan-4" @click.stop="snapPanel('AgiScreenEditor', 'left')"><q-tooltip>Snap Left (Super+Left)</q-tooltip></q-btn>
-                                        <q-btn flat dense icon="east" size="xs" color="cyan-4" @click.stop="snapPanel('AgiScreenEditor', 'right')"><q-tooltip>Snap Right (Super+Right)</q-tooltip></q-btn>
-                                        <q-btn flat dense :icon="activeLayoutGrid.AgiScreenEditor.state === 'maximized' ? 'fullscreen_exit' : 'fullscreen'" size="xs" color="primary" @click.stop="toggleMaximize('AgiScreenEditor')"><q-tooltip>Maximize (Super+Up)</q-tooltip></q-btn>
-                                    </div>
-                                </div>
-                                <div class="col overflow-auto">
-                                    <component 
-                                        v-if="editorConstructors.AgiScreenEditor"
-                                        :is="editorConstructors.AgiScreenEditor" 
-                                        :screen-path="localScreenPath" 
-                                        :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" 
-                                        @trigger-save="handleChildEditorSave"
-                                    ></component>
-                                </div>
-                            </div>
+                    <!-- FALLBACK: LEGACY WORKSPACE EDITORS (When Studio is explicitly closed) -->
+                    <div v-else class="col column fit no-wrap overflow-hidden" style="height: 100%; min-height: 0;">
+                        <div v-if="!localScreenPath || localScreenPath === ''" class="column justify-center items-center col q-gutter-md bg-grey-1 text-center rounded-borders">
+                            <q-icon name="folder_open" size="64px" color="primary" />
+                            <div class="text-h5 text-grey-8 text-weight-bold">Target App: {{ targetComponentName }}</div>
+                            <p class="text-caption text-grey-8 max-w-sm">
+                                Studio is closed and no artifact screen is selected.<br/>
+                                Click <strong>AI Studio</strong> above or select an artifact from the palette to begin.
+                            </p>
                         </div>
 
-                        <!-- Component Source Editor Panel -->
-                        <div 
-                            v-if="isPanelVisible('AgiComponentEditor')" 
-                            :class="[getPanelClass('AgiComponentEditor')]" 
-                            style="min-height: 420px;"
-                            @click="focusedPanel = 'AgiComponentEditor'"
-                        >
-                            <div class="fit column rounded-borders border-dark overflow-hidden bg-grey-10" style="border: 1px solid #334155;">
-                                <div class="bg-black text-white q-pa-xs row items-center justify-between font-mono text-caption">
-                                    <div class="row items-center q-gutter-x-xs">
-                                        <q-icon name="javascript" color="warning" />
-                                        <span class="text-weight-bold">QVT Component Script Editor</span>
+                        <div v-else class="row q-col-gutter-md items-stretch align-content-start overflow-y-auto scroll fit">
+                            <!-- Canvas Renderer Panel -->
+                            <div v-if="isPanelVisible('AgiCanvasEditor')" :class="[getPanelClass('AgiCanvasEditor')]" style="min-height: 420px;" @click="focusedPanel = 'AgiCanvasEditor'">
+                                <div class="fit column rounded-borders border-dark overflow-hidden bg-grey-10" style="border: 1px solid #334155;">
+                                    <div class="bg-black text-white q-pa-xs row items-center justify-between font-mono text-caption">
+                                        <div class="row items-center q-gutter-x-xs"><q-icon name="preview" color="info" /><span class="text-weight-bold">Canvas Renderer</span></div>
                                     </div>
-                                    <div class="row items-center q-gutter-x-xs">
-                                        <q-btn flat dense icon="west" size="xs" color="cyan-4" @click.stop="snapPanel('AgiComponentEditor', 'left')"><q-tooltip>Snap Left (Super+Left)</q-tooltip></q-btn>
-                                        <q-btn flat dense icon="east" size="xs" color="cyan-4" @click.stop="snapPanel('AgiComponentEditor', 'right')"><q-tooltip>Snap Right (Super+Right)</q-tooltip></q-btn>
-                                        <q-btn flat dense :icon="activeLayoutGrid.AgiComponentEditor.state === 'maximized' ? 'fullscreen_exit' : 'fullscreen'" size="xs" color="primary" @click.stop="toggleMaximize('AgiComponentEditor')"><q-tooltip>Maximize (Super+Up)</q-tooltip></q-btn>
+                                    <div class="col overflow-auto">
+                                        <component v-if="editorConstructors.AgiCanvasEditor" :is="editorConstructors.AgiCanvasEditor" :screen-path="localScreenPath" :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" @trigger-save="handleChildEditorSave" />
                                     </div>
-                                </div>
-                                <div class="col overflow-auto">
-                                    <component 
-                                        v-if="editorConstructors.AgiComponentEditor"
-                                        :is="editorConstructors.AgiComponentEditor" 
-                                        :screen-path="companionQvtPath || localScreenPath" 
-                                        :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" 
-                                        @trigger-save="handleChildEditorSave"
-                                    ></component>
                                 </div>
                             </div>
-                        </div>
 
-                        <!-- Declarative Theme / Style Editor Panel -->
-                        <div 
-                            v-if="isPanelVisible('AgiStyleEditor')" 
-                            :class="[getPanelClass('AgiStyleEditor')]" 
-                            style="min-height: 420px;"
-                            @click="focusedPanel = 'AgiStyleEditor'"
-                        >
-                            <div class="fit column rounded-borders border-dark overflow-hidden bg-grey-10" style="border: 1px solid #334155;">
-                                <div class="bg-black text-white q-pa-xs row items-center justify-between font-mono text-caption">
-                                    <div class="row items-center q-gutter-x-xs">
-                                        <q-icon name="palette" color="purple-4" />
-                                        <span class="text-weight-bold">Theme / Style Editor</span>
+                            <!-- Screen Source Editor Panel -->
+                            <div v-if="isPanelVisible('AgiScreenEditor')" :class="[getPanelClass('AgiScreenEditor')]" style="min-height: 420px;" @click="focusedPanel = 'AgiScreenEditor'">
+                                <div class="fit column rounded-borders border-dark overflow-hidden bg-grey-10" style="border: 1px solid #334155;">
+                                    <div class="bg-black text-white q-pa-xs row items-center justify-between font-mono text-caption">
+                                        <div class="row items-center q-gutter-x-xs"><q-icon name="code" color="cyan-4" /><span class="text-weight-bold">XML Screen Editor</span></div>
                                     </div>
-                                    <div class="row items-center q-gutter-x-xs">
-                                        <q-btn flat dense icon="west" size="xs" color="cyan-4" @click.stop="snapPanel('AgiStyleEditor', 'left')"><q-tooltip>Snap Left (Super+Left)</q-tooltip></q-btn>
-                                        <q-btn flat dense icon="east" size="xs" color="cyan-4" @click.stop="snapPanel('AgiStyleEditor', 'right')"><q-tooltip>Snap Right (Super+Right)</q-tooltip></q-btn>
-                                        <q-btn flat dense :icon="activeLayoutGrid.AgiStyleEditor.state === 'maximized' ? 'fullscreen_exit' : 'fullscreen'" size="xs" color="primary" @click.stop="toggleMaximize('AgiStyleEditor')"><q-tooltip>Maximize (Super+Up)</q-tooltip></q-btn>
+                                    <div class="col overflow-auto">
+                                        <component v-if="editorConstructors.AgiScreenEditor" :is="editorConstructors.AgiScreenEditor" :screen-path="localScreenPath" :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" @trigger-save="handleChildEditorSave" />
                                     </div>
-                                </div>
-                                <div class="col overflow-auto">
-                                    <component 
-                                        v-if="editorConstructors.AgiStyleEditor"
-                                        :is="editorConstructors.AgiStyleEditor" 
-                                        :theme-uri="themeArtifactPath"
-                                        @trigger-save="handleThemeSave"
-                                    ></component>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Service Definition Editor Panel -->
-                        <div 
-                            v-if="isPanelVisible('AgiServiceEditor')" 
-                            :class="[getPanelClass('AgiServiceEditor')]" 
-                            style="min-height: 420px;"
-                            @click="focusedPanel = 'AgiServiceEditor'"
-                        >
-                            <div class="fit column rounded-borders border-dark overflow-hidden bg-grey-10" style="border: 1px solid #334155;">
-                                <div class="bg-black text-white q-pa-xs row items-center justify-between font-mono text-caption">
-                                    <div class="row items-center q-gutter-x-xs">
-                                        <q-icon name="miscellaneous_services" color="amber-4" />
-                                        <span class="text-weight-bold">Service Architecture Editor</span>
-                                    </div>
-                                    <div class="row items-center q-gutter-x-xs">
-                                        <q-btn flat dense icon="west" size="xs" color="cyan-4" @click.stop="snapPanel('AgiServiceEditor', 'left')" />
-                                        <q-btn flat dense icon="east" size="xs" color="cyan-4" @click.stop="snapPanel('AgiServiceEditor', 'right')" />
-                                        <q-btn flat dense :icon="activeLayoutGrid.AgiServiceEditor?.state === 'maximized' ? 'fullscreen_exit' : 'fullscreen'" size="xs" color="primary" @click.stop="toggleMaximize('AgiServiceEditor')" />
-                                    </div>
-                                </div>
-                                <div class="col overflow-auto">
-                                    <component 
-                                        v-if="editorConstructors.AgiServiceEditor"
-                                        :is="editorConstructors.AgiServiceEditor" 
-                                        :service-uri="activeServiceUri" 
-                                        :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" 
-                                        @trigger-save="handleChildEditorSave"
-                                    ></component>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Entity Model Editor Panel -->
-                        <div 
-                            v-if="isPanelVisible('AgiEntityEditor')" 
-                            :class="[getPanelClass('AgiEntityEditor')]" 
-                            style="min-height: 420px;"
-                            @click="focusedPanel = 'AgiEntityEditor'"
-                        >
-                            <div class="fit column rounded-borders border-dark overflow-hidden bg-grey-10" style="border: 1px solid #334155;">
-                                <div class="bg-black text-white q-pa-xs row items-center justify-between font-mono text-caption">
-                                    <div class="row items-center q-gutter-x-xs">
-                                        <q-icon name="storage" color="secondary" />
-                                        <span class="text-weight-bold">Entity Schema Editor</span>
-                                    </div>
-                                    <div class="row items-center q-gutter-x-xs">
-                                        <q-btn flat dense icon="west" size="xs" color="cyan-4" @click.stop="snapPanel('AgiEntityEditor', 'left')" />
-                                        <q-btn flat dense icon="east" size="xs" color="cyan-4" @click.stop="snapPanel('AgiEntityEditor', 'right')" />
-                                        <q-btn flat dense :icon="activeLayoutGrid.AgiEntityEditor?.state === 'maximized' ? 'fullscreen_exit' : 'fullscreen'" size="xs" color="primary" @click.stop="toggleMaximize('AgiEntityEditor')" />
-                                    </div>
-                                </div>
-                                <div class="col overflow-auto">
-                                    <component 
-                                        v-if="editorConstructors.AgiEntityEditor"
-                                        :is="editorConstructors.AgiEntityEditor" 
-                                        :entity-uri="localScreenPath" 
-                                        :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" 
-                                        @trigger-save="handleChildEditorSave"
-                                    ></component>
                                 </div>
                             </div>
                         </div>
                     </div>
-            
-                    <!-- 4. Docked AGI Command Studio (APE) Tray -->
-                    <q-slide-transition>
-                        <div 
-                            v-if="showPromptStudio && editorConstructors.AgiStudio" 
-                            class="col-12 rounded-borders overflow-hidden shadow-10 q-mt-xs"
-                            style="height: 480px; max-height: 480px; min-height: 480px; width: 100%; border: 2px solid #334155; flex: 0 0 480px;"
-                        >
-                            <component 
-                                :is="editorConstructors.AgiStudio" 
-                                :active-artifact="localScreenPath"
-                                :target-component-prop="targetComponentName"
-                                @close="showPromptStudio = false"
-                            ></component>
-                        </div>
-                    </q-slide-transition>
 
                 </div>
                 

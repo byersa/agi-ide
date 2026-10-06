@@ -1,11 +1,10 @@
 (function () {
     const AgiStudio = {
         name: 'AgiStudio',
-        emits: ['close', 'toggle-fullscreen'],
+        emits: ['close'],
         props: {
             activeArtifact: { type: String, default: '' },
-            targetComponentProp: { type: String, default: '' },
-            isFullscreen: { type: Boolean, default: false }
+            targetComponentProp: { type: String, default: '' }
         },
         data() {
             return {
@@ -15,11 +14,11 @@
                 selectedStage: null,
                 selectedEdge: null,
 
-                // DAG vs Inspector Height Presets
-                dagHeightPreset: 'balanced', // 'full-dag' (60%) | 'balanced' (45%) | 'focus-inspector' (25%) | 'compact' (240px)
+                // Real-time Resizable Splitter Model (Default 35% DAG / 65% Inspector)
+                splitterModel: 240,
 
                 // Viewport Dock State
-                activePanel: null, // 'AgiCanvasEditor' | 'AgiScreenEditor' | 'AgiServiceEditor' | 'AgiEntityEditor' | null
+                activePanel: null,
                 stagedXmlSource: '',
                 stagedLayoutTree: null,
 
@@ -36,19 +35,6 @@
                 if (!this.activeArtifactLocation) return 'No Artifact Anchor';
                 const parts = this.activeArtifactLocation.split('/');
                 return parts[parts.length - 1];
-            },
-            dagContainerStyle() {
-                if (this.dagHeightPreset === 'full-dag') {
-                    return { flex: '0 0 60%', height: '60%', minHeight: '260px' };
-                }
-                if (this.dagHeightPreset === 'focus-inspector') {
-                    return { flex: '0 0 25%', height: '25%', minHeight: '160px' };
-                }
-                if (this.dagHeightPreset === 'compact') {
-                    return { flex: '0 0 240px', height: '240px', minHeight: '240px' };
-                }
-                // default 'balanced'
-                return { flex: '0 0 45%', height: '45%', minHeight: '220px' };
             }
         },
         mounted() {
@@ -67,11 +53,80 @@
         beforeUnmount() {
             if (this.contextBus) this.contextBus.close();
         },
+        methods: {
+            setDagHeight(preset) {
+                const splitterEl = this.$el?.querySelector('.q-splitter');
+                const totalH = splitterEl ? splitterEl.offsetHeight : 700;
+
+                if (preset === 25 || preset === 'compact') {
+                    this.splitterModel = Math.max(180, Math.round(totalH * 0.25));
+                } else if (preset === 35 || preset === 'balanced') {
+                    this.splitterModel = Math.max(240, Math.round(totalH * 0.35));
+                } else if (preset === 55 || preset === 'expanded') {
+                    this.splitterModel = Math.max(380, Math.round(totalH * 0.55));
+                }
+
+                this.$nextTick(() => {
+                    if (this.$refs.canvasRef && this.$refs.canvasRef.scheduleRecalcEdges) {
+                        this.$refs.canvasRef.scheduleRecalcEdges();
+                    }
+                });
+            },
+            onSplitterResize(val) {
+                if (typeof val === 'number') {
+                    this.splitterModel = val;
+                }
+            },
+            onSplitterPan(phase) {
+                if (phase && phase.isFinal) {
+                    this.$nextTick(() => {
+                        if (this.$refs.canvasRef && this.$refs.canvasRef.scheduleRecalcEdges) {
+                            this.$refs.canvasRef.scheduleRecalcEdges();
+                        }
+                    });
+                }
+            },
+            onPipelineSelected(item) {
+                this.activeDiscussionId = String(item.discussionId);
+                this.selectedStage = null;
+                this.selectedEdge = null;
+                if (item.targetArtifactUri) {
+                    this.activeArtifactLocation = item.targetArtifactUri;
+                }
+            },
+            onStageSelected(node) {
+                this.selectedStage = node;
+                this.selectedEdge = null;
+            },
+            onEdgeSelected(edgeData) {
+                this.selectedEdge = edgeData;
+                this.selectedStage = null;
+            },
+            onStageDispatched() {
+                if (this.$refs.canvasRef && typeof this.$refs.canvasRef.fetchPipelineGraph === 'function') {
+                    this.$refs.canvasRef.fetchPipelineGraph();
+                }
+            },
+            onAdvanceStance(eventData) {
+                if (this.selectedStage) {
+                    this.selectedStage.actionType = eventData.nextStance;
+                }
+            },
+            focusViewport(panelName) {
+                this.activePanel = (this.activePanel === panelName) ? null : panelName;
+                if (this.contextBus) {
+                    this.contextBus.postMessage({
+                        event: 'focus-editor-panel',
+                        panelName: panelName
+                    });
+                }
+            }
+        },
         template: `
-            <div class="fit column no-wrap bg-slate-950 text-white font-mono overflow-hidden" style="height: 100%; max-height: 100%; min-height: 0; width: 100%; border-top: 1px solid #334155;">
+            <div class="fit column no-wrap bg-slate-950 text-white font-mono overflow-hidden" style="height: 100%; min-height: 0; width: 100%;">
                 
-                <!-- 1. STUDIO HEADER (FIXED 42px) -->
-                <div class="row items-center justify-between q-pa-xs bg-black" style="border-bottom: 1px solid #1e293b; height: 42px; min-height: 42px; max-height: 42px; flex: 0 0 42px;">
+                <!-- 1. STUDIO HEADER (FIXED 38px) -->
+                <div class="row items-center justify-between q-px-sm bg-black" style="border-bottom: 1px solid #1e293b; height: 38px; min-height: 38px; flex: 0 0 38px;">
                     <div class="row items-center q-gutter-x-sm">
                         <q-icon name="view_timeline" color="primary" size="sm" />
                         <span class="text-subtitle2 text-weight-bold text-cyan-3">AGI PIPELINE STUDIO</span>
@@ -80,24 +135,13 @@
 
                         <q-separator vertical dark class="q-mx-xs" />
 
-                        <!-- LAYOUT PRESET SWITCHER -->
-                        <span class="text-caption text-slate-500 font-mono" style="font-size: 9px;">DAG VIEW:</span>
-                        <q-btn-toggle
-                            v-model="dagHeightPreset"
-                            dense rounded no-caps
-                            toggle-color="primary"
-                            color="slate-900"
-                            text-color="slate-400"
-                            size="xs"
-                            class="text-weight-bold"
-                            style="border: 1px solid #334155;"
-                            :options="[
-                                { label: 'Full DAG (60%)', value: 'full-dag' },
-                                { label: 'Balanced (45%)', value: 'balanced' },
-                                { label: 'Focus Inspector', value: 'focus-inspector' },
-                                { label: 'Compact', value: 'compact' }
-                            ]"
-                        />
+                        <!-- WORKING DAG SIZE PRESETS -->
+                        <span class="text-caption text-slate-500 font-mono" style="font-size: 10px;">DAG SIZE:</span>
+                        <q-btn-group flat dense>
+                             <q-btn flat dense size="xs" :color="splitterModel <= 200 ? 'cyan-3' : 'slate-400'" label="Compact (25%)" @click="setDagHeight(25)" />
+                             <q-btn flat dense size="xs" :color="splitterModel > 200 && splitterModel <= 320 ? 'cyan-3' : 'slate-400'" label="Balanced (35%)" @click="setDagHeight(35)" />
+                             <q-btn flat dense size="xs" :color="splitterModel > 320 ? 'cyan-3' : 'slate-400'" label="Expanded (55%)" @click="setDagHeight(55)" />
+                         </q-btn-group>
 
                         <q-separator vertical dark class="q-mx-xs" />
 
@@ -107,7 +151,7 @@
                         </div>
                     </div>
 
-                    <!-- VIEWPORT TOGGLES & FULLSCREEN -->
+                    <!-- VIEWPORT DOCKS -->
                     <div class="row items-center q-gutter-x-xs">
                         <span class="text-caption text-slate-500" style="font-size: 10px;">VIEWPORTS:</span>
                         <q-btn 
@@ -128,68 +172,70 @@
 
                         <q-separator vertical dark class="q-mx-xs" />
 
-                        <!-- Fullscreen Studio Toggle -->
-                        <q-btn 
-                            flat dense round
-                            :icon="isFullscreen ? 'fullscreen_exit' : 'fullscreen'" 
-                            :color="isFullscreen ? 'amber-4' : 'cyan-4'" 
-                            size="xs" 
-                            @click="$emit('toggle-fullscreen')"
-                        >
-                            <q-tooltip>{{ isFullscreen ? 'Restore Split View' : 'Maximize Studio (Occupies Full Workspace)' }}</q-tooltip>
-                        </q-btn>
-
-                        <!-- Close Button -->
                         <q-btn flat round dense icon="close" text-color="white" size="xs" @click="$emit('close')">
                             <q-tooltip>Close Studio</q-tooltip>
                         </q-btn>
                     </div>
                 </div>
 
-                <!-- 2. MAIN 3-TIER WORKSPACE (HORIZONTAL + SPLIT VERTICAL) -->
-                <div class="col row no-wrap overflow-hidden" style="height: calc(100% - 42px); min-height: 0; width: 100%;">
+                <!-- 2. MAIN WORKSPACE CONTAINER -->
+                <div class="col full-width column no-wrap relative-position overflow-hidden" style="flex: 1 1 0%; min-height: 0; height: calc(100% - 38px);">
                     
-                    <!-- PIPELINE ORCHESTRATOR COLUMN -->
-                    <div class="col column no-wrap overflow-hidden" style="height: 100%; min-height: 0;">
-                        
-                        <!-- TIER 1: MASTER PIPELINE INDEX (COLLAPSIBLE MASTER Q-LIST) -->
-                        <agi-pipeline-index 
-                            :active-discussion-id="activeDiscussionId"
-                            :target-component="targetComponent"
-                            @pipeline-selected="onPipelineSelected"
-                            @new-pipeline-created="onPipelineSelected"
-                        />
+                    <!-- TIER 1: MASTER PIPELINE INDEX (COLLAPSIBLE STRIP) -->
+                    <agi-pipeline-index 
+                        :active-discussion-id="activeDiscussionId"
+                        :target-component="targetComponent"
+                        @pipeline-selected="onPipelineSelected"
+                        @new-pipeline-created="onPipelineSelected"
+                    />
 
-                        <!-- TIER 2: HORIZONTAL BRANCHING DAG VIEWPORT (DYNAMIC HEIGHT PRESETS) -->
-                        <div class="column no-wrap overflow-hidden" :style="dagContainerStyle">
-                            <agi-pipeline-canvas 
-                                ref="canvasRef"
-                                :discussion-id="activeDiscussionId"
-                                :target-component="targetComponent"
-                                :selected-stage-id="selectedStage?.stageId || ''"
-                                :selected-edge-id="selectedEdge?.edgeId || ''"
-                                @stage-selected="onStageSelected"
-                                @edge-selected="onEdgeSelected"
-                            />
-                        </div>
+                    <!-- TIER 2 & 3: INTERACTIVE VERTICAL SPLITTER IN PIXEL MODE -->
+                    <div class="col full-width relative-position overflow-hidden" style="flex: 1 1 0%; min-height: 0; height: 100%;">
+                        <q-splitter
+                            v-model="splitterModel"
+                            horizontal
+                            unit="px"
+                            style="height: 100%; width: 100%; min-height: 0;"
+                            separator-class="bg-cyan-8"
+                            separator-style="height: 6px; cursor: row-resize;"
+                            :limits="[140, 750]"
+                            emit-immediately
+                            @pan="onSplitterPan"
+                        >
+                            <!-- TOP PANE: TIER 2 PIPELINE DAG CANVAS -->
+                            <template v-slot:before>
+                                <div class="fit relative-position overflow-hidden" style="height: 100%; width: 100%; min-height: 0;">
+                                    <agi-pipeline-canvas 
+                                        ref="canvasRef"
+                                        :discussion-id="activeDiscussionId"
+                                        :target-component="targetComponent"
+                                        :selected-stage-id="selectedStage?.stageId || ''"
+                                        :selected-edge-id="selectedEdge?.edgeId || ''"
+                                        @stage-selected="onStageSelected"
+                                        @edge-selected="onEdgeSelected"
+                                    />
+                                </div>
+                            </template>
 
-                        <!-- TIER 3: STAGE INSPECTOR & PAYLOAD STAGING (SPLIT PANE) -->
-                        <div class="col column no-wrap overflow-hidden" style="flex: 1 1 0%; min-height: 0;">
-                            <agi-stage-inspector 
-                                :discussion-id="activeDiscussionId"
-                                :selected-stage="selectedStage"
-                                :selected-edge="selectedEdge"
-                                :target-component="targetComponent"
-                                @stage-dispatched="onStageDispatched"
-                                @advance-stance="onAdvanceStance"
-                            />
-                        </div>
-
+                            <!-- BOTTOM PANE: TIER 3 STAGE INSPECTOR & PAYLOAD STAGING -->
+                            <template v-slot:after>
+                                <div class="fit relative-position overflow-hidden" style="height: 100%; width: 100%; min-height: 0;">
+                                    <agi-stage-inspector 
+                                        :discussion-id="activeDiscussionId"
+                                        :selected-stage="selectedStage"
+                                        :selected-edge="selectedEdge"
+                                        :target-component="targetComponent"
+                                        @stage-dispatched="onStageDispatched"
+                                        @advance-stance="onAdvanceStance"
+                                    />
+                                </div>
+                            </template>
+                        </q-splitter>
                     </div>
 
-                    <!-- DOCKED VIEWPORT PANEL (RIGHT SIDE DOCK) -->
-                    <div v-if="activePanel" class="col column no-wrap overflow-hidden bg-slate-900" style="max-width: 45%; height: 100%; min-height: 0; border-left: 1px solid #334155;">
-                        <div class="row items-center justify-between q-pa-xs bg-slate-950" style="border-bottom: 1px solid #334155; height: 32px; min-height: 32px; max-height: 32px; flex: 0 0 32px;">
+                    <!-- OPTIONAL DOCKED VIEWPORT PANEL (RIGHT SIDE DOCK) -->
+                    <div v-if="activePanel" class="column no-wrap overflow-hidden bg-slate-900 absolute-top-right" style="width: 45%; height: 100%; min-height: 0; border-left: 1px solid #334155; z-index: 50;">
+                        <div class="row items-center justify-between q-pa-xs bg-slate-950" style="border-bottom: 1px solid #334155; height: 32px; min-height: 32px; flex: 0 0 32px;">
                             <span class="text-caption text-weight-bold text-cyan-3 font-mono q-ml-xs">
                                 {{ activePanel.replace('Agi', '').replace('Editor', '') }} Dock
                             </span>
@@ -216,80 +262,7 @@
                 </div>
 
             </div>
-        `,
-        methods: {
-            onPipelineSelected(item) {
-                this.activeDiscussionId = String(item.discussionId);
-                this.selectedStage = null;
-                this.selectedEdge = null;
-                if (item.targetArtifactUri) {
-                    this.activeArtifactLocation = item.targetArtifactUri;
-                }
-            },
-            onStageSelected(node) {
-                this.selectedStage = node;
-                this.selectedEdge = null;
-            },
-            onEdgeSelected(edgeData) {
-                this.selectedEdge = edgeData;
-                this.selectedStage = null;
-            },
-            onStageDispatched(payload) {
-                if (this.$refs.canvasRef && typeof this.$refs.canvasRef.fetchPipelineGraph === 'function') {
-                    this.$refs.canvasRef.fetchPipelineGraph();
-                }
-            },
-            onAdvanceStance(eventData) {
-                if (this.selectedStage) {
-                    this.selectedStage.actionType = eventData.nextStance;
-                }
-            },
-            async onTurnDispatched(turnPayload) {
-                let targetUri = turnPayload?.targetArtifactUri || turnPayload?.createdArtifactUri;
-                if (!targetUri) {
-                    targetUri = this.activeArtifactLocation || (this.targetComponent ? `component://${this.targetComponent}/screen/${this.targetComponent}.xml` : '');
-                }
-
-                this.activeArtifactLocation = targetUri;
-
-                if (turnPayload?.rawXmlContent) {
-                    this.stagedXmlSource = turnPayload.rawXmlContent;
-
-                    if (!this.activePanel) {
-                        this.activePanel = 'AgiScreenEditor';
-                    }
-
-                    try {
-                        const headers = {};
-                        if (window.AGI_SERVER_CSRF_TOKEN) headers['X-CSRF-Token'] = window.AGI_SERVER_CSRF_TOKEN;
-                        const resp = await axios.post('/rest/s1/agi-ide/parseXmlToTree', {
-                            xmlText: this.stagedXmlSource,
-                            artifactLocation: targetUri
-                        }, { headers });
-                        this.stagedLayoutTree = resp.data?.layoutTree || null;
-                    } catch (e) {
-                        console.warn("Could not parse XML to AST layout tree:", e);
-                    }
-                }
-
-                if (this.contextBus) {
-                    this.contextBus.postMessage({
-                        event: 'artifact-state-mutated',
-                        artifactUri: targetUri,
-                        rawXmlText: turnPayload?.rawXmlContent || ''
-                    });
-                }
-            },
-            focusViewport(panelName) {
-                this.activePanel = (this.activePanel === panelName) ? null : panelName;
-                if (this.contextBus) {
-                    this.contextBus.postMessage({
-                        event: 'focus-editor-panel',
-                        panelName: panelName
-                    });
-                }
-            }
-        }
+        `
     };
 
     window.AgiStudio = AgiStudio;
