@@ -12,10 +12,14 @@
                 activeArtifactLocation: this.activeArtifact || '',
                 activeDiscussionId: '',
                 selectedStage: null,
-                selectedEdge: null,
+                selectedParentStage: null,
 
-                // Real-time Resizable Splitter Model (Default 35% DAG / 65% Inspector)
-                splitterModel: 240,
+                // Workspace Orientation: 'horizontal' (Top/Bottom Stack) | 'vertical' (Side-by-Side)
+                layoutOrientation: 'horizontal',
+
+                // Splitter Models: Pixel height for stacked, percentage width for side-by-side
+                splitterModelStacked: 250,
+                splitterModelSideBySide: 48,
 
                 // Viewport Dock State
                 activePanel: null,
@@ -35,6 +39,21 @@
                 if (!this.activeArtifactLocation) return 'No Artifact Anchor';
                 const parts = this.activeArtifactLocation.split('/');
                 return parts[parts.length - 1];
+            },
+            isSideBySide() {
+                return this.layoutOrientation === 'vertical';
+            },
+            activeSplitterModel: {
+                get() {
+                    return this.isSideBySide ? this.splitterModelSideBySide : this.splitterModelStacked;
+                },
+                set(val) {
+                    if (this.isSideBySide) {
+                        this.splitterModelSideBySide = val;
+                    } else {
+                        this.splitterModelStacked = val;
+                    }
+                }
             }
         },
         mounted() {
@@ -54,33 +73,42 @@
             if (this.contextBus) this.contextBus.close();
         },
         methods: {
-            setDagHeight(preset) {
-                const splitterEl = this.$el?.querySelector('.q-splitter');
-                const totalH = splitterEl ? splitterEl.offsetHeight : 700;
-
-                if (preset === 25 || preset === 'compact') {
-                    this.splitterModel = Math.max(180, Math.round(totalH * 0.25));
-                } else if (preset === 35 || preset === 'balanced') {
-                    this.splitterModel = Math.max(240, Math.round(totalH * 0.35));
-                } else if (preset === 55 || preset === 'expanded') {
-                    this.splitterModel = Math.max(380, Math.round(totalH * 0.55));
-                }
-
+            toggleOrientation() {
+                this.layoutOrientation = this.layoutOrientation === 'horizontal' ? 'vertical' : 'horizontal';
                 this.$nextTick(() => {
-                    if (this.$refs.canvasRef && this.$refs.canvasRef.scheduleRecalcEdges) {
+                    if (this.$refs.canvasRef && typeof this.$refs.canvasRef.scheduleRecalcEdges === 'function') {
                         this.$refs.canvasRef.scheduleRecalcEdges();
                     }
                 });
             },
-            onSplitterResize(val) {
-                if (typeof val === 'number') {
-                    this.splitterModel = val;
+            setDagHeight(preset) {
+                if (this.isSideBySide) {
+                    if (preset === 25 || preset === 'compact') this.splitterModelSideBySide = 35;
+                    else if (preset === 35 || preset === 'balanced') this.splitterModelSideBySide = 48;
+                    else if (preset === 55 || preset === 'expanded') this.splitterModelSideBySide = 60;
+                } else {
+                    const splitterEl = this.$el?.querySelector('.q-splitter');
+                    const totalH = splitterEl ? splitterEl.offsetHeight : 700;
+
+                    if (preset === 25 || preset === 'compact') {
+                        this.splitterModelStacked = Math.max(180, Math.round(totalH * 0.25));
+                    } else if (preset === 35 || preset === 'balanced') {
+                        this.splitterModelStacked = Math.max(240, Math.round(totalH * 0.35));
+                    } else if (preset === 55 || preset === 'expanded') {
+                        this.splitterModelStacked = Math.max(380, Math.round(totalH * 0.55));
+                    }
                 }
+
+                this.$nextTick(() => {
+                    if (this.$refs.canvasRef && typeof this.$refs.canvasRef.scheduleRecalcEdges === 'function') {
+                        this.$refs.canvasRef.scheduleRecalcEdges();
+                    }
+                });
             },
             onSplitterPan(phase) {
                 if (phase && phase.isFinal) {
                     this.$nextTick(() => {
-                        if (this.$refs.canvasRef && this.$refs.canvasRef.scheduleRecalcEdges) {
+                        if (this.$refs.canvasRef && typeof this.$refs.canvasRef.scheduleRecalcEdges === 'function') {
                             this.$refs.canvasRef.scheduleRecalcEdges();
                         }
                     });
@@ -89,18 +117,19 @@
             onPipelineSelected(item) {
                 this.activeDiscussionId = String(item.discussionId);
                 this.selectedStage = null;
-                this.selectedEdge = null;
+                this.selectedParentStage = null;
                 if (item.targetArtifactUri) {
                     this.activeArtifactLocation = item.targetArtifactUri;
                 }
             },
-            onStageSelected(node) {
-                this.selectedStage = node;
-                this.selectedEdge = null;
-            },
-            onEdgeSelected(edgeData) {
-                this.selectedEdge = edgeData;
-                this.selectedStage = null;
+            onStageSelected(payload) {
+                if (payload && payload.stage) {
+                    this.selectedStage = payload.stage;
+                    this.selectedParentStage = payload.parentStage;
+                } else {
+                    this.selectedStage = payload;
+                    this.selectedParentStage = null;
+                }
             },
             onStageDispatched() {
                 if (this.$refs.canvasRef && typeof this.$refs.canvasRef.fetchPipelineGraph === 'function') {
@@ -110,6 +139,20 @@
             onAdvanceStance(eventData) {
                 if (this.selectedStage) {
                     this.selectedStage.actionType = eventData.nextStance;
+                }
+            },
+            onOpenArtifact(artifactUri) {
+                if (!artifactUri) return;
+                this.activeArtifactLocation = artifactUri;
+                // If it is a screen definition, auto-dock Screen XML Editor
+                if (artifactUri.endsWith('.xml')) {
+                    this.activePanel = 'AgiScreenEditor';
+                }
+                if (this.contextBus) {
+                    this.contextBus.postMessage({
+                        event: 'open-screen-artifact',
+                        artifactUri: artifactUri
+                    });
                 }
             },
             focusViewport(panelName) {
@@ -135,13 +178,25 @@
 
                         <q-separator vertical dark class="q-mx-xs" />
 
+                        <!-- ORIENTATION TOGGLE -->
+                        <q-btn 
+                            flat dense no-caps size="xs"
+                            :icon="isSideBySide ? 'table_chart' : 'view_stream'"
+                            :label="isSideBySide ? 'Side-by-Side (50/50)' : 'Stacked (Top/Bottom)'"
+                            color="cyan-3"
+                            class="q-px-xs rounded-borders"
+                            style="border: 1px solid rgba(56, 189, 248, 0.3);"
+                            @click="toggleOrientation"
+                        >
+                            <q-tooltip>Toggle Workspace Split Orientation</q-tooltip>
+                        </q-btn>
+
                         <!-- WORKING DAG SIZE PRESETS -->
-                        <span class="text-caption text-slate-500 font-mono" style="font-size: 10px;">DAG SIZE:</span>
-                        <q-btn-group flat dense>
-                             <q-btn flat dense size="xs" :color="splitterModel <= 200 ? 'cyan-3' : 'slate-400'" label="Compact (25%)" @click="setDagHeight(25)" />
-                             <q-btn flat dense size="xs" :color="splitterModel > 200 && splitterModel <= 320 ? 'cyan-3' : 'slate-400'" label="Balanced (35%)" @click="setDagHeight(35)" />
-                             <q-btn flat dense size="xs" :color="splitterModel > 320 ? 'cyan-3' : 'slate-400'" label="Expanded (55%)" @click="setDagHeight(55)" />
-                         </q-btn-group>
+                        <q-btn-group flat dense class="q-ml-xs">
+                            <q-btn flat dense size="xs" label="Compact" @click="setDagHeight(25)" />
+                            <q-btn flat dense size="xs" label="Balanced" @click="setDagHeight(35)" />
+                            <q-btn flat dense size="xs" label="Expanded" @click="setDagHeight(55)" />
+                        </q-btn-group>
 
                         <q-separator vertical dark class="q-mx-xs" />
 
@@ -189,20 +244,45 @@
                         @new-pipeline-created="onPipelineSelected"
                     />
 
-                    <!-- TIER 2 & 3: INTERACTIVE VERTICAL SPLITTER IN PIXEL MODE -->
+                    <!-- TIER 2 & 3: ADAPTIVE DUAL-MODE SPLITTER (STACKED OR SIDE-BY-SIDE) -->
                     <div class="col full-width relative-position overflow-hidden" style="flex: 1 1 0%; min-height: 0; height: 100%;">
+                        
+                        <component :is="'style'">
+                            .agi-studio-splitter.q-splitter--horizontal > .q-splitter__panel.q-splitter__before {
+                                flex: none !important;
+                                min-height: 0 !important;
+                                max-height: 100% !important;
+                                overflow: hidden !important;
+                            }
+                            .agi-studio-splitter.q-splitter--horizontal > .q-splitter__panel.q-splitter__after {
+                                flex: 1 1 0% !important;
+                                min-height: 0 !important;
+                                height: auto !important;
+                                overflow: hidden !important;
+                            }
+                            .agi-studio-splitter.q-splitter--vertical > .q-splitter__panel {
+                                overflow: hidden !important;
+                                min-width: 0 !important;
+                            }
+
+                            .agi-studio-splitter > .q-splitter__separator {
+                                z-index: 15 !important;
+                            }
+                        </component>
+
                         <q-splitter
-                            v-model="splitterModel"
-                            horizontal
-                            unit="px"
+                            v-model="activeSplitterModel"
+                            :horizontal="!isSideBySide"
+                            :unit="isSideBySide ? '%' : 'px'"
+                            class="fit agi-studio-splitter"
                             style="height: 100%; width: 100%; min-height: 0;"
                             separator-class="bg-cyan-8"
-                            separator-style="height: 6px; cursor: row-resize;"
-                            :limits="[140, 750]"
+                            :separator-style="isSideBySide ? 'width: 6px; cursor: col-resize;' : 'height: 6px; cursor: row-resize;'"
+                            :limits="isSideBySide ? [25, 75] : [140, 750]"
                             emit-immediately
                             @pan="onSplitterPan"
                         >
-                            <!-- TOP PANE: TIER 2 PIPELINE DAG CANVAS -->
+                            <!-- PANE 1: TIER 2 PIPELINE DAG CANVAS -->
                             <template v-slot:before>
                                 <div class="fit relative-position overflow-hidden" style="height: 100%; width: 100%; min-height: 0;">
                                     <agi-pipeline-canvas 
@@ -210,23 +290,22 @@
                                         :discussion-id="activeDiscussionId"
                                         :target-component="targetComponent"
                                         :selected-stage-id="selectedStage?.stageId || ''"
-                                        :selected-edge-id="selectedEdge?.edgeId || ''"
                                         @stage-selected="onStageSelected"
-                                        @edge-selected="onEdgeSelected"
                                     />
                                 </div>
                             </template>
 
-                            <!-- BOTTOM PANE: TIER 3 STAGE INSPECTOR & PAYLOAD STAGING -->
+                            <!-- PANE 2: TIER 3 STAGE INSPECTOR & CONTRACT PAIR STUDIO -->
                             <template v-slot:after>
                                 <div class="fit relative-position overflow-hidden" style="height: 100%; width: 100%; min-height: 0;">
                                     <agi-stage-inspector 
                                         :discussion-id="activeDiscussionId"
                                         :selected-stage="selectedStage"
-                                        :selected-edge="selectedEdge"
+                                        :selected-parent-stage="selectedParentStage"
                                         :target-component="targetComponent"
                                         @stage-dispatched="onStageDispatched"
                                         @advance-stance="onAdvanceStance"
+                                        @open-artifact="onOpenArtifact"
                                     />
                                 </div>
                             </template>

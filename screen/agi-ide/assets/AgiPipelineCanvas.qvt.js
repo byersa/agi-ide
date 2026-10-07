@@ -1,12 +1,11 @@
 (function () {
     const AgiPipelineCanvas = {
         name: 'AgiPipelineCanvas',
-        emits: ['stage-selected', 'edge-selected'],
+        emits: ['stage-selected'],
         props: {
             discussionId: { type: String, default: '' },
             targetComponent: { type: String, default: 'nursinghome' },
-            selectedStageId: { type: String, default: '' },
-            selectedEdgeId: { type: String, default: '' }
+            selectedStageId: { type: String, default: '' }
         },
         data() {
             return {
@@ -157,24 +156,17 @@
                     const x2 = (tRect.left - containerRect.left) + scrollLeft;
                     const y2 = (tRect.top + (tRect.height / 2) - containerRect.top) + scrollTop;
 
-                    const turnX = x1 + 22;
-                    const midX = turnX + ((x2 - turnX) / 2);
+                    const turnX = x1 + 24;
 
                     const pathData = `M ${x1} ${y1} L ${turnX} ${y1} L ${turnX} ${y2} L ${x2} ${y2}`;
                     const edgeKey = `${edge.from}->${edge.to}`;
-                    const isSelected = this.selectedEdgeId === edgeKey;
+                    const isSelected = String(this.selectedStageId) === String(edge.to);
 
-                    const fromNode = nodeMap[String(edge.from)];
-                    const toNode = nodeMap[String(edge.to)];
-
-                    // Store clean non-circular references only
                     computed.push({
                         edgeId: edgeKey,
-                        fromStage: fromNode ? { stageId: fromNode.stageId, label: fromNode.label, actionType: fromNode.actionType } : null,
-                        toStage: toNode ? { stageId: toNode.stageId, label: toNode.label, actionType: toNode.actionType } : null,
+                        from: edge.from,
+                        to: edge.to,
                         d: pathData,
-                        badgeX: midX,
-                        badgeY: y2,
                         isSelected: isSelected
                     });
                 });
@@ -183,16 +175,40 @@
             },
 
             selectStage(node) {
-                this.$emit('stage-selected', node);
-                this.scheduleRecalcEdges();
-            },
+                if (!node) return;
 
-            selectEdge(fromNode, toNode) {
-                const edgeKey = `${fromNode.stageId}->${toNode.stageId}`;
-                this.$emit('edge-selected', {
-                    edgeId: edgeKey,
-                    fromStage: fromNode,
-                    toStage: toNode
+                const nodeMap = this.dagLayout.nodeMap || {};
+                const mappedNode = nodeMap[String(node.stageId)] || node;
+
+                // Locate primary upstream parent node to form the pair
+                let parentNode = null;
+                if (mappedNode.parents && mappedNode.parents.length > 0) {
+                    parentNode = mappedNode.parents[0];
+                } else if (node.parentStageId && nodeMap[String(node.parentStageId)]) {
+                    parentNode = nodeMap[String(node.parentStageId)];
+                }
+
+                const enrichedPayload = {
+                    stage: Object.assign({}, mappedNode, {
+                        stepNumber: (mappedNode.depth || 0) + 1,
+                        totalSteps: this.dagLayout.columns.length
+                    }),
+                    parentStage: parentNode ? Object.assign({}, parentNode) : null
+                };
+
+                this.$emit('stage-selected', enrichedPayload);
+                this.scheduleRecalcEdges();
+
+                // Smoothly center the active node horizontally
+                this.$nextTick(() => {
+                    const badgeEl = document.getElementById('stage-card-' + node.stageId);
+                    const container = this.$refs.canvasScrollArea;
+                    if (badgeEl && container) {
+                        const bRect = badgeEl.getBoundingClientRect();
+                        const cRect = container.getBoundingClientRect();
+                        const offset = bRect.left - cRect.left - (cRect.width / 2) + (bRect.width / 2);
+                        container.scrollBy({ left: offset, behavior: 'smooth' });
+                    }
                 });
             },
 
@@ -241,42 +257,20 @@
                         background: #38bdf8 !important;
                     }
 
+                    .leader-line-svg {
+                        pointer-events: none !important;
+                    }
                     .leader-line-path {
                         fill: none;
                         stroke: #0284c7;
                         stroke-width: 1.5;
                         stroke-dasharray: 4, 3;
+                        pointer-events: none !important;
                     }
                     .leader-line-selected {
                         stroke: #38bdf8 !important;
                         stroke-width: 2.5 !important;
                         stroke-dasharray: none !important;
-                    }
-                    .micro-transition-badge {
-                        position: absolute;
-                        transform: translate(-50%, -50%);
-                        z-index: 20;
-                        width: 18px;
-                        height: 18px;
-                        border-radius: 50%;
-                        background: #090d16;
-                        border: 1.5px solid #0284c7;
-                        cursor: pointer;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        box-shadow: 0 0 6px rgba(2, 132, 199, 0.4);
-                        transition: all 0.2s ease-in-out;
-                    }
-                    .micro-transition-badge:hover {
-                        background: #0284c7;
-                        border-color: #38bdf8;
-                        transform: translate(-50%, -50%) scale(1.25);
-                    }
-                    .micro-transition-badge-selected {
-                        background: #0284c7 !important;
-                        border-color: #38bdf8 !important;
-                        box-shadow: 0 0 10px #38bdf8 !important;
                     }
                 </component>
 
@@ -305,18 +299,18 @@
                     </div>
                 </div>
 
-                <!-- 2-AXIS DUAL SCROLLABLE VIEWPORT (NATIVE OVERFLOW CANNOT COLLAPSE) -->
+                <!-- 2-AXIS DUAL SCROLLABLE VIEWPORT -->
                 <div 
                     ref="canvasScrollArea" 
                     class="col full-width agi-dag-viewport relative-position" 
-                    style="flex: 1 1 0%; min-height: 0; height: 100%; overflow: auto !important; scroll-behavior: smooth;"
+                    style="flex: 1 1 0%; min-height: 0; height: calc(100% - 40px); overflow: auto !important; scroll-behavior: smooth;"
                     @scroll="computeOrthogonalEdges"
                 >
                     <div class="relative-position q-pa-md" style="min-width: max-content; width: max-content; min-height: 100%;">
                         
                         <!-- OVERLAY SVG LAYER FOR ORTHOGONAL 90° LEADER LINES -->
                         <svg 
-                            class="absolute-top-left pointer-events-none"
+                            class="absolute-top-left pointer-events-none leader-line-svg"
                             :style="{ width: svgDimensions.width + 'px', height: svgDimensions.height + 'px', zIndex: 10 }"
                         >
                             <defs>
@@ -337,21 +331,6 @@
                             />
                         </svg>
 
-                        <!-- CLICKABLE MICRO TRANSITION BADGES EMBEDDED ALONG LEADER LINES -->
-                        <div 
-                            v-for="edge in edgePaths" 
-                            :key="'badge-' + edge.edgeId"
-                            class="micro-transition-badge"
-                            :class="{ 'micro-transition-badge-selected': edge.isSelected }"
-                            :style="{ left: edge.badgeX + 'px', top: edge.badgeY + 'px' }"
-                            @click.stop="selectEdge(edge.fromStage, edge.toStage)"
-                        >
-                            <q-icon name="swap_horiz" size="11px" :color="edge.isSelected ? 'white' : 'cyan-3'" />
-                            <q-tooltip class="bg-black font-mono text-caption">
-                                Transition: #{{ edge.fromStage?.stageId }} ➔ #{{ edge.toStage?.stageId }}
-                            </q-tooltip>
-                        </div>
-
                         <div v-if="loading" class="q-pa-xl row flex-center">
                             <q-spinner-dots color="cyan-4" size="2em" />
                             <span class="q-ml-sm text-caption text-slate-400">Loading Pipeline Graph...</span>
@@ -368,7 +347,7 @@
                                 v-for="(col, colIndex) in dagLayout.columns" 
                                 :key="colIndex"
                                 class="column q-gutter-y-lg items-center relative-position"
-                                style="min-width: 280px; max-width: 320px;"
+                                style="min-width: 290px; max-width: 320px;"
                             >
                                 <div class="text-overline text-slate-400 font-mono text-center q-mb-xs" style="font-size: 11px; line-height: 1; letter-spacing: 1px;">
                                     STEP {{ colIndex + 1 }}
@@ -379,22 +358,37 @@
                                     :key="node.stageId"
                                     class="column full-width relative-position"
                                 >
-                                    <!-- STAGE ACTION CARD -->
+                                    <!-- STAGE PROCESS CARD WITH INTEGRATED IN/OUT PORTS -->
                                     <div 
+                                        :id="'stage-card-' + node.stageId"
                                         class="rounded-borders cursor-pointer transition-all shadow-4 relative-position overflow-hidden"
                                         :class="String(selectedStageId) === String(node.stageId) ? 'border-active-node' : 'border-dim-node'"
                                         :style="{
                                             backgroundColor: '#0f172a',
+                                            zIndex: 25,
+                                            pointerEvents: 'auto',
                                             border: String(selectedStageId) === String(node.stageId) 
                                                 ? '2px solid ' + getBadgeStyle(node.actionType).border 
                                                 : '1px solid #334155',
-                                            boxShadow: String(selectedStageId) === String(node.stageId)
-                                                ? '0 0 14px rgba(56, 189, 248, 0.45)'
+                                            boxShadow: String(selectedStageId) === String(node.stageId) 
+                                                ? '0 0 14px rgba(56, 189, 248, 0.45)' 
                                                 : '0 2px 6px rgba(0,0,0,0.5)'
                                         }"
                                         @click="selectStage(node)"
                                     >
-                                        <!-- SOLID HEADER BAR -->
+                                        <!-- INGRESS PORT (UPSTREAM LINK INDICATOR) -->
+                                        <div 
+                                            class="row items-center justify-between q-px-xs font-mono pointer-events-none" 
+                                            style="background-color: #020617; border-bottom: 1px solid #1e293b; height: 18px; min-height: 18px; font-size: 9px;"
+                                        >
+                                            <div class="row items-center q-gutter-x-xs text-slate-500">
+                                                <q-icon name="login" size="10px" color="cyan-4" />
+                                                <span>{{ node.parentStageId ? 'IN: #' + node.parentStageId : 'ROOT PIPELINE INGRESS' }}</span>
+                                            </div>
+                                            <span v-if="node.depth > 0" class="text-cyan-4 font-bold">DEPTH {{ node.depth }}</span>
+                                        </div>
+
+                                        <!-- SOLID ACTION BADGE BAR -->
                                         <div 
                                             :id="'stage-badge-' + node.stageId"
                                             class="row items-center justify-between q-px-sm q-py-xs font-mono text-weight-bolder"
@@ -405,14 +399,14 @@
                                                 minHeight: '24px'
                                             }"
                                         >
-                                            <div class="row items-center q-gutter-x-xs no-wrap ellipsis" :style="{ color: getBadgeStyle(node.actionType).fg + ' !important' }">
+                                            <div class="row items-center q-gutter-x-xs no-wrap ellipsis pointer-events-none" :style="{ color: getBadgeStyle(node.actionType).fg + ' !important' }">
                                                 <q-icon :name="getBadgeStyle(node.actionType).icon" size="13px" :style="{ color: getBadgeStyle(node.actionType).fg + ' !important' }" />
                                                 <span class="text-caption text-weight-bolder" :style="{ color: getBadgeStyle(node.actionType).fg + ' !important', fontSize: '10px' }">
                                                     {{ node.actionType.toUpperCase() }} #{{ node.stageId }}
                                                 </span>
                                             </div>
                                             <span 
-                                                class="q-px-xs rounded-borders text-caption text-weight-bolder" 
+                                                class="q-px-xs rounded-borders text-caption text-weight-bolder pointer-events-none" 
                                                 :style="{
                                                     backgroundColor: 'rgba(0,0,0,0.25)',
                                                     color: getBadgeStyle(node.actionType).fg + ' !important',
@@ -425,7 +419,7 @@
                                         </div>
 
                                         <!-- CARD BODY & TITLE -->
-                                        <div class="q-pa-xs" style="background-color: #0b1329;">
+                                        <div class="q-pa-xs pointer-events-none" style="background-color: #0b1329;">
                                             <div 
                                                 class="text-caption text-weight-bold ellipsis-2-lines q-px-xs q-py-xs" 
                                                 :style="{ 
@@ -442,11 +436,26 @@
                                                 {{ node.targetArtifactUri.split('/').pop() }}
                                             </div>
                                         </div>
+
+                                        <!-- EGRESS PORT (DOWNSTREAM CONTRACT EMISSION) -->
+                                        <div 
+                                            class="row items-center justify-between q-px-xs font-mono pointer-events-none" 
+                                            style="background-color: #020617; border-top: 1px solid #1e293b; height: 18px; min-height: 18px; font-size: 9px;"
+                                        >
+                                            <span class="text-slate-500">
+                                                {{ node.children && node.children.length > 0 ? node.children.length + ' DOWNSTREAM TRANSITIONS' : 'PIPELINE HEAD' }}
+                                            </span>
+                                            <q-icon name="logout" size="10px" color="amber-4" />
+                                        </div>
                                     </div>
                                 </div>
                             </div>
                         </div>
                     </div>
+                </div>
+
+                <!-- 3. BOTTOM GUTTER STRIP -->
+                <div class="row items-center justify-between q-px-xs bg-slate-950 font-mono text-slate-500" style="height: 8px; min-height: 8px; max-height: 8px; flex: 0 0 8px; border-top: 1px solid #1e293b;">
                 </div>
 
             </div>
