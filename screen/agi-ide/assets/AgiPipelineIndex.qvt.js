@@ -217,8 +217,9 @@
                                         <span class="text-caption font-mono text-weight-bold" :class="String(activeDiscussionId) === String(item.discussionId) ? 'text-cyan-2' : 'text-slate-300'">
                                             #{{ item.discussionId }} {{ item.name }}
                                         </span>
-                                        <q-badge :color="getStageBadgeColor(item.terminalStage)" text-color="white" class="font-mono text-caption" style="font-size: 8px;">
-                                            {{ item.terminalStage.toUpperCase() }}
+                                        <!-- NULL-SAFE BADGE RENDER -->
+                                        <q-badge :color="getStageBadgeColor(item.terminalStage || 'discuss')" text-color="white" class="font-mono text-caption" style="font-size: 8px;">
+                                            {{ (item.terminalStage || 'discuss').toUpperCase() }}
                                         </q-badge>
                                         <q-badge v-if="item.promotedWorkEffortId" color="positive" text-color="black" class="font-mono text-caption" style="font-size: 8px;">
                                             WE #{{ item.promotedWorkEffortId }}

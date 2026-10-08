@@ -5,7 +5,8 @@
         props: {
             discussionId: { type: String, default: '' },
             targetComponent: { type: String, default: 'nursinghome' },
-            selectedStageId: { type: String, default: '' }
+            selectedStageId: { type: String, default: '' },
+            selectedPort: { type: String, default: 'OUT' }
         },
         data() {
             return {
@@ -13,7 +14,8 @@
                 rawEdges: [],
                 loading: false,
                 edgePaths: [],
-                svgDimensions: { width: 1400, height: 800 }
+                svgDimensions: { width: 1400, height: 800 },
+                activePortSelection: this.selectedPort || 'OUT'
             };
         },
         computed: {
@@ -22,7 +24,9 @@
 
                 const nodeMap = {};
                 this.rawNodes.forEach(n => {
-                    nodeMap[String(n.stageId)] = Object.assign({}, n, {
+                    const sId = String(n.pipelineStepId || n.stageId);
+                    nodeMap[sId] = Object.assign({}, n, {
+                        stepId: sId,
                         depth: 0,
                         row: 0,
                         parents: [],
@@ -46,7 +50,7 @@
                     node.children.forEach(ch => assignDepth(ch, currentDepth + 1));
                 };
 
-                const rootNodes = Object.values(nodeMap).filter(n => !n.parentStageId);
+                const rootNodes = Object.values(nodeMap).filter(n => !n.parentStageId && !n.parentStepId);
                 rootNodes.forEach(r => assignDepth(r, 0));
 
                 const depthColumns = [];
@@ -76,6 +80,9 @@
                         this.edgePaths = [];
                     }
                 }
+            },
+            selectedPort(newPort) {
+                if (newPort) this.activePortSelection = newPort;
             }
         },
         mounted() {
@@ -106,7 +113,8 @@
                     this.rawEdges = resp.data?.pipelineEdges || [];
 
                     if (!this.selectedStageId && this.rawNodes.length > 0) {
-                        this.selectStage(this.rawNodes[this.rawNodes.length - 1]);
+                        const lastNode = this.rawNodes[this.rawNodes.length - 1];
+                        this.selectStage(lastNode, lastNode.egressPayloadId ? 'OUT' : 'IN');
                     }
                     this.scheduleRecalcEdges();
                 } catch (e) {
@@ -139,11 +147,10 @@
                 };
 
                 const computed = [];
-                const nodeMap = this.dagLayout.nodeMap || {};
 
                 this.rawEdges.forEach(edge => {
-                    const sourceEl = document.getElementById('stage-badge-' + edge.from);
-                    const targetEl = document.getElementById('stage-badge-' + edge.to);
+                    const sourceEl = document.getElementById('port-out-' + edge.from) || document.getElementById('stage-badge-' + edge.from);
+                    const targetEl = document.getElementById('port-in-' + edge.to) || document.getElementById('stage-badge-' + edge.to);
 
                     if (!sourceEl || !targetEl) return;
 
@@ -174,37 +181,46 @@
                 this.edgePaths = computed;
             },
 
-            selectStage(node) {
+            selectStage(node, port = null) {
                 if (!node) return;
 
+                const targetStepId = String(node.pipelineStepId || node.stageId);
                 const nodeMap = this.dagLayout.nodeMap || {};
-                const mappedNode = nodeMap[String(node.stageId)] || node;
+                const mappedNode = nodeMap[targetStepId] || node;
 
-                // Locate primary upstream parent node to form the pair
+                if (port) {
+                    this.activePortSelection = port;
+                } else if (!this.activePortSelection) {
+                    this.activePortSelection = mappedNode.egressPayloadId ? 'OUT' : 'IN';
+                }
+
                 let parentNode = null;
                 if (mappedNode.parents && mappedNode.parents.length > 0) {
                     parentNode = mappedNode.parents[0];
-                } else if (node.parentStageId && nodeMap[String(node.parentStageId)]) {
-                    parentNode = nodeMap[String(node.parentStageId)];
+                } else if ((mappedNode.parentStepId || mappedNode.parentStageId) && nodeMap[String(mappedNode.parentStepId || mappedNode.parentStageId)]) {
+                    parentNode = nodeMap[String(mappedNode.parentStepId || mappedNode.parentStageId)];
                 }
 
                 const enrichedPayload = {
                     stage: Object.assign({}, mappedNode, {
-                        stepNumber: (mappedNode.depth || 0) + 1,
-                        totalSteps: this.dagLayout.columns.length
+                        stepId: targetStepId,
+                        stageId: targetStepId,
+                        stepNumber: mappedNode.stepSequenceNum || (mappedNode.depth || 0) + 1,
+                        totalSteps: this.dagLayout.columns.length,
+                        activePort: this.activePortSelection
                     }),
-                    parentStage: parentNode ? Object.assign({}, parentNode) : null
+                    parentStage: parentNode ? Object.assign({}, parentNode) : null,
+                    selectedPort: this.activePortSelection
                 };
 
                 this.$emit('stage-selected', enrichedPayload);
                 this.scheduleRecalcEdges();
 
-                // Smoothly center the active node horizontally
                 this.$nextTick(() => {
-                    const badgeEl = document.getElementById('stage-card-' + node.stageId);
+                    const cardEl = document.getElementById('stage-card-' + targetStepId);
                     const container = this.$refs.canvasScrollArea;
-                    if (badgeEl && container) {
-                        const bRect = badgeEl.getBoundingClientRect();
+                    if (cardEl && container) {
+                        const bRect = cardEl.getBoundingClientRect();
                         const cRect = container.getBoundingClientRect();
                         const offset = bRect.left - cRect.left - (cRect.width / 2) + (bRect.width / 2);
                         container.scrollBy({ left: offset, behavior: 'smooth' });
@@ -272,6 +288,13 @@
                         stroke-width: 2.5 !important;
                         stroke-dasharray: none !important;
                     }
+
+                    .port-btn {
+                        transition: all 0.15s ease-in-out;
+                    }
+                    .port-btn:hover {
+                        filter: brightness(1.25);
+                    }
                 </component>
 
                 <!-- TOP CONTROLS & BREADCRUMB STRIP (FIXED 32px) -->
@@ -280,7 +303,7 @@
                         <q-icon name="account_tree" color="cyan-4" size="16px" />
                         <span class="text-caption text-weight-bold text-cyan-2" style="font-size: 11px;">PIPELINE DAG</span>
                         <span class="text-caption text-slate-500 q-ml-xs" style="font-size: 10px;">
-                            ({{ dagLayout.columns.length }} columns • {{ rawNodes.length }} compute steps)
+                            ({{ dagLayout.columns.length }} steps • {{ rawNodes.length }} stages)
                         </span>
                     </div>
 
@@ -303,7 +326,7 @@
                 <div 
                     ref="canvasScrollArea" 
                     class="col full-width agi-dag-viewport relative-position" 
-                    style="flex: 1 1 0%; min-height: 0; height: calc(100% - 40px); overflow: auto !important; scroll-behavior: smooth;"
+                    style="flex: 1 1 0%; min-height: 0; height: calc(100% - 32px); overflow: auto !important; scroll-behavior: smooth;"
                     @scroll="computeOrthogonalEdges"
                 >
                     <div class="relative-position q-pa-md" style="min-width: max-content; width: max-content; min-height: 100%;">
@@ -347,7 +370,7 @@
                                 v-for="(col, colIndex) in dagLayout.columns" 
                                 :key="colIndex"
                                 class="column q-gutter-y-lg items-center relative-position"
-                                style="min-width: 290px; max-width: 320px;"
+                                style="min-width: 310px; max-width: 340px;"
                             >
                                 <div class="text-overline text-slate-400 font-mono text-center q-mb-xs" style="font-size: 11px; line-height: 1; letter-spacing: 1px;">
                                     STEP {{ colIndex + 1 }}
@@ -355,71 +378,69 @@
 
                                 <div 
                                     v-for="node in col" 
-                                    :key="node.stageId"
+                                    :key="node.stepId"
                                     class="column full-width relative-position"
                                 >
-                                    <!-- STAGE PROCESS CARD WITH INTEGRATED IN/OUT PORTS -->
+                                    <!-- FIRST-CLASS PROCESS STEP CARD -->
                                     <div 
-                                        :id="'stage-card-' + node.stageId"
-                                        class="rounded-borders cursor-pointer transition-all shadow-4 relative-position overflow-hidden"
-                                        :class="String(selectedStageId) === String(node.stageId) ? 'border-active-node' : 'border-dim-node'"
+                                        :id="'stage-card-' + node.stepId"
+                                        class="rounded-borders transition-all shadow-4 relative-position overflow-hidden"
                                         :style="{
                                             backgroundColor: '#0f172a',
                                             zIndex: 25,
-                                            pointerEvents: 'auto',
-                                            border: String(selectedStageId) === String(node.stageId) 
+                                            border: String(selectedStageId) === String(node.stepId) 
                                                 ? '2px solid ' + getBadgeStyle(node.actionType).border 
-                                                : '1px solid #334155',
-                                            boxShadow: String(selectedStageId) === String(node.stageId) 
+                                                : (node.statusId === 'PlsDraft' ? '1px dashed #d97706' : '1px solid #334155'),
+                                            boxShadow: String(selectedStageId) === String(node.stepId) 
                                                 ? '0 0 14px rgba(56, 189, 248, 0.45)' 
                                                 : '0 2px 6px rgba(0,0,0,0.5)'
                                         }"
-                                        @click="selectStage(node)"
                                     >
-                                        <!-- INGRESS PORT (UPSTREAM LINK INDICATOR) -->
+                                        <!-- CARD TOP HEADER & ACTION STANCE -->
                                         <div 
-                                            class="row items-center justify-between q-px-xs font-mono pointer-events-none" 
-                                            style="background-color: #020617; border-bottom: 1px solid #1e293b; height: 18px; min-height: 18px; font-size: 9px;"
-                                        >
-                                            <div class="row items-center q-gutter-x-xs text-slate-500">
-                                                <q-icon name="login" size="10px" color="cyan-4" />
-                                                <span>{{ node.parentStageId ? 'IN: #' + node.parentStageId : 'ROOT PIPELINE INGRESS' }}</span>
-                                            </div>
-                                            <span v-if="node.depth > 0" class="text-cyan-4 font-bold">DEPTH {{ node.depth }}</span>
-                                        </div>
-
-                                        <!-- SOLID ACTION BADGE BAR -->
-                                        <div 
-                                            :id="'stage-badge-' + node.stageId"
-                                            class="row items-center justify-between q-px-sm q-py-xs font-mono text-weight-bolder"
+                                            :id="'stage-badge-' + node.stepId"
+                                            class="row items-center justify-between q-px-sm q-py-xs font-mono text-weight-bolder cursor-pointer"
                                             :style="{
                                                 backgroundColor: getBadgeStyle(node.actionType).bg + ' !important',
                                                 color: getBadgeStyle(node.actionType).fg + ' !important',
                                                 height: '24px',
                                                 minHeight: '24px'
                                             }"
+                                            @click="selectStage(node)"
                                         >
-                                            <div class="row items-center q-gutter-x-xs no-wrap ellipsis pointer-events-none" :style="{ color: getBadgeStyle(node.actionType).fg + ' !important' }">
-                                                <q-icon :name="getBadgeStyle(node.actionType).icon" size="13px" :style="{ color: getBadgeStyle(node.actionType).fg + ' !important' }" />
-                                                <span class="text-caption text-weight-bolder" :style="{ color: getBadgeStyle(node.actionType).fg + ' !important', fontSize: '10px' }">
-                                                    {{ node.actionType.toUpperCase() }} #{{ node.stageId }}
+                                            <div class="row items-center q-gutter-x-xs no-wrap ellipsis">
+                                                <q-icon :name="getBadgeStyle(node.actionType).icon" size="13px" />
+                                                <span class="text-caption text-weight-bolder" style="font-size: 10px;">
+                                                    {{ node.actionType.toUpperCase() }} #{{ node.stepId }}
                                                 </span>
                                             </div>
-                                            <span 
-                                                class="q-px-xs rounded-borders text-caption text-weight-bolder pointer-events-none" 
-                                                :style="{
-                                                    backgroundColor: 'rgba(0,0,0,0.25)',
-                                                    color: getBadgeStyle(node.actionType).fg + ' !important',
-                                                    fontSize: '9px',
-                                                    letterSpacing: '0.5px'
-                                                }"
-                                            >
-                                                {{ node.role === 'assistant' ? 'AI' : 'USER' }}
-                                            </span>
+
+                                            <div class="row items-center q-gutter-x-xs">
+                                                <span 
+                                                    v-if="node.statusId === 'PlsDraft'" 
+                                                    class="q-px-xs rounded font-mono text-weight-bold" 
+                                                    style="background-color: #78350f; color: #fef3c7; font-size: 8px;"
+                                                >
+                                                    DRAFT
+                                                </span>
+                                                <span 
+                                                    v-else-if="node.statusId === 'PlsExecuting'" 
+                                                    class="q-px-xs rounded font-mono text-weight-bold" 
+                                                    style="background-color: #0369a1; color: #e0f2fe; font-size: 8px;"
+                                                >
+                                                    RUNNING
+                                                </span>
+                                                <span 
+                                                    class="q-px-xs rounded-borders text-caption text-weight-bolder" 
+                                                    style="background-color: rgba(0,0,0,0.25); font-size: 9px;"
+                                                >
+                                                    STEP {{ node.stepSequenceNum || (colIndex + 1) }}
+                                                </span>
+                                            </div>
                                         </div>
 
                                         <!-- CARD BODY & TITLE -->
-                                        <div class="q-pa-xs pointer-events-none" style="background-color: #0b1329;">
+                                        <div class="q-pa-xs cursor-pointer" style="background-color: #0b1329;" @click="selectStage(node)">
                                             <div 
                                                 class="text-caption text-weight-bold ellipsis-2-lines q-px-xs q-py-xs" 
                                                 :style="{ 
@@ -437,16 +458,61 @@
                                             </div>
                                         </div>
 
-                                        <!-- EGRESS PORT (DOWNSTREAM CONTRACT EMISSION) -->
+                                        <!-- DUAL INTERACTIVE PORT TOOLBAR: [IN] & [OUT] -->
                                         <div 
-                                            class="row items-center justify-between q-px-xs font-mono pointer-events-none" 
-                                            style="background-color: #020617; border-top: 1px solid #1e293b; height: 18px; min-height: 18px; font-size: 9px;"
+                                            class="row items-center justify-between q-px-xs font-mono" 
+                                            style="background-color: #020617; border-top: 1px solid #1e293b; height: 26px; min-height: 26px;"
                                         >
-                                            <span class="text-slate-500">
-                                                {{ node.children && node.children.length > 0 ? node.children.length + ' DOWNSTREAM TRANSITIONS' : 'PIPELINE HEAD' }}
-                                            </span>
-                                            <q-icon name="logout" size="10px" color="amber-4" />
+                                            <!-- LEFT: [IN] INGRESS PORT BUTTON -->
+                                            <button
+                                                :id="'port-in-' + node.stepId"
+                                                type="button"
+                                                class="port-btn row items-center q-px-xs rounded cursor-pointer"
+                                                :style="{
+                                                    backgroundColor: (String(selectedStageId) === String(node.stepId) && activePortSelection === 'IN') ? '#0284c7' : '#0f172a',
+                                                    border: (String(selectedStageId) === String(node.stepId) && activePortSelection === 'IN') ? '1px solid #38bdf8' : '1px solid #334155',
+                                                    color: (String(selectedStageId) === String(node.stepId) && activePortSelection === 'IN') ? '#ffffff' : '#94a3b8',
+                                                    fontSize: '9px',
+                                                    lineHeight: '16px',
+                                                    height: '18px'
+                                                }"
+                                                @click.stop="selectStage(node, 'IN')"
+                                            >
+                                                <q-icon name="login" size="10px" class="q-mr-xs" color="cyan-4" />
+                                                <span class="text-weight-bold">IN</span>
+                                                <span v-if="node.ingressPayloadId" class="q-ml-xs text-cyan-3" style="font-size: 8px;">
+                                                    #{{ node.ingressPayloadId }}
+                                                </span>
+                                            </button>
+
+                                            <span class="text-slate-600 font-mono" style="font-size: 8px;">──►</span>
+
+                                            <!-- RIGHT: [OUT] EGRESS PORT BUTTON -->
+                                            <button
+                                                :id="'port-out-' + node.stepId"
+                                                type="button"
+                                                class="port-btn row items-center q-px-xs rounded cursor-pointer"
+                                                :style="{
+                                                    backgroundColor: (String(selectedStageId) === String(node.stepId) && activePortSelection === 'OUT') ? '#0284c7' : '#0f172a',
+                                                    border: (String(selectedStageId) === String(node.stepId) && activePortSelection === 'OUT') ? '1px solid #38bdf8' : '1px solid #334155',
+                                                    color: (String(selectedStageId) === String(node.stepId) && activePortSelection === 'OUT') ? '#ffffff' : '#94a3b8',
+                                                    fontSize: '9px',
+                                                    lineHeight: '16px',
+                                                    height: '18px'
+                                                }"
+                                                @click.stop="selectStage(node, 'OUT')"
+                                            >
+                                                <span class="text-weight-bold">OUT</span>
+                                                <span v-if="node.egressPayloadId" class="q-ml-xs text-amber-3" style="font-size: 8px;">
+                                                    #{{ node.egressPayloadId }}
+                                                </span>
+                                                <span v-else class="q-ml-xs text-slate-500" style="font-size: 8px;">
+                                                    [DRAFT]
+                                                </span>
+                                                <q-icon name="logout" size="11px" class="q-ml-xs" color="amber-4" />
+                                            </button>
                                         </div>
+
                                     </div>
                                 </div>
                             </div>
