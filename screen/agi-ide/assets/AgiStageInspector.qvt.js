@@ -14,23 +14,22 @@
                 loadingPayload: false,
                 isForking: false,
                 isArchiving: false,
+                isAdvancing: false,
 
-                // Cache for fetched staged payloads: { [payloadId]: parsedObject }
                 payloadCache: {},
-
-                // Port Selection: 'IN' (Ingress Contract) | 'OUT' (Egress Artifact)
                 activePort: 'OUT',
-
-                // Ingress View: Direct view vs Delta diff toggle
                 showIngressDiff: false,
-
-                // Egress View Tab: 'contract' | 'json' | 'prompt' | 'raw'
+                editIngressSpec: false,
                 activeOutputTab: 'contract',
 
-                // Editable Staging State for Drafting & Forking
                 inputDirective: '',
                 inputTargetArtifact: '',
-                inputMantleInvariants: true
+                inputMantleInvariants: true,
+                rootStance: 'plan',
+
+                customArchetype: '',
+                customEntitiesText: '',
+                customRawJson: ''
             };
         },
         computed: {
@@ -39,15 +38,15 @@
                 return this.selectedStage.pipelineStepId || this.selectedStage.stageId || '';
             },
             isDraft() {
-                if (!this.selectedStage) return false;
+                if (!this.selectedStage) return true;
                 return this.selectedStage.statusId === 'PlsDraft' || !this.selectedStage.egressPayloadId;
             },
             currentActionType() {
-                if (!this.selectedStage) return 'discuss';
+                if (!this.selectedStage) return this.rootStance || 'plan';
                 return (this.selectedStage.actionType || 'discuss').toLowerCase();
             },
             displayTargetArtifactUri() {
-                if (!this.selectedStage) return '';
+                if (!this.selectedStage) return this.inputTargetArtifact || '';
                 return this.selectedStage.targetArtifactUri
                     || this.resolvedEgressPayload?.targetArtifactUri
                     || this.resolvedEgressPayload?.createdArtifactUri
@@ -71,53 +70,58 @@
             resolvedEgressPayload() {
                 if (!this.selectedStage) return null;
 
+                let rawObj = null;
                 const egressId = this.selectedStage.egressPayloadId || this.selectedStage.stagedPayloadId;
                 if (egressId && this.payloadCache[String(egressId)]) {
-                    return this.payloadCache[String(egressId)];
+                    rawObj = this.payloadCache[String(egressId)];
+                } else if (this.selectedStage.egressJsonData) {
+                    rawObj = this.tryParseJson(this.selectedStage.egressJsonData);
+                } else if (this.rawStageBody) {
+                    rawObj = this.tryParseJson(this.rawStageBody) || this.extractJsonFromText(this.rawStageBody);
                 }
 
-                if (this.selectedStage.egressJsonData) {
-                    const parsed = this.tryParseJson(this.selectedStage.egressJsonData);
-                    if (this.isValidPayload(parsed)) return parsed;
-                }
-
-                const directParse = this.tryParseJson(this.rawStageBody);
-                if (this.isValidPayload(directParse)) return directParse;
-
-                const extractedJson = this.extractJsonFromText(this.rawStageBody);
-                if (this.isValidPayload(extractedJson)) return extractedJson;
-
-                return null;
+                return this.unwrapPayload(rawObj);
             },
             resolvedIngressPayload() {
                 if (!this.selectedStage) return null;
 
+                let rawObj = null;
                 const ingressId = this.selectedStage.ingressPayloadId;
                 if (ingressId && this.payloadCache[String(ingressId)]) {
-                    return this.payloadCache[String(ingressId)];
-                }
-
-                if (this.selectedStage.ingressJsonData) {
-                    const parsed = this.tryParseJson(this.selectedStage.ingressJsonData);
-                    if (this.isValidPayload(parsed)) return parsed;
-                }
-
-                if (this.selectedParentStage) {
+                    rawObj = this.payloadCache[String(ingressId)];
+                } else if (this.selectedStage.ingressJsonData) {
+                    rawObj = this.tryParseJson(this.selectedStage.ingressJsonData);
+                } else if (this.selectedParentStage) {
                     const parentEgressId = this.selectedParentStage.egressPayloadId || this.selectedParentStage.stagedPayloadId;
                     if (parentEgressId && this.payloadCache[String(parentEgressId)]) {
-                        return this.payloadCache[String(parentEgressId)];
-                    }
-                    if (this.selectedParentStage.egressJsonData) {
-                        return this.tryParseJson(this.selectedParentStage.egressJsonData);
+                        rawObj = this.payloadCache[String(parentEgressId)];
+                    } else if (this.selectedParentStage.egressJsonData) {
+                        rawObj = this.tryParseJson(this.selectedParentStage.egressJsonData);
                     }
                 }
 
-                return null;
+                return this.unwrapPayload(rawObj);
+            },
+            resolvedRawXml() {
+                const p = this.resolvedEgressPayload;
+                if (p) {
+                    if (p.rawXmlContent && typeof p.rawXmlContent === 'string') return p.rawXmlContent;
+                    if (p.xmlTemplate && typeof p.xmlTemplate === 'string') return p.xmlTemplate;
+                    if (p.payload && typeof p.payload === 'object' && p.payload.rawXmlContent) return p.payload.rawXmlContent;
+                }
+                if (typeof this.rawStageBody === 'string') {
+                    const match = this.rawStageBody.match(/```(?:xml)?\s*([\s\S]*?)\s*```/);
+                    if (match && match[1] && match[1].includes('<screen')) return match[1].trim();
+                    if (this.rawStageBody.trim().startsWith('<screen') || this.rawStageBody.trim().startsWith('<?xml')) {
+                        return this.rawStageBody.trim();
+                    }
+                }
+                return '';
             },
             formattedEgressJsonString() {
                 if (!this.resolvedEgressPayload) return '';
                 try {
-                    return JSON.stringify(this.resolvedEgressPayload, null, 2);
+                    return JSON.stringify(this.cleanseContract(this.resolvedEgressPayload), null, 2);
                 } catch (e) {
                     return String(this.resolvedEgressPayload);
                 }
@@ -125,7 +129,7 @@
             formattedIngressJsonString() {
                 if (!this.resolvedIngressPayload) return '';
                 try {
-                    return JSON.stringify(this.resolvedIngressPayload, null, 2);
+                    return JSON.stringify(this.cleanseContract(this.resolvedIngressPayload), null, 2);
                 } catch (e) {
                     return String(this.resolvedIngressPayload);
                 }
@@ -135,12 +139,15 @@
                     return { added: [], removed: [], changed: [] };
                 }
 
-                const inKeys = Object.keys(this.resolvedIngressPayload);
-                const outKeys = Object.keys(this.resolvedEgressPayload);
+                const cleanIn = this.cleanseContract(this.resolvedIngressPayload);
+                const cleanOut = this.cleanseContract(this.resolvedEgressPayload);
+
+                const inKeys = Object.keys(cleanIn);
+                const outKeys = Object.keys(cleanOut);
 
                 const added = outKeys.filter(k => !inKeys.includes(k));
                 const removed = inKeys.filter(k => !outKeys.includes(k));
-                const changed = inKeys.filter(k => outKeys.includes(k) && JSON.stringify(this.resolvedIngressPayload[k]) !== JSON.stringify(this.resolvedEgressPayload[k]));
+                const changed = inKeys.filter(k => outKeys.includes(k) && JSON.stringify(cleanIn[k]) !== JSON.stringify(cleanOut[k]));
 
                 return { added, removed, changed };
             }
@@ -171,9 +178,11 @@
                         }
 
                         this.syncActiveTab();
+                        this.hydrateIngressEditor();
                     } else {
                         this.inputDirective = '';
                         this.inputTargetArtifact = '';
+                        this.activePort = 'IN';
                     }
                 }
             }
@@ -183,6 +192,115 @@
                 return window.AGI_SERVER_CSRF_TOKEN
                     || (window.moqui && window.moqui.moquiSessionToken)
                     || "";
+            },
+
+            cleanseContract(obj) {
+                if (!obj || typeof obj !== 'object') return {};
+                const unwrapped = this.unwrapPayload(obj);
+                if (!unwrapped || typeof unwrapped !== 'object') return {};
+
+                const clean = {};
+                const allowedKeys = [
+                    'targetArtifactUri',
+                    'createdArtifactUri',
+                    'recommendedArchetype',
+                    'recommendedArchetypeUri',
+                    'suggestedEntities',
+                    'screenContract',
+                    'entityFieldBindings',
+                    'securityAndHipaaRules',
+                    'architectureSummary',
+                    'formulationSteps',
+                    'subplans',
+                    'rawXmlContent'
+                ];
+
+                allowedKeys.forEach(k => {
+                    if (unwrapped[k] !== undefined && unwrapped[k] !== null) {
+                        clean[k] = unwrapped[k];
+                    }
+                });
+
+                if (Object.keys(clean).length === 0) {
+                    const blacklistedKeys = [
+                        'payloadDetails', 'payload', 'payloadJsonData', 'planDetails', 'facets',
+                        'agiPayloadId', 'modeEnumId', 'statusId', 'targetComponent', 'targetMariaId',
+                        'agiArtifactId', 'discussionId', 'messageId', 'isLeaf', 'workEffortId',
+                        'wikiPageId', 'parentPayloadId', 'title', 'userPromptText', 'executionResultJson',
+                        'revisionNumber', 'contentSha256', 'createdDate', 'lastUpdatedStamp'
+                    ];
+                    Object.keys(unwrapped).forEach(k => {
+                        if (!blacklistedKeys.includes(k)) {
+                            clean[k] = unwrapped[k];
+                        }
+                    });
+                }
+
+                return clean;
+            },
+
+            synthesizeBuildDirective(plan) {
+                if (!plan) return 'Build the canonical Moqui XML screen and UI artifacts from the approved plan.';
+                const clean = this.cleanseContract(plan);
+                const targetScreen = clean.targetArtifactUri || clean.createdArtifactUri || 'target XML screen';
+                const archetype = clean.recommendedArchetype || 'standard layout';
+                const entities = Array.isArray(clean.suggestedEntities) ? clean.suggestedEntities.map(e => e.split('.').pop()).join(', ') : '';
+
+                let prompt = `Build the canonical Moqui XML screen for ${targetScreen} based on the approved architecture plan.\n\n`;
+                prompt += `Core Objectives:\n`;
+                prompt += `- Implement the '${archetype}' archetype layout.\n`;
+                if (entities) {
+                    prompt += `- Bind data structures and UDM entities for: ${entities}.\n`;
+                }
+                if (clean.screenContract?.requiredPermissions?.length > 0) {
+                    prompt += `- Enforce security and required permissions: ${clean.screenContract.requiredPermissions.join(', ')}.\n`;
+                }
+                prompt += `- Adhere to all formulation steps specified in the Ingress Contract.`;
+                return prompt;
+            },
+
+            unwrapPayload(obj) {
+                if (!obj || typeof obj !== 'object') return null;
+                let current = Object.assign({}, obj);
+
+                if (current.payloadDetails) current = Object.assign({}, current, current.payloadDetails);
+                if (current.payload && typeof current.payload === 'object') current = Object.assign({}, current, current.payload);
+
+                if (typeof current.planDetails === 'string') {
+                    const parsedInner = this.tryParseJson(current.planDetails) || this.extractJsonFromText(current.planDetails);
+                    if (parsedInner && typeof parsedInner === 'object') {
+                        current = Object.assign({}, current, parsedInner);
+                    }
+                } else if (current.planDetails && typeof current.planDetails === 'object') {
+                    current = Object.assign({}, current, current.planDetails);
+                }
+
+                if (typeof current.payloadJsonData === 'string') {
+                    const parsedJsonData = this.tryParseJson(current.payloadJsonData) || this.extractJsonFromText(current.payloadJsonData);
+                    if (parsedJsonData && typeof parsedJsonData === 'object') {
+                        if (typeof parsedJsonData.planDetails === 'string') {
+                            const innerPlan = this.tryParseJson(parsedJsonData.planDetails) || this.extractJsonFromText(parsedJsonData.planDetails);
+                            if (innerPlan && typeof innerPlan === 'object') {
+                                Object.assign(parsedJsonData, innerPlan);
+                            }
+                        }
+                        current = Object.assign({}, current, parsedJsonData);
+                    }
+                }
+
+                return current;
+            },
+
+            hydrateIngressEditor() {
+                this.$nextTick(() => {
+                    const p = this.resolvedIngressPayload;
+                    if (p) {
+                        const clean = this.cleanseContract(p);
+                        this.customArchetype = clean.recommendedArchetype || '';
+                        this.customEntitiesText = Array.isArray(clean.suggestedEntities) ? clean.suggestedEntities.join(', ') : '';
+                        this.customRawJson = JSON.stringify(clean, null, 2);
+                    }
+                });
             },
 
             isValidPayload(obj) {
@@ -216,7 +334,9 @@
             syncActiveTab() {
                 this.$nextTick(() => {
                     const p = this.resolvedEgressPayload;
-                    if (p && (p.screenContract || p.suggestedEntities || p.recommendedArchetype || p.formulationSteps || p.subplans)) {
+                    if (this.currentActionType === 'build' && this.resolvedRawXml) {
+                        this.activeOutputTab = 'raw';
+                    } else if (p && (p.screenContract || p.suggestedEntities || p.recommendedArchetype || p.formulationSteps || p.subplans || p.architectureSummary)) {
                         this.activeOutputTab = 'contract';
                     } else if (p && Object.keys(p).length > 0) {
                         this.activeOutputTab = 'json';
@@ -254,6 +374,7 @@
                 } finally {
                     this.loadingPayload = false;
                     this.syncActiveTab();
+                    this.hydrateIngressEditor();
                 }
             },
 
@@ -279,26 +400,108 @@
                 }
             },
 
+            triggerOpenArtifact(uri) {
+                const targetUri = uri || this.displayTargetArtifactUri;
+                if (!targetUri) {
+                    this.$q.notify({ type: 'warning', message: 'No target artifact URI specified.' });
+                    return;
+                }
+                this.$emit('open-artifact', {
+                    artifactUri: targetUri,
+                    rawXmlContent: this.resolvedRawXml || null
+                });
+            },
+
+            async advanceToBuild() {
+                const targetStepId = this.stepId;
+                if (!targetStepId) return;
+
+                this.isAdvancing = true;
+                try {
+                    const sourceEgressId = this.selectedStage?.egressPayloadId || this.selectedStage?.stagedPayloadId;
+                    const cleanContract = this.cleanseContract(this.resolvedEgressPayload);
+                    const cleanContractJson = JSON.stringify(cleanContract, null, 2);
+                    const synthesizedPrompt = this.synthesizeBuildDirective(this.resolvedEgressPayload);
+
+                    const resp = await axios.post('/rest/s1/agi-ai/pipeline/step/fork', {
+                        sourceStepId: targetStepId,
+                        targetStanceEnumId: 'AamBuild',
+                        ingressPayloadId: sourceEgressId,
+                        modifiedPayloadJson: cleanContractJson,
+                        directivePrompt: synthesizedPrompt
+                    }, { headers: { 'moquiSessionToken': this.resolveCsrf() } });
+
+                    this.isAdvancing = false;
+                    this.$q.notify({
+                        type: 'positive',
+                        message: `Successor Step #${resp.data?.newStepId} (BUILD) initialized with clean spec contract.`,
+                        icon: 'handyman'
+                    });
+
+                    this.$emit('stage-dispatched', {
+                        discussionId: this.discussionId,
+                        pipelineStepId: resp.data?.newStepId
+                    });
+                } catch (e) {
+                    this.isAdvancing = false;
+                    this.$q.notify({
+                        type: 'negative',
+                        message: 'Advance failed: ' + (e.response?.data?.errors || e.message)
+                    });
+                }
+            },
+
             async executeComputeStage() {
                 if (!this.discussionId) {
                     this.$q.notify({ type: 'warning', message: 'No active pipeline selected.' });
                     return;
                 }
 
+                if (!this.inputDirective || !this.inputDirective.trim()) {
+                    this.$q.notify({ type: 'warning', message: 'Please enter a directive prompt.' });
+                    return;
+                }
+
                 this.isDispatching = true;
-                const activeStance = this.currentActionType;
+                const activeStance = this.selectedStage ? this.currentActionType : (this.rootStance || 'plan');
                 const parentId = this.selectedStage?.parentStepId || this.selectedParentStage?.pipelineStepId || null;
 
+                let effectiveIngressId = this.selectedStage?.ingressPayloadId || null;
+                let payloadOverrideJson = null;
+
+                if (this.editIngressSpec && this.customRawJson && this.customRawJson.trim()) {
+                    try {
+                        const parsedCustom = JSON.parse(this.customRawJson.trim());
+                        if (this.customArchetype) parsedCustom.recommendedArchetype = this.customArchetype.trim();
+                        if (this.customEntitiesText) {
+                            parsedCustom.suggestedEntities = this.customEntitiesText.split(',').map(s => s.trim()).filter(Boolean);
+                        }
+                        payloadOverrideJson = JSON.stringify(parsedCustom, null, 2);
+                    } catch (e) {
+                        this.$q.notify({ type: 'negative', message: 'Invalid custom Ingress JSON: ' + e.message });
+                        this.isDispatching = false;
+                        return;
+                    }
+                }
+
                 try {
-                    const dispatchResp = await axios.post('/rest/s1/agi-ai/pipeline/step/dispatch', {
+                    const dispatchPayload = {
                         discussionId: this.discussionId,
                         parentStepId: parentId,
                         stanceEnumId: activeStance,
                         directivePrompt: this.inputDirective,
-                        ingressPayloadId: this.selectedStage?.ingressPayloadId || null,
+                        ingressPayloadId: effectiveIngressId,
                         targetArtifactUri: this.inputTargetArtifact,
                         stepLabel: this.inputDirective.substring(0, 50)
-                    }, { headers: { 'moquiSessionToken': this.resolveCsrf() } });
+                    };
+
+                    if (payloadOverrideJson) {
+                        dispatchPayload.modifiedPayloadJson = payloadOverrideJson;
+                    }
+
+                    const dispatchResp = await axios.post('/rest/s1/agi-ai/pipeline/step/dispatch', dispatchPayload, {
+                        headers: { 'moquiSessionToken': this.resolveCsrf() }
+                    });
 
                     this.isDispatching = false;
                     this.$q.notify({
@@ -325,12 +528,13 @@
             },
 
             async forkCurrentStep() {
-                if (!this.stepId) return;
+                const targetStepId = this.stepId;
+                if (!targetStepId) return;
 
                 this.isForking = true;
                 try {
                     const resp = await axios.post('/rest/s1/agi-ai/pipeline/step/fork', {
-                        sourceStepId: this.stepId,
+                        sourceStepId: targetStepId,
                         directivePrompt: this.inputDirective,
                         modifiedPayloadJson: this.formattedIngressJsonString || null,
                         stanceEnumId: this.currentActionType
@@ -358,11 +562,26 @@
             },
 
             async archiveBranch() {
-                if (!this.stepId) return;
+                const targetStepId = this.stepId;
+                if (!targetStepId) {
+                    this.$q.notify({ type: 'warning', message: 'No step selected to archive.' });
+                    return;
+                }
+
+                if (this.selectedStage?.discussionId && String(this.selectedStage.discussionId) !== String(this.discussionId)) {
+                    this.$q.notify({
+                        type: 'negative',
+                        message: `State mismatch: Step #${targetStepId} belongs to discussion #${this.selectedStage.discussionId}, not #${this.discussionId}. Selection cleared.`
+                    });
+                    this.$emit('stage-dispatched', { discussionId: this.discussionId });
+                    return;
+                }
+
+                const label = this.selectedStage?.label || `Step #${targetStepId}`;
 
                 this.$q.dialog({
-                    title: 'Archive Pipeline Branch',
-                    message: `Archive Step #${this.stepId} and all downstream steps on this branch?`,
+                    title: 'Archive Pipeline Step & Branch',
+                    message: `Archive Step #${targetStepId} ("${label}") in pipeline #${this.discussionId}? All child steps downstream on this branch will also be archived.`,
                     cancel: true,
                     persistent: true,
                     dark: true
@@ -370,13 +589,13 @@
                     this.isArchiving = true;
                     try {
                         const resp = await axios.post('/rest/s1/agi-ai/pipeline/step/archive', {
-                            pipelineStepId: this.stepId
+                            pipelineStepId: targetStepId
                         }, { headers: { 'moquiSessionToken': this.resolveCsrf() } });
 
                         this.isArchiving = false;
                         this.$q.notify({
                             type: 'positive',
-                            message: `Archived ${resp.data?.archivedCount || 1} steps on branch.`,
+                            message: `Archived ${resp.data?.archivedCount || 1} step(s) on branch.`,
                             icon: 'archive'
                         });
 
@@ -401,10 +620,14 @@
             },
 
             advanceToNext(stance) {
-                this.$emit('advance-stance', {
-                    nextStance: stance,
-                    fromStage: this.selectedStage
-                });
+                if (this.selectedStage) {
+                    this.$emit('advance-stance', {
+                        nextStance: stance,
+                        fromStage: this.selectedStage
+                    });
+                } else {
+                    this.rootStance = stance;
+                }
             }
         },
         template: `
@@ -415,7 +638,7 @@
                     class="row items-center justify-between q-px-sm" 
                     :style="{ 
                         backgroundColor: '#0f172a',
-                        borderBottom: '2px solid ' + (selectedStage ? themeStyle.bg : '#334155'), 
+                        borderBottom: '2px solid ' + (selectedStage ? themeStyle.bg : '#38bdf8'), 
                         height: '38px', 
                         minHeight: '38px', 
                         flex: '0 0 38px' 
@@ -499,7 +722,7 @@
                                     flat round dense size="xs" 
                                     icon="open_in_new" 
                                     color="amber-4" 
-                                    @click="$emit('open-artifact', displayTargetArtifactUri)"
+                                    @click="triggerOpenArtifact(displayTargetArtifactUri)"
                                 >
                                     <q-tooltip>Open in Workspace Viewport</q-tooltip>
                                 </q-btn>
@@ -510,41 +733,71 @@
                             </q-btn>
                         </template>
 
+                        <!-- B. EMPTY STAGE INITIALIZATION HEADER -->
+                        <template v-else-if="discussionId">
+                            <div class="row items-center q-px-xs rounded-borders font-mono text-caption text-weight-bolder" style="background-color: #020617; color: #38bdf8; border: 1px solid #0284c7; font-size: 10px; height: 22px; line-height: 20px;">
+                                STEP 1 (INITIAL)
+                            </div>
+                            <div class="row items-center q-px-xs rounded-borders text-weight-bolder" style="background-color: #7c3aed; color: #ffffff; height: 22px;">
+                                <q-icon name="play_arrow" size="13px" class="q-mr-xs" />
+                                <span class="text-caption font-mono" style="font-size: 10px;">ROOT DISPATCH</span>
+                            </div>
+                            <span class="text-caption text-slate-400 font-mono" style="font-size: 10px;">Pipeline #{{ discussionId }}</span>
+                        </template>
+
                         <template v-else>
                             <q-icon name="info" color="slate-500" size="16px" />
-                            <span class="text-caption italic" style="color: #94a3b8;">No pipeline step selected. Click any node in the DAG above.</span>
+                            <span class="text-caption italic" style="color: #94a3b8;">Select or create a pipeline initiative.</span>
                         </template>
                     </div>
 
-                    <div v-if="selectedStage" class="row items-center q-gutter-x-xs">
-                        <q-btn 
-                            flat dense no-caps size="xs"
-                            icon="fork_right"
-                            label="Fork Branch"
-                            color="amber-4"
-                            class="q-px-xs rounded-borders"
-                            style="border: 1px solid rgba(251, 191, 36, 0.4);"
-                            :loading="isForking"
-                            @click="forkCurrentStep"
-                        >
-                            <q-tooltip>Clone input and branch new execution path</q-tooltip>
-                        </q-btn>
+                    <!-- Pipeline Action Toolbar -->
+                    <div class="row items-center q-gutter-x-xs">
+                        <template v-if="selectedStage">
+                            <q-btn 
+                                v-if="!isDraft && currentActionType === 'plan'"
+                                flat dense no-caps size="xs"
+                                icon="handyman"
+                                label="Advance to BUILD"
+                                color="amber-3"
+                                class="q-px-xs rounded-borders bg-amber-10 text-weight-bolder"
+                                style="border: 1px solid #f59e0b;"
+                                :loading="isAdvancing"
+                                @click="advanceToBuild"
+                            >
+                                <q-tooltip>Spawn a downstream BUILD step inheriting this plan's egress contract</q-tooltip>
+                            </q-btn>
 
-                        <q-btn 
-                            flat dense no-caps size="xs"
-                            icon="archive"
-                            label="Archive"
-                            color="slate-400"
-                            class="q-px-xs rounded-borders"
-                            style="border: 1px solid #334155;"
-                            :loading="isArchiving"
-                            @click="archiveBranch"
-                        >
-                            <q-tooltip>Soft-archive this step and downstream sub-branch</q-tooltip>
-                        </q-btn>
+                            <q-btn 
+                                flat dense no-caps size="xs"
+                                icon="fork_right"
+                                label="Fork Branch"
+                                color="amber-4"
+                                class="q-px-xs rounded-borders"
+                                style="border: 1px solid rgba(251, 191, 36, 0.4);"
+                                :loading="isForking"
+                                @click="forkCurrentStep"
+                            >
+                                <q-tooltip>Clone input and branch new execution path</q-tooltip>
+                            </q-btn>
 
-                        <q-separator vertical dark class="q-mx-xs" />
+                            <q-btn 
+                                flat dense no-caps size="xs"
+                                icon="archive"
+                                label="Archive"
+                                color="slate-400"
+                                class="q-px-xs rounded-borders"
+                                style="border: 1px solid #334155;"
+                                :loading="isArchiving"
+                                @click="archiveBranch"
+                            >
+                                <q-tooltip>Soft-archive this step and downstream sub-branch</q-tooltip>
+                            </q-btn>
 
+                            <q-separator vertical dark class="q-mx-xs" />
+                        </template>
+
+                        <span class="text-slate-500 font-mono text-caption q-mr-xs" style="font-size: 9px;">STANCE:</span>
                         <q-btn-group flat dense>
                             <q-btn 
                                 flat dense size="xs" 
@@ -574,14 +827,76 @@
                 <!-- 2. SINGLE FULL-WIDTH INSPECTOR VIEWPORT -->
                 <div class="col full-width column no-wrap overflow-hidden relative-position" style="flex: 1 1 0%; min-height: 0; height: calc(100% - 38px);">
                     
-                    <template v-if="!selectedStage">
+                    <!-- CASE A: NO PIPELINE SELECTED -->
+                    <template v-if="!discussionId">
                         <div class="fit column flex-center text-slate-500 font-mono">
-                            <q-icon name="touch_app" size="32px" class="q-mb-sm text-cyan-4" />
-                            <span>Select a pipeline step card in the DAG above.</span>
+                            <q-icon name="account_tree" size="32px" class="q-mb-sm text-cyan-4" />
+                            <span>Select or create a pipeline initiative in the bar above.</span>
                         </div>
                     </template>
 
-                    <!-- VIEWPORT A: [IN] INGRESS CONTRACT & DIRECTIVE COMPOSER -->
+                    <!-- CASE B: NO STAGE SELECTED (INITIALIZE ROOT STEP 1) -->
+                    <template v-else-if="!selectedStage">
+                        <div class="col q-pa-md overflow-auto" style="flex: 1 1 0%; min-height: 0; height: 100%;">
+                            <div class="column q-gutter-y-md" style="max-width: 900px; margin: 0 auto;">
+                                <div class="row items-center q-gutter-x-sm q-pa-sm rounded-borders" style="background-color: #0b1329; border: 1px solid #0284c7;">
+                                    <q-icon name="rocket_launch" color="cyan-3" size="20px" />
+                                    <div>
+                                        <div class="text-weight-bold text-cyan-2" style="font-size: 12px;">INITIALIZE ROOT PIPELINE STEP</div>
+                                        <div class="text-caption text-slate-400" style="font-size: 10px;">Author the initial directive prompt to launch Step 1 of this pipeline.</div>
+                                    </div>
+                                </div>
+
+                                <div class="column q-gutter-y-xs">
+                                    <label class="text-caption font-mono text-weight-bold" style="color: #94a3b8; font-size: 10px;">TARGET ARTIFACT LOCATION (OPTIONAL):</label>
+                                    <q-input 
+                                        v-model="inputTargetArtifact" 
+                                        dense dark outlined 
+                                        color="cyan-3"
+                                        class="font-mono text-caption"
+                                        input-class="font-mono text-cyan-2"
+                                        style="background-color: #020617; border-radius: 4px;"
+                                        placeholder="component://nursinghome/screen/... or leave blank"
+                                    />
+                                </div>
+
+                                <div class="column q-gutter-y-xs">
+                                    <label class="text-caption font-mono text-weight-bold" style="color: #94a3b8; font-size: 10px;">INITIAL DIRECTIVE / DISPATCH PROMPT:</label>
+                                    <q-input 
+                                        v-model="inputDirective" 
+                                        type="textarea" 
+                                        rows="6" 
+                                        dense dark outlined 
+                                        color="cyan-3"
+                                        class="font-mono text-caption"
+                                        input-class="font-mono text-slate-100"
+                                        style="background-color: #020617; border-radius: 4px;"
+                                        placeholder="Enter initial directive (e.g. 'Formulate the high-level architecture plan for Clinical Dashboard')..."
+                                    />
+                                </div>
+
+                                <div class="row items-center justify-between q-pa-sm rounded-borders" style="background-color: #0f172a; border: 1px solid #1e293b;">
+                                    <div class="row items-center q-gutter-x-xs">
+                                        <span class="text-caption font-mono" style="color: #cbd5e1; font-size: 10px;">Mantle UDM Invariants Enforced</span>
+                                        <q-toggle v-model="inputMantleInvariants" dense color="cyan-4" size="xs" />
+                                    </div>
+
+                                    <q-btn 
+                                        color="primary"
+                                        text-color="white"
+                                        icon="bolt" 
+                                        label="Dispatch Root Step 1" 
+                                        dense no-caps 
+                                        class="text-weight-bold q-px-md q-py-xs font-mono"
+                                        :loading="isDispatching"
+                                        @click="executeComputeStage"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- CASE C: [IN] INGRESS VIEWPORT -->
                     <template v-else-if="activePort === 'IN'">
                         <div class="row items-center justify-between q-px-sm" style="background-color: #0b1329; border-bottom: 1px solid #1e293b; height: 32px; min-height: 32px; flex: 0 0 32px;">
                             <div class="row items-center q-gutter-x-xs">
@@ -595,6 +910,11 @@
                             </div>
 
                             <div class="row items-center q-gutter-x-sm">
+                                <div v-if="isDraft" class="row items-center q-gutter-x-xs">
+                                    <span class="text-caption font-mono text-weight-bold" :class="editIngressSpec ? 'text-amber-3' : 'text-slate-400'" style="font-size: 9px;">EDIT SPEC OVERRIDES:</span>
+                                    <q-toggle v-model="editIngressSpec" dense color="amber-4" size="xs" />
+                                </div>
+
                                 <div class="row items-center q-gutter-x-xs">
                                     <span class="text-caption font-mono" style="color: #94a3b8; font-size: 9px;">DIFF VS PRIOR:</span>
                                     <q-toggle v-model="showIngressDiff" dense color="cyan-4" size="xs" />
@@ -630,7 +950,7 @@
                                     <q-input 
                                         v-model="inputDirective" 
                                         type="textarea" 
-                                        rows="5" 
+                                        rows="4" 
                                         dense dark outlined 
                                         color="cyan-3"
                                         class="font-mono text-caption"
@@ -640,6 +960,33 @@
                                     />
                                 </div>
 
+                                <!-- INTERACTIVE INGRESS SPEC OVERRIDE PANEL -->
+                                <div v-if="editIngressSpec" class="column q-gutter-y-sm q-pa-sm rounded-borders" style="background-color: #0f172a; border: 1px solid #f59e0b;">
+                                    <div class="row items-center justify-between">
+                                        <span class="text-caption text-weight-bold text-amber-3" style="font-size: 10px;">
+                                            INGRESS SPEC OVERRIDES (PRE-FLIGHT CONFIGURATION FOR BUILD):
+                                        </span>
+                                        <span class="text-caption font-mono text-slate-400" style="font-size: 9px;">Editing will clone and isolate the ingress contract</span>
+                                    </div>
+
+                                    <div class="row q-col-gutter-sm">
+                                        <div class="col-6">
+                                            <label class="text-caption font-mono text-slate-400" style="font-size: 9px;">OVERRIDE ARCHETYPE:</label>
+                                            <q-input v-model="customArchetype" dense dark outlined color="amber-4" class="font-mono text-caption" input-class="font-mono text-amber-2" style="background-color: #020617;" placeholder="master-detail, single-form, etc." />
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="text-caption font-mono text-slate-400" style="font-size: 9px;">BOUND ENTITIES (COMMA-SEPARATED):</label>
+                                            <q-input v-model="customEntitiesText" dense dark outlined color="amber-4" class="font-mono text-caption" input-class="font-mono text-cyan-2" style="background-color: #020617;" placeholder="mantle.facility.Facility, mantle.party.Person..." />
+                                        </div>
+                                    </div>
+
+                                    <div class="column q-gutter-y-xs q-mt-xs">
+                                        <label class="text-caption font-mono text-slate-400" style="font-size: 9px;">CLEANSED INGRESS JSON CONTRACT:</label>
+                                        <q-input v-model="customRawJson" type="textarea" rows="8" dense dark outlined color="amber-4" class="font-mono text-caption" input-class="font-mono text-slate-200" style="background-color: #020617; font-size: 10px;" />
+                                    </div>
+                                </div>
+
+                                <!-- DELTA DIFF VIEW -->
                                 <div v-if="showIngressDiff" class="column q-gutter-y-xs q-pa-sm rounded-borders" style="background-color: #0f172a; border: 1px solid #0284c7;">
                                     <div class="row items-center justify-between">
                                         <span class="text-caption text-weight-bold text-cyan-3" style="font-size: 10px;">DELTA COMPARISON (INGRESS VS EGRESS):</span>
@@ -684,7 +1031,7 @@
                         </div>
                     </template>
 
-                    <!-- VIEWPORT B: [OUT] EGRESS ARTIFACT & MOQUI SPEC CONTRACT -->
+                    <!-- CASE D: [OUT] EGRESS VIEWPORT -->
                     <template v-else>
                         <div class="row items-center justify-between q-px-sm" style="background-color: #0b1329; border-bottom: 1px solid #1e293b; height: 32px; min-height: 32px; flex: 0 0 32px;">
                             <div class="row items-center q-gutter-x-xs no-wrap ellipsis">
@@ -703,6 +1050,20 @@
                             </div>
 
                             <div class="row items-center q-gutter-x-xs">
+                                <!-- STAGED VIRTUAL SCREEN XML QUICK LAUNCH BUTTON -->
+                                <q-btn 
+                                    v-if="resolvedRawXml"
+                                    flat dense no-caps size="xs"
+                                    icon="code"
+                                    label="Open in Screen Editor"
+                                    color="amber-3"
+                                    class="q-px-xs rounded-borders bg-amber-10 text-weight-bolder q-mr-xs"
+                                    style="border: 1px solid #f59e0b;"
+                                    @click="triggerOpenArtifact(displayTargetArtifactUri)"
+                                >
+                                    <q-tooltip>Load this generated XML buffer directly into Screen XML Editor</q-tooltip>
+                                </q-btn>
+
                                 <div class="row items-center q-gutter-x-none rounded-borders" style="background-color: #020617; border: 1px solid #334155; padding: 1px;">
                                     <button 
                                         type="button"
@@ -771,7 +1132,7 @@
                                         }"
                                         @click="activeOutputTab = 'raw'"
                                     >
-                                        Raw
+                                        {{ currentActionType === 'build' ? 'XML Code' : 'Raw' }}
                                     </button>
                                 </div>
 
@@ -779,7 +1140,7 @@
                                     flat round dense size="xs" 
                                     icon="content_copy" 
                                     style="color: #94a3b8;"
-                                    @click="copyToClipboard(formattedEgressJsonString || rawStageBody, 'Output Artifact')"
+                                    @click="copyToClipboard(resolvedRawXml || formattedEgressJsonString || rawStageBody, 'Output Artifact')"
                                 >
                                     <q-tooltip>Copy Output</q-tooltip>
                                 </q-btn>
@@ -796,6 +1157,7 @@
                                     <q-btn color="cyan-8" text-color="white" icon="login" label="Switch to [IN] to review and dispatch" no-caps dense @click="activePort = 'IN'" />
                                 </div>
 
+                                <!-- B. MOQUI SPEC VIEW -->
                                 <div v-else-if="activeOutputTab === 'contract' && resolvedEgressPayload" class="column q-gutter-y-sm">
                                     <div class="row items-center justify-between q-pa-xs rounded-borders" style="background-color: #0f172a; border: 1px solid #1e293b;">
                                         <div class="row items-center q-gutter-x-xs">
@@ -882,12 +1244,21 @@
                                     </div>
                                 </div>
 
+                                <!-- C. FORMATTED JSON VIEW -->
                                 <div v-else-if="activeOutputTab === 'json' && resolvedEgressPayload" class="q-pa-sm rounded-borders font-mono text-caption" style="background-color: #0f172a; border: 1px solid #1e3a5f;">
                                     <pre class="q-ma-none" style="color: #38bdf8; white-space: pre-wrap; font-size: 11px; line-height: 1.4;">{{ formattedEgressJsonString }}</pre>
                                 </div>
 
+                                <!-- D. RAW XML / MARKDOWN VIEW -->
                                 <div v-else class="q-pa-xs rounded-borders font-mono text-caption" style="background-color: #0f172a; border: 1px solid #1e3a5f; color: #f1f5f9;">
-                                    <div class="markdown-body font-mono text-caption" v-html="formatOutput(rawStageBody)"></div>
+                                    <div v-if="resolvedRawXml">
+                                        <div class="row items-center justify-between q-pa-xs rounded bg-slate-900 q-mb-xs text-caption">
+                                            <span class="text-amber-3 text-weight-bold font-mono">GENERATED MOQUI XML SPECIFICATION:</span>
+                                            <q-btn flat dense no-caps size="xs" color="cyan-3" icon="launch" label="Open in Screen Editor" @click="triggerOpenArtifact(displayTargetArtifactUri)" />
+                                        </div>
+                                        <pre class="q-ma-none q-pa-sm rounded bg-black text-amber-2" style="white-space: pre-wrap; font-size: 11px; line-height: 1.4; max-height: 600px; overflow: auto;">{{ resolvedRawXml }}</pre>
+                                    </div>
+                                    <div v-else class="markdown-body font-mono text-caption" v-html="formatOutput(rawStageBody)"></div>
                                 </div>
 
                             </div>

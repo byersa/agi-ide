@@ -359,8 +359,19 @@
                             <span class="q-ml-sm text-caption text-slate-400">Loading Pipeline Graph...</span>
                         </div>
 
-                        <div v-else-if="dagLayout.columns.length === 0" class="q-pa-xl text-slate-500 italic text-caption">
-                            No compute stages in this pipeline.
+                        <div v-else-if="dagLayout.columns.length === 0" class="q-pa-xl column flex-center font-mono">
+                            <q-icon name="hub" size="36px" color="cyan-4" class="q-mb-sm" />
+                            <div class="text-slate-300 text-caption text-weight-bold q-mb-xs">No compute stages in this pipeline.</div>
+                            <div class="text-slate-500 text-caption q-mb-md">Initialize the root compute stage to start the DAG.</div>
+                            <q-btn 
+                                color="primary" 
+                                text-color="white" 
+                                icon="bolt" 
+                                label="Initialize Step 1" 
+                                dense no-caps 
+                                class="text-weight-bold q-px-sm"
+                                @click="$emit('stage-selected', { stage: null, selectedPort: 'IN' })" 
+                            />
                         </div>
 
                         <!-- THE HORIZONTAL COLUMN STACK -->

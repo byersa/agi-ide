@@ -12,8 +12,11 @@
             and verifies HIPAA PHI field encryption flags.
         </description>
         <in-parameters>
-            <parameter name="rawXmlContent" type="String" required="true"/>
+            <parameter name="rawXmlContent" type="String" allow-html="any"/>
+            <!-- Alias parameter for LLM compatibility -->
+            <parameter name="xmlContent" type="String" allow-html="any"/>
             <parameter name="artifactUri" type="String"/>
+            <parameter name="targetComponent" type="String"/>
             <parameter name="enforceHipaa" type="Boolean" default="true"/>
         </in-parameters>
         <out-parameters>
@@ -33,7 +36,7 @@
 
                 List errorList = []
                 List warningList = []
-                String xml = rawXmlContent ? rawXmlContent.trim() : ""
+                String xml = (rawXmlContent ?: xmlContent ?: "").trim()
 
                 if (!xml) {
                     context.isValid = false

@@ -63,6 +63,7 @@
                 if (!event.data) return;
                 if (event.data.event === 'open-screen-artifact' && event.data.artifactUri) {
                     vm.activeArtifactLocation = event.data.artifactUri;
+                    if (event.data.stagedXml) vm.stagedXmlSource = event.data.stagedXml;
                 }
                 if (event.data.targetComponent) {
                     vm.targetComponent = event.data.targetComponent;
@@ -115,9 +116,11 @@
                 }
             },
             onPipelineSelected(item) {
+                if (!item) return;
                 this.activeDiscussionId = String(item.discussionId);
                 this.selectedStage = null;
                 this.selectedParentStage = null;
+                this.stagedXmlSource = '';
                 if (item.targetArtifactUri) {
                     this.activeArtifactLocation = item.targetArtifactUri;
                 }
@@ -131,9 +134,16 @@
                     this.selectedParentStage = null;
                 }
             },
-            onStageDispatched() {
+            async onStageDispatched(eventData) {
                 if (this.$refs.canvasRef && typeof this.$refs.canvasRef.fetchPipelineGraph === 'function') {
-                    this.$refs.canvasRef.fetchPipelineGraph();
+                    await this.$refs.canvasRef.fetchPipelineGraph();
+                    const newStepId = eventData?.pipelineStepId;
+                    if (newStepId && this.$refs.canvasRef.dagLayout?.nodeMap) {
+                        const targetNode = this.$refs.canvasRef.dagLayout.nodeMap[String(newStepId)];
+                        if (targetNode) {
+                            this.$refs.canvasRef.selectStage(targetNode, 'OUT');
+                        }
+                    }
                 }
             },
             onAdvanceStance(eventData) {
@@ -141,17 +151,31 @@
                     this.selectedStage.actionType = eventData.nextStance;
                 }
             },
-            onOpenArtifact(artifactUri) {
-                if (!artifactUri) return;
-                this.activeArtifactLocation = artifactUri;
-                // If it is a screen definition, auto-dock Screen XML Editor
-                if (artifactUri.endsWith('.xml')) {
+            onOpenArtifact(eventData) {
+                let uri = '';
+                let xml = '';
+
+                if (typeof eventData === 'string') {
+                    uri = eventData;
+                } else if (eventData && typeof eventData === 'object') {
+                    uri = eventData.artifactUri || '';
+                    xml = eventData.rawXmlContent || '';
+                }
+
+                if (!uri) return;
+                this.activeArtifactLocation = uri;
+                this.stagedXmlSource = xml || '';
+
+                if (uri.endsWith('.xml') || xml) {
                     this.activePanel = 'AgiScreenEditor';
                 }
+
                 if (this.contextBus) {
                     this.contextBus.postMessage({
                         event: 'open-screen-artifact',
-                        artifactUri: artifactUri
+                        artifactUri: uri,
+                        stagedXml: xml,
+                        isVirtual: Boolean(xml)
                     });
                 }
             },
@@ -203,6 +227,9 @@
                         <div class="row items-center q-gutter-x-xs text-caption text-slate-400">
                             <q-icon name="code" size="xs" color="cyan-4" />
                             <span class="text-weight-bold text-slate-300">{{ currentArtifactLabel }}</span>
+                            <span v-if="stagedXmlSource" class="q-px-xs rounded font-mono text-weight-bolder bg-amber-10 text-amber-3" style="font-size: 8px; border: 1px solid #d97706;">
+                                STAGED VIRTUAL
+                            </span>
                         </div>
                     </div>
 
@@ -289,7 +316,7 @@
                                         ref="canvasRef"
                                         :discussion-id="activeDiscussionId"
                                         :target-component="targetComponent"
-                                        :selected-stage-id="selectedStage?.stageId || ''"
+                                        :selected-stage-id="selectedStage?.pipelineStepId || selectedStage?.stageId || ''"
                                         @stage-selected="onStageSelected"
                                     />
                                 </div>
@@ -313,11 +340,16 @@
                     </div>
 
                     <!-- OPTIONAL DOCKED VIEWPORT PANEL (RIGHT SIDE DOCK) -->
-                    <div v-if="activePanel" class="column no-wrap overflow-hidden bg-slate-900 absolute-top-right" style="width: 45%; height: 100%; min-height: 0; border-left: 1px solid #334155; z-index: 50;">
+                    <div v-if="activePanel" class="column no-wrap overflow-hidden bg-slate-900 absolute-top-right" style="width: 50%; height: 100%; min-height: 0; border-left: 1px solid #334155; z-index: 50;">
                         <div class="row items-center justify-between q-pa-xs bg-slate-950" style="border-bottom: 1px solid #334155; height: 32px; min-height: 32px; flex: 0 0 32px;">
-                            <span class="text-caption text-weight-bold text-cyan-3 font-mono q-ml-xs">
-                                {{ activePanel.replace('Agi', '').replace('Editor', '') }} Dock
-                            </span>
+                            <div class="row items-center q-gutter-x-xs">
+                                <span class="text-caption text-weight-bold text-cyan-3 font-mono q-ml-xs">
+                                    {{ activePanel.replace('Agi', '').replace('Editor', '') }} Dock
+                                </span>
+                                <span v-if="stagedXmlSource" class="q-px-xs rounded font-mono text-weight-bolder bg-amber-10 text-amber-3" style="font-size: 8px;">
+                                    [VIRTUAL BUFFER]
+                                </span>
+                            </div>
                             <q-btn flat round dense icon="close" size="xs" color="slate-400" @click="activePanel = null" />
                         </div>
 
@@ -330,6 +362,7 @@
                             <agi-screen-editor 
                                 v-else-if="activePanel === 'AgiScreenEditor'"
                                 :screen-path="activeArtifactLocation"
+                                :staged-xml-source="stagedXmlSource"
                                 :layout-tree="stagedLayoutTree"
                             />
                             <div v-else class="fit row flex-center text-slate-500 text-caption font-mono">

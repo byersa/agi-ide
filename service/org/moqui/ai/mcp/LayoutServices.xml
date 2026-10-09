@@ -371,4 +371,88 @@
         </actions>
     </service>
 
+    <!-- ===================================================================== -->
+    <!-- GET SCREEN ARCHETYPE (Individual Lookup MCP Tool)                     -->
+    <!-- ===================================================================== -->
+    <service verb="get" noun="ScreenArchetype" type="inline" read-only="true"
+             name="org.moqui.ai.mcp.LayoutServices.get#ScreenArchetype">
+        <description>
+            Fetches the detailed specification and XML template for a specific screen archetype.
+        </description>
+        <in-parameters>
+            <parameter name="archetypeId" type="String"/>
+            <parameter name="archetypeName" type="String"/>
+            <parameter name="name" type="String"/>
+            <parameter name="targetComponent" default-value="nursinghome"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="archetype" type="Map"/>
+            <parameter name="xmlTemplate" type="String"/>
+            <parameter name="found" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import java.io.File
+                import groovy.io.FileType
+                import groovy.xml.XmlParser
+
+                String queryName = (archetypeId ?: archetypeName ?: name ?: "").trim()
+                if (queryName.endsWith(".xml")) queryName = queryName.replace(".xml", "")
+
+                File matchedFile = null
+                String matchedComp = null
+                File compBase = new File("runtime/component")
+
+                if (compBase.exists() && compBase.isDirectory() && queryName) {
+                    compBase.eachDir { File compDir ->
+                        if (matchedFile) return
+                        File archDir = new File(compDir, "mcp/resources/screen/archetype")
+                        if (archDir.exists() && archDir.isDirectory()) {
+                            archDir.eachFileRecurse(FileType.FILES) { File f ->
+                                if (matchedFile) return
+                                if (!f.name.endsWith(".xml") || f.name.startsWith(".")) return
+
+                                String base = f.name.replace(".xml", "")
+                                if (base.equalsIgnoreCase(queryName)) {
+                                    matchedFile = f
+                                    matchedComp = compDir.name
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (matchedFile && matchedFile.exists()) {
+                    String rawXml = matchedFile.getText("UTF-8")
+                    String docSummary = ""
+                    Map attributes = [:]
+
+                    try {
+                        def root = new XmlParser(false, false).parse(matchedFile)
+                        docSummary = root.attribute("description") ?: root.attribute("default-menu-title") ?: ""
+                        root.attributes().each { k, v -> attributes[k.toString()] = v.toString() }
+                    } catch (Exception parseEx) {
+                        ec.logger.warn("Could not parse XML structure of archetype [${matchedFile.name}]: ${parseEx.message}")
+                    }
+
+                    context.found = true
+                    context.xmlTemplate = rawXml
+                    context.archetype = [
+                        name        : matchedFile.name.replace(".xml", ""),
+                        component   : matchedComp,
+                        uri         : "mcp://${matchedComp}/resources/screen/archetype/${matchedFile.name}",
+                        description : docSummary ?: "Canonical screen archetype template",
+                        attributes  : attributes
+                    ]
+                    ec.logger.info("📐 [get#ScreenArchetype] Resolved archetype '${queryName}' from component '${matchedComp}'.")
+                } else {
+                    context.found = false
+                    context.archetype = null
+                    context.xmlTemplate = null
+                    ec.logger.warn("⚠️ [get#ScreenArchetype] Archetype '${queryName}' not found in runtime/component/*/mcp/resources/screen/archetype/.")
+                }
+            ]]></script>
+        </actions>
+    </service>
+
 </services>
