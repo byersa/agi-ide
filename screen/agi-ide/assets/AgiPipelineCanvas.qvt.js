@@ -1,7 +1,7 @@
 (function () {
     const AgiPipelineCanvas = {
         name: 'AgiPipelineCanvas',
-        emits: ['stage-selected'],
+        emits: ['stage-selected', 'open-artifact'],
         props: {
             discussionId: { type: String, default: '' },
             targetComponent: { type: String, default: 'nursinghome' },
@@ -214,6 +214,24 @@
                 };
 
                 this.$emit('stage-selected', enrichedPayload);
+
+                // Auto-anchor artifact and focus editors on [OUT] selection
+                if (this.activePortSelection === 'OUT') {
+                    const targetUri = mappedNode.targetArtifactUri
+                        || mappedNode.createdArtifactUri
+                        || mappedNode.egressPayload?.targetArtifactUri
+                        || '';
+
+                    if (targetUri || mappedNode.egressPayloadId) {
+                        this.$emit('open-artifact', {
+                            artifactUri: targetUri,
+                            stepId: targetStepId,
+                            egressPayloadId: mappedNode.egressPayloadId,
+                            autoFocusEditor: true
+                        });
+                    }
+                }
+
                 this.scheduleRecalcEdges();
 
                 this.$nextTick(() => {

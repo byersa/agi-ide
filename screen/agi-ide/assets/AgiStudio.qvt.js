@@ -64,6 +64,7 @@
                 if (event.data.event === 'open-screen-artifact' && event.data.artifactUri) {
                     vm.activeArtifactLocation = event.data.artifactUri;
                     if (event.data.stagedXml) vm.stagedXmlSource = event.data.stagedXml;
+                    if (event.data.layoutTree) vm.stagedLayoutTree = event.data.layoutTree;
                 }
                 if (event.data.targetComponent) {
                     vm.targetComponent = event.data.targetComponent;
@@ -121,6 +122,7 @@
                 this.selectedStage = null;
                 this.selectedParentStage = null;
                 this.stagedXmlSource = '';
+                this.stagedLayoutTree = null;
                 if (item.targetArtifactUri) {
                     this.activeArtifactLocation = item.targetArtifactUri;
                 }
@@ -154,28 +156,46 @@
             onOpenArtifact(eventData) {
                 let uri = '';
                 let xml = '';
+                let layoutTree = null;
+                let autoFocus = true;
 
                 if (typeof eventData === 'string') {
                     uri = eventData;
                 } else if (eventData && typeof eventData === 'object') {
                     uri = eventData.artifactUri || '';
                     xml = eventData.rawXmlContent || '';
+                    layoutTree = eventData.astTree || null;
+                    if (eventData.autoFocusEditor !== undefined) {
+                        autoFocus = eventData.autoFocusEditor;
+                    }
+
+                    // Fallback to active stage's egress cache if values were not passed directly
+                    if (!xml && !layoutTree && this.selectedStage) {
+                        const egress = this.selectedStage.egressPayload || this.selectedStage.payload;
+                        if (egress) {
+                            xml = egress.rawXmlContent || egress.xmlText || '';
+                            layoutTree = egress.astTree || egress.layoutTree || null;
+                            if (!uri) uri = egress.targetArtifactUri || egress.createdArtifactUri || '';
+                        }
+                    }
                 }
 
-                if (!uri) return;
-                this.activeArtifactLocation = uri;
-                this.stagedXmlSource = xml || '';
+                if (uri) this.activeArtifactLocation = uri;
+                if (xml) this.stagedXmlSource = xml;
+                if (layoutTree) this.stagedLayoutTree = layoutTree;
 
-                if (uri.endsWith('.xml') || xml) {
+                // Auto-open Screen XML editor if artifact exists or autoFocus is requested
+                if (autoFocus && (uri || xml || layoutTree)) {
                     this.activePanel = 'AgiScreenEditor';
                 }
 
                 if (this.contextBus) {
                     this.contextBus.postMessage({
                         event: 'open-screen-artifact',
-                        artifactUri: uri,
-                        stagedXml: xml,
-                        isVirtual: Boolean(xml)
+                        artifactUri: this.activeArtifactLocation,
+                        stagedXml: this.stagedXmlSource,
+                        layoutTree: this.stagedLayoutTree,
+                        isVirtual: Boolean(this.stagedXmlSource || this.stagedLayoutTree)
                     });
                 }
             },
@@ -227,7 +247,7 @@
                         <div class="row items-center q-gutter-x-xs text-caption text-slate-400">
                             <q-icon name="code" size="xs" color="cyan-4" />
                             <span class="text-weight-bold text-slate-300">{{ currentArtifactLabel }}</span>
-                            <span v-if="stagedXmlSource" class="q-px-xs rounded font-mono text-weight-bolder bg-amber-10 text-amber-3" style="font-size: 8px; border: 1px solid #d97706;">
+                            <span v-if="stagedXmlSource || stagedLayoutTree" class="q-px-xs rounded font-mono text-weight-bolder bg-amber-10 text-amber-3" style="font-size: 8px; border: 1px solid #d97706;">
                                 STAGED VIRTUAL
                             </span>
                         </div>
@@ -318,6 +338,7 @@
                                         :target-component="targetComponent"
                                         :selected-stage-id="selectedStage?.pipelineStepId || selectedStage?.stageId || ''"
                                         @stage-selected="onStageSelected"
+                                        @open-artifact="onOpenArtifact"
                                     />
                                 </div>
                             </template>
@@ -346,7 +367,7 @@
                                 <span class="text-caption text-weight-bold text-cyan-3 font-mono q-ml-xs">
                                     {{ activePanel.replace('Agi', '').replace('Editor', '') }} Dock
                                 </span>
-                                <span v-if="stagedXmlSource" class="q-px-xs rounded font-mono text-weight-bolder bg-amber-10 text-amber-3" style="font-size: 8px;">
+                                <span v-if="stagedXmlSource || stagedLayoutTree" class="q-px-xs rounded font-mono text-weight-bolder bg-amber-10 text-amber-3" style="font-size: 8px;">
                                     [VIRTUAL BUFFER]
                                 </span>
                             </div>
