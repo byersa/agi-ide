@@ -699,6 +699,10 @@
                 const assets = [
                     { name: 'AgiPipelineIndex', url: '/agi-ide-assets/AgiPipelineIndex.qvt.js', globalVar: 'AgiPipelineIndex' },
                     { name: 'AgiPipelineCanvas', url: '/agi-ide-assets/AgiPipelineCanvas.qvt.js', globalVar: 'AgiPipelineCanvas' },
+                    { name: 'AgiDiscussionViewer', url: '/agi-ide-assets/inspector/AgiDiscussionViewer.qvt.js', globalVar: 'AgiDiscussionViewer' },
+                    { name: 'AgiStageHeader', url: '/agi-ide-assets/inspector/AgiStageHeader.qvt.js', globalVar: 'AgiStageHeader' },
+                    { name: 'AgiPlanSpecViewer', url: '/agi-ide-assets/inspector/AgiPlanSpecViewer.qvt.js', globalVar: 'AgiPlanSpecViewer' },
+                    { name: 'AgiStageIngressViewport', url: '/agi-ide-assets/inspector/AgiStageIngressViewport.qvt.js', globalVar: 'AgiStageIngressViewport' },
                     { name: 'AgiStageInspector', url: '/agi-ide-assets/AgiStageInspector.qvt.js', globalVar: 'AgiStageInspector' },
                     { name: 'AgiStyleEditor', url: '/agi-ide-assets/AgiStyleEditor.qvt.js', fallbackUrl: '/apps/agi-ide/assets/AgiStyleEditor.qvt.js', globalVar: 'AgiStyleEditor' },
                     { name: 'AgiCanvasEditor', url: '/agi-ide-assets/AgiCanvasEditor.qvt.js', globalVar: 'AgiCanvasEditor' },

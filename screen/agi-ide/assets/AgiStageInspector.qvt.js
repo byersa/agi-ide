@@ -2,6 +2,64 @@
     const AgiStageInspector = {
         name: 'AgiStageInspector',
         emits: ['stage-dispatched', 'stage-mutated', 'advance-stance', 'locate-stage', 'open-artifact'],
+        components: {
+            'agi-stage-header': Vue.defineAsyncComponent(() => {
+                if (window.AgiStageHeader) return Promise.resolve(window.AgiStageHeader);
+                if (window.AgiComponents?.['AgiStageHeader']) return Promise.resolve(window.AgiComponents['AgiStageHeader']);
+                if (window.AgiComponents?.['agi-stage-header']) return Promise.resolve(window.AgiComponents['agi-stage-header']);
+                return new Promise((resolve) => {
+                    const check = (attempts = 0) => {
+                        const comp = window.AgiStageHeader || window.AgiComponents?.['AgiStageHeader'] || window.AgiComponents?.['agi-stage-header'];
+                        if (comp) resolve(comp);
+                        else if (attempts < 40) setTimeout(() => check(attempts + 1), 25);
+                        else resolve({ render: () => null });
+                    };
+                    check();
+                });
+            }),
+            'agi-stage-ingress-viewport': Vue.defineAsyncComponent(() => {
+                if (window.AgiStageIngressViewport) return Promise.resolve(window.AgiStageIngressViewport);
+                if (window.AgiComponents?.['AgiStageIngressViewport']) return Promise.resolve(window.AgiComponents['AgiStageIngressViewport']);
+                if (window.AgiComponents?.['agi-stage-ingress-viewport']) return Promise.resolve(window.AgiComponents['agi-stage-ingress-viewport']);
+                return new Promise((resolve) => {
+                    const check = (attempts = 0) => {
+                        const comp = window.AgiStageIngressViewport || window.AgiComponents?.['AgiStageIngressViewport'] || window.AgiComponents?.['agi-stage-ingress-viewport'];
+                        if (comp) resolve(comp);
+                        else if (attempts < 40) setTimeout(() => check(attempts + 1), 25);
+                        else resolve({ render: () => null });
+                    };
+                    check();
+                });
+            }),
+            'agi-discussion-viewer': Vue.defineAsyncComponent(() => {
+                if (window.AgiDiscussionViewer) return Promise.resolve(window.AgiDiscussionViewer);
+                if (window.AgiComponents?.['AgiDiscussionViewer']) return Promise.resolve(window.AgiComponents['AgiDiscussionViewer']);
+                if (window.AgiComponents?.['agi-discussion-viewer']) return Promise.resolve(window.AgiComponents['agi-discussion-viewer']);
+                return new Promise((resolve) => {
+                    const check = (attempts = 0) => {
+                        const comp = window.AgiDiscussionViewer || window.AgiComponents?.['AgiDiscussionViewer'] || window.AgiComponents?.['agi-discussion-viewer'];
+                        if (comp) resolve(comp);
+                        else if (attempts < 40) setTimeout(() => check(attempts + 1), 25);
+                        else resolve({ render: () => null });
+                    };
+                    check();
+                });
+            }),
+            'agi-plan-spec-viewer': Vue.defineAsyncComponent(() => {
+                if (window.AgiPlanSpecViewer) return Promise.resolve(window.AgiPlanSpecViewer);
+                if (window.AgiComponents?.['AgiPlanSpecViewer']) return Promise.resolve(window.AgiComponents['AgiPlanSpecViewer']);
+                if (window.AgiComponents?.['agi-plan-spec-viewer']) return Promise.resolve(window.AgiComponents['agi-plan-spec-viewer']);
+                return new Promise((resolve) => {
+                    const check = (attempts = 0) => {
+                        const comp = window.AgiPlanSpecViewer || window.AgiComponents?.['AgiPlanSpecViewer'] || window.AgiComponents?.['agi-plan-spec-viewer'];
+                        if (comp) resolve(comp);
+                        else if (attempts < 40) setTimeout(() => check(attempts + 1), 25);
+                        else resolve({ render: () => null });
+                    };
+                    check();
+                });
+            }),
+        },
         props: {
             discussionId: { type: String, default: '' },
             selectedStage: { type: Object, default: () => null },
@@ -17,10 +75,12 @@
                 isAdvancing: false,
 
                 payloadCache: {},
+                payloadVersion: 0,
+
                 activePort: 'OUT',
                 showIngressDiff: false,
                 editIngressSpec: false,
-                activeOutputTab: 'contract',
+                activeOutputTab: 'structured',
 
                 inputDirective: '',
                 inputTargetArtifact: '',
@@ -85,22 +145,80 @@
             resolvedIngressPayload() {
                 if (!this.selectedStage) return null;
 
+                // 🛡️ Unconditionally touch reactive properties so Vue always tracks updates
+                const _v = this.payloadVersion;
+                const cache = this.payloadCache;
+
                 let rawObj = null;
-                const ingressId = this.selectedStage.ingressPayloadId;
-                if (ingressId && this.payloadCache[String(ingressId)]) {
-                    rawObj = this.payloadCache[String(ingressId)];
-                } else if (this.selectedStage.ingressJsonData) {
-                    rawObj = this.tryParseJson(this.selectedStage.ingressJsonData);
-                } else if (this.selectedParentStage) {
-                    const parentEgressId = this.selectedParentStage.egressPayloadId || this.selectedParentStage.stagedPayloadId;
-                    if (parentEgressId && this.payloadCache[String(parentEgressId)]) {
-                        rawObj = this.payloadCache[String(parentEgressId)];
-                    } else if (this.selectedParentStage.egressJsonData) {
-                        rawObj = this.tryParseJson(this.selectedParentStage.egressJsonData);
+                const stage = this.selectedStage;
+                const ingressId = stage.ingressPayloadId;
+
+                // 1. Check if step's own ingress payload exists and has rich data
+                if (ingressId && cache[String(ingressId)]) {
+                    const cand = cache[String(ingressId)];
+                    if (cand && (cand.proposedModules || cand.replyMessage || cand.screenContract || cand.architectureSummary)) {
+                        rawObj = cand;
+                    }
+                }
+                if (!rawObj && stage.ingressJsonData) {
+                    const cand = this.tryParseJson(stage.ingressJsonData);
+                    if (cand && (cand.proposedModules || cand.replyMessage || cand.screenContract || cand.architectureSummary)) {
+                        rawObj = cand;
                     }
                 }
 
+                // 2. Resolve parent step's egress payload ID
+                const parent = this.selectedParentStage;
+                const parentStepId = stage.parentStepId || parent?.pipelineStepId || stage.parentStageId;
+
+                let parentEgressId = stage.parentEgressPayloadId
+                    || parent?.egressPayloadId
+                    || parent?.stagedPayloadId;
+
+                if (!parentEgressId && parentStepId && window.__agiCurrentPipelineGraph?.nodes) {
+                    const pNode = window.__agiCurrentPipelineGraph.nodes.find(n =>
+                        String(n.id || n.stepId || n.pipelineStepId) === String(parentStepId)
+                    );
+                    parentEgressId = pNode?.egressPayloadId || pNode?.stagedPayloadId;
+                }
+
+                if (!parentEgressId && parentStepId && window.__agiPipelinePayloadMap) {
+                    parentEgressId = window.__agiPipelinePayloadMap[String(parentStepId)];
+                }
+
+                // 3. Fallback: Inherit directly from parent step's EGRESS payload in cache
+                if (!rawObj && parentEgressId && cache[String(parentEgressId)]) {
+                    rawObj = cache[String(parentEgressId)];
+                }
+
+                if (!rawObj && parent?.egressJsonData) {
+                    rawObj = this.tryParseJson(parent.egressJsonData);
+                }
+
+                // 4. Last fallback: return whatever raw ingress data exists
+                if (!rawObj && ingressId && cache[String(ingressId)]) {
+                    rawObj = cache[String(ingressId)];
+                }
+
                 return this.unwrapPayload(rawObj);
+            },
+
+            payloadKind() {
+                const p = this.resolvedEgressPayload;
+                if (!p) {
+                    if (this.resolvedRawXml) return 'BUILD';
+                    return 'EMPTY';
+                }
+                if (p.proposedModules || p.replyMessage || p.clarifyingQuestions || p.status === 'DISCUSSING') {
+                    return 'DISCUSSION';
+                }
+                if (p.screenContract || p.suggestedEntities || p.formulationSteps || p.recommendedArchetype) {
+                    return 'PLAN';
+                }
+                if (this.resolvedRawXml || p.rawXmlContent) {
+                    return 'BUILD';
+                }
+                return 'GENERIC';
             },
             resolvedRawXml() {
                 const p = this.resolvedEgressPayload;
@@ -167,6 +285,11 @@
                             this.activePort = (val.statusId === 'PlsDraft' || !val.egressPayloadId) ? 'IN' : 'OUT';
                         }
 
+                        if (!window.__agiPipelinePayloadMap) window.__agiPipelinePayloadMap = {};
+                        if (val.pipelineStepId && (val.egressPayloadId || val.stagedPayloadId)) {
+                            window.__agiPipelinePayloadMap[String(val.pipelineStepId)] = String(val.egressPayloadId || val.stagedPayloadId);
+                        }
+
                         const egressId = val.egressPayloadId || val.stagedPayloadId;
                         if (egressId && !this.payloadCache[String(egressId)]) {
                             this.fetchPayload(egressId);
@@ -177,12 +300,50 @@
                             this.fetchPayload(ingressId);
                         }
 
+                        // Fetch parent step's egress payload so child ingress has rich data
+                        const parentStepId = val.parentStepId || this.selectedParentStage?.pipelineStepId || val.parentStageId;
+                        let parentEgressId = val.parentEgressPayloadId
+                            || this.selectedParentStage?.egressPayloadId
+                            || this.selectedParentStage?.stagedPayloadId;
+
+                        if (!parentEgressId && parentStepId && window.__agiCurrentPipelineGraph?.nodes) {
+                            const pNode = window.__agiCurrentPipelineGraph.nodes.find(n =>
+                                String(n.id || n.stepId || n.pipelineStepId) === String(parentStepId)
+                            );
+                            parentEgressId = pNode?.egressPayloadId || pNode?.stagedPayloadId;
+                        }
+
+                        if (!parentEgressId && parentStepId && window.__agiPipelinePayloadMap) {
+                            parentEgressId = window.__agiPipelinePayloadMap[String(parentStepId)];
+                        }
+
+                        if (parentEgressId && !this.payloadCache[String(parentEgressId)]) {
+                            this.fetchPayload(parentEgressId);
+                        }
+
                         this.syncActiveTab();
                         this.hydrateIngressEditor();
                     } else {
                         this.inputDirective = '';
                         this.inputTargetArtifact = '';
                         this.activePort = 'IN';
+                    }
+                }
+            },
+            selectedParentStage: {
+                immediate: true,
+                deep: true,
+                handler(val) {
+                    if (val) {
+                        const parentStepId = val.pipelineStepId || val.stageId;
+                        const egressId = val.egressPayloadId || val.stagedPayloadId;
+                        if (parentStepId && egressId) {
+                            if (!window.__agiPipelinePayloadMap) window.__agiPipelinePayloadMap = {};
+                            window.__agiPipelinePayloadMap[String(parentStepId)] = String(egressId);
+                            if (!this.payloadCache[String(egressId)]) {
+                                this.fetchPayload(egressId);
+                            }
+                        }
                     }
                 }
             }
@@ -201,6 +362,12 @@
 
                 const clean = {};
                 const allowedKeys = [
+                    'status',
+                    'scopeMaturity',
+                    'replyMessage',
+                    'clarifyingQuestions',
+                    'proposedModules',
+                    'architecturalConsiderations',
                     'targetArtifactUri',
                     'createdArtifactUri',
                     'recommendedArchetype',
@@ -266,6 +433,26 @@
                 if (current.payloadDetails) current = Object.assign({}, current, current.payloadDetails);
                 if (current.payload && typeof current.payload === 'object') current = Object.assign({}, current, current.payload);
 
+                // 🎯 Parse stringified `message` (where DISCUSS payload data lives)
+                if (typeof current.message === 'string') {
+                    const parsedMessage = this.tryParseJson(current.message) || this.extractJsonFromText(current.message);
+                    if (parsedMessage && typeof parsedMessage === 'object') {
+                        current = Object.assign({}, current, parsedMessage);
+                    }
+                }
+
+                // Parse stringified `architectureSummary`
+                if (current.architectureSummary) {
+                    if (typeof current.architectureSummary === 'object') {
+                        current = Object.assign({}, current, current.architectureSummary);
+                    } else if (typeof current.architectureSummary === 'string') {
+                        const parsedArch = this.tryParseJson(current.architectureSummary) || this.extractJsonFromText(current.architectureSummary);
+                        if (parsedArch && typeof parsedArch === 'object') {
+                            current = Object.assign({}, current, parsedArch);
+                        }
+                    }
+                }
+
                 if (typeof current.planDetails === 'string') {
                     const parsedInner = this.tryParseJson(current.planDetails) || this.extractJsonFromText(current.planDetails);
                     if (parsedInner && typeof parsedInner === 'object') {
@@ -278,6 +465,12 @@
                 if (typeof current.payloadJsonData === 'string') {
                     const parsedJsonData = this.tryParseJson(current.payloadJsonData) || this.extractJsonFromText(current.payloadJsonData);
                     if (parsedJsonData && typeof parsedJsonData === 'object') {
+                        if (typeof parsedJsonData.message === 'string') {
+                            const innerMsg = this.tryParseJson(parsedJsonData.message) || this.extractJsonFromText(parsedJsonData.message);
+                            if (innerMsg && typeof innerMsg === 'object') {
+                                Object.assign(parsedJsonData, innerMsg);
+                            }
+                        }
                         if (typeof parsedJsonData.planDetails === 'string') {
                             const innerPlan = this.tryParseJson(parsedJsonData.planDetails) || this.extractJsonFromText(parsedJsonData.planDetails);
                             if (innerPlan && typeof innerPlan === 'object') {
@@ -333,16 +526,7 @@
 
             syncActiveTab() {
                 this.$nextTick(() => {
-                    const p = this.resolvedEgressPayload;
-                    if (this.currentActionType === 'build' && this.resolvedRawXml) {
-                        this.activeOutputTab = 'raw';
-                    } else if (p && (p.screenContract || p.suggestedEntities || p.recommendedArchetype || p.formulationSteps || p.subplans || p.architectureSummary)) {
-                        this.activeOutputTab = 'contract';
-                    } else if (p && Object.keys(p).length > 0) {
-                        this.activeOutputTab = 'json';
-                    } else {
-                        this.activeOutputTab = 'raw';
-                    }
+                    this.activeOutputTab = 'structured';
                 });
             },
 
@@ -367,7 +551,9 @@
                     }
 
                     if (this.isValidPayload(parsed)) {
-                        this.payloadCache[String(payloadId)] = parsed;
+                        // 🛡️ Replace object reference and bump version counter to guarantee Vue triggers computed properties
+                        this.payloadCache = Object.assign({}, this.payloadCache, { [String(payloadId)]: parsed });
+                        this.payloadVersion++;
                     }
                 } catch (e) {
                     console.warn(`Could not load payload #${payloadId}:`, e.message);
@@ -375,6 +561,51 @@
                     this.loadingPayload = false;
                     this.syncActiveTab();
                     this.hydrateIngressEditor();
+                }
+            },
+
+            async fetchParentPayloadByStepId(parentStepId) {
+                if (!parentStepId) return;
+
+                // 1. First check if AgiPipelineCanvas already has this step's nodes in memory
+                if (window.__agiCurrentPipelineGraph?.nodes) {
+                    const node = window.__agiCurrentPipelineGraph.nodes.find(n =>
+                        String(n.id || n.stepId || n.pipelineStepId) === String(parentStepId)
+                    );
+                    const egressId = node?.egressPayloadId || node?.stagedPayloadId;
+                    if (egressId) {
+                        if (!window.__agiPipelinePayloadMap) window.__agiPipelinePayloadMap = {};
+                        window.__agiPipelinePayloadMap[String(parentStepId)] = String(egressId);
+                        this.fetchPayload(egressId);
+                        return;
+                    }
+                }
+
+                // 2. Fallback: Query the graph GET endpoint (which is valid and allowed)
+                if (this.discussionId) {
+                    try {
+                        const resp = await axios.get('/rest/s1/agi-ai/pipeline/graph', {
+                            params: { discussionId: this.discussionId },
+                            headers: { 'moquiSessionToken': this.resolveCsrf() }
+                        });
+                        const graph = resp.data?.graph || resp.data;
+                        if (graph?.nodes && Array.isArray(graph.nodes)) {
+                            window.__agiCurrentPipelineGraph = graph;
+                            if (!window.__agiPipelinePayloadMap) window.__agiPipelinePayloadMap = {};
+                            graph.nodes.forEach(n => {
+                                const sId = n.id || n.stepId || n.pipelineStepId;
+                                const pId = n.egressPayloadId || n.stagedPayloadId;
+                                if (sId && pId) window.__agiPipelinePayloadMap[String(sId)] = String(pId);
+                            });
+
+                            const egressId = window.__agiPipelinePayloadMap[String(parentStepId)];
+                            if (egressId) {
+                                this.fetchPayload(egressId);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn("Could not resolve parent step via pipeline/graph", e.message);
+                    }
                 }
             },
 
@@ -527,6 +758,18 @@
                 }
             },
 
+            handleIngressDispatch(overrideData) {
+                if (overrideData && overrideData.editIngressSpec) {
+                    this.editIngressSpec = true;
+                    this.customArchetype = overrideData.customArchetype;
+                    this.customEntitiesText = overrideData.customEntitiesText;
+                    this.customRawJson = overrideData.customRawJson;
+                } else {
+                    this.editIngressSpec = false;
+                }
+                this.executeComputeStage();
+            },
+
             async forkCurrentStep() {
                 const targetStepId = this.stepId;
                 if (!targetStepId) return;
@@ -633,222 +876,53 @@
         template: `
             <div class="agi-stage-inspector fit column no-wrap font-mono text-white overflow-hidden" style="background-color: #020617; height: 100%; min-height: 0; width: 100%;">
                 
-                <!-- 1. UNIFIED CONTEXT & PROVENANCE HEADER (FIXED 38px) -->
-                <div 
-                    class="row items-center justify-between q-px-sm" 
-                    :style="{ 
-                        backgroundColor: '#0f172a',
-                        borderBottom: '2px solid ' + (selectedStage ? themeStyle.bg : '#38bdf8'), 
-                        height: '38px', 
-                        minHeight: '38px', 
-                        flex: '0 0 38px' 
-                    }"
-                >
-                    <div class="row items-center q-gutter-x-sm no-wrap ellipsis">
-                        <template v-if="selectedStage && stepId">
-                            <div 
-                                v-if="selectedStage.stepNumber" 
-                                class="row items-center q-px-xs rounded-borders font-mono text-caption text-weight-bolder" 
-                                style="background-color: #020617; color: #38bdf8; border: 1px solid #0284c7; font-size: 10px; height: 22px; line-height: 20px;"
-                            >
-                                STEP {{ selectedStage.stepNumber }}{{ selectedStage.totalSteps ? ' / ' + selectedStage.totalSteps : '' }}
-                            </div>
-
-                            <div 
-                                class="row items-center q-px-xs rounded-borders text-weight-bolder" 
-                                :style="{ backgroundColor: themeStyle.bg, color: themeStyle.text, height: '22px' }"
-                            >
-                                <q-icon :name="themeStyle.icon" size="13px" class="q-mr-xs" />
-                                <span class="text-caption font-mono" style="font-size: 10px; letter-spacing: 0.5px;">
-                                    {{ themeStyle.label }} #{{ stepId }}
-                                </span>
-                            </div>
-
-                            <span 
-                                class="row items-center q-px-xs rounded-borders text-caption text-weight-bolder" 
-                                :style="{
-                                    backgroundColor: isDraft ? '#78350f' : '#1e293b',
-                                    color: isDraft ? '#fef3c7' : '#94a3b8',
-                                    border: isDraft ? '1px solid #d97706' : '1px solid #334155',
-                                    fontSize: '9px', height: '22px'
-                                }"
-                            >
-                                {{ isDraft ? 'DRAFT' : 'COMMITTED' }}
-                            </span>
-
-                            <!-- Active Viewport Mode Selector: [IN] vs [OUT] -->
-                            <div class="row items-center q-gutter-x-none rounded-borders q-ml-xs" style="background-color: #020617; border: 1px solid #334155; padding: 1px;">
-                                <button 
-                                    type="button"
-                                    class="cursor-pointer font-mono text-caption text-weight-bold row items-center"
-                                    :style="{
-                                        backgroundColor: activePort === 'IN' ? '#0284c7' : '#0f172a',
-                                        color: activePort === 'IN' ? '#ffffff' : '#94a3b8',
-                                        border: activePort === 'IN' ? '1px solid #38bdf8' : '1px solid transparent',
-                                        borderRadius: '3px',
-                                        padding: '2px 8px',
-                                        fontSize: '9px'
-                                    }"
-                                    @click="activePort = 'IN'"
-                                >
-                                    <q-icon name="login" size="11px" class="q-mr-xs" :color="activePort === 'IN' ? 'white' : 'cyan-4'" />
-                                    <span>[IN] INGRESS</span>
-                                    <span v-if="selectedStage?.ingressPayloadId" class="q-ml-xs text-cyan-3" style="font-size: 8px;">#{{ selectedStage.ingressPayloadId }}</span>
-                                </button>
-
-                                <button 
-                                    type="button"
-                                    class="cursor-pointer font-mono text-caption text-weight-bold row items-center"
-                                    :style="{
-                                        backgroundColor: activePort === 'OUT' ? '#0284c7' : '#0f172a',
-                                        color: activePort === 'OUT' ? '#ffffff' : '#94a3b8',
-                                        border: activePort === 'OUT' ? '1px solid #38bdf8' : '1px solid transparent',
-                                        borderRadius: '3px',
-                                        padding: '2px 8px',
-                                        fontSize: '9px'
-                                    }"
-                                    @click="activePort = 'OUT'"
-                                >
-                                    <span>[OUT] EGRESS</span>
-                                    <span v-if="selectedStage?.egressPayloadId" class="q-ml-xs text-amber-3" style="font-size: 8px;">#{{ selectedStage.egressPayloadId }}</span>
-                                    <q-icon name="logout" size="11px" class="q-ml-xs" :color="activePort === 'OUT' ? 'white' : 'amber-4'" />
-                                </button>
-                            </div>
-
-                            <div v-if="displayTargetArtifactUri" class="row items-center q-gutter-x-xs text-caption text-cyan-3">
-                                <q-icon name="code" size="12px" />
-                                <span class="text-weight-bold" style="font-size: 10px;">{{ displayTargetArtifactUri.split('/').pop() }}</span>
-                                <q-btn 
-                                    flat round dense size="xs" 
-                                    icon="open_in_new" 
-                                    color="amber-4" 
-                                    @click="triggerOpenArtifact(displayTargetArtifactUri)"
-                                >
-                                    <q-tooltip>Open in Workspace Viewport</q-tooltip>
-                                </q-btn>
-                            </div>
-
-                            <q-btn flat round dense size="xs" icon="my_location" color="cyan-3" @click="locateStageOnCanvas(stepId)">
-                                <q-tooltip>Scroll to this card on DAG Canvas</q-tooltip>
-                            </q-btn>
-                        </template>
-
-                        <!-- B. EMPTY STAGE INITIALIZATION HEADER -->
-                        <template v-else-if="discussionId">
-                            <div class="row items-center q-px-xs rounded-borders font-mono text-caption text-weight-bolder" style="background-color: #020617; color: #38bdf8; border: 1px solid #0284c7; font-size: 10px; height: 22px; line-height: 20px;">
-                                STEP 1 (INITIAL)
-                            </div>
-                            <div class="row items-center q-px-xs rounded-borders text-weight-bolder" style="background-color: #7c3aed; color: #ffffff; height: 22px;">
-                                <q-icon name="play_arrow" size="13px" class="q-mr-xs" />
-                                <span class="text-caption font-mono" style="font-size: 10px;">ROOT DISPATCH</span>
-                            </div>
-                            <span class="text-caption text-slate-400 font-mono" style="font-size: 10px;">Pipeline #{{ discussionId }}</span>
-                        </template>
-
-                        <template v-else>
-                            <q-icon name="info" color="slate-500" size="16px" />
-                            <span class="text-caption italic" style="color: #94a3b8;">Select or create a pipeline initiative.</span>
-                        </template>
-                    </div>
-
-                    <!-- Pipeline Action Toolbar -->
-                    <div class="row items-center q-gutter-x-xs">
-                        <template v-if="selectedStage">
-                            <q-btn 
-                                v-if="!isDraft && currentActionType === 'plan'"
-                                flat dense no-caps size="xs"
-                                icon="handyman"
-                                label="Advance to BUILD"
-                                color="amber-3"
-                                class="q-px-xs rounded-borders bg-amber-10 text-weight-bolder"
-                                style="border: 1px solid #f59e0b;"
-                                :loading="isAdvancing"
-                                @click="advanceToBuild"
-                            >
-                                <q-tooltip>Spawn a downstream BUILD step inheriting this plan's egress contract</q-tooltip>
-                            </q-btn>
-
-                            <q-btn 
-                                flat dense no-caps size="xs"
-                                icon="fork_right"
-                                label="Fork Branch"
-                                color="amber-4"
-                                class="q-px-xs rounded-borders"
-                                style="border: 1px solid rgba(251, 191, 36, 0.4);"
-                                :loading="isForking"
-                                @click="forkCurrentStep"
-                            >
-                                <q-tooltip>Clone input and branch new execution path</q-tooltip>
-                            </q-btn>
-
-                            <q-btn 
-                                flat dense no-caps size="xs"
-                                icon="archive"
-                                label="Archive"
-                                color="slate-400"
-                                class="q-px-xs rounded-borders"
-                                style="border: 1px solid #334155;"
-                                :loading="isArchiving"
-                                @click="archiveBranch"
-                            >
-                                <q-tooltip>Soft-archive this step and downstream sub-branch</q-tooltip>
-                            </q-btn>
-
-                            <q-separator vertical dark class="q-mx-xs" />
-                        </template>
-
-                        <span class="text-slate-500 font-mono text-caption q-mr-xs" style="font-size: 9px;">STANCE:</span>
-                        <q-btn-group flat dense>
-                            <q-btn 
-                                flat dense size="xs" 
-                                :color="currentActionType === 'discuss' ? 'cyan-3' : 'slate-400'" 
-                                :class="currentActionType === 'discuss' ? 'bg-cyan-10 text-weight-bolder' : ''"
-                                label="Discuss" 
-                                @click="advanceToNext('discuss')" 
-                            />
-                            <q-btn 
-                                flat dense size="xs" 
-                                :color="currentActionType === 'plan' ? 'purple-3' : 'slate-400'" 
-                                :class="currentActionType === 'plan' ? 'bg-purple-10 text-weight-bolder' : ''"
-                                label="Plan" 
-                                @click="advanceToNext('plan')" 
-                            />
-                            <q-btn 
-                                flat dense size="xs" 
-                                :color="currentActionType === 'build' ? 'amber-4' : 'slate-400'" 
-                                :class="currentActionType === 'build' ? 'bg-amber-10 text-weight-bolder' : ''"
-                                label="Build" 
-                                @click="advanceToNext('build')" 
-                            />
-                        </q-btn-group>
-                    </div>
-                </div>
+                <!-- 1. DELEGATED STAGE HEADER -->
+                <agi-stage-header 
+                    :discussion-id="discussionId"
+                    :selected-stage="selectedStage"
+                    :active-port="activePort"
+                    :current-action-type="currentActionType"
+                    :theme-style="themeStyle"
+                    :is-draft="isDraft"
+                    :step-id="stepId"
+                    :display-target-artifact-uri="displayTargetArtifactUri"
+                    :is-advancing="isAdvancing"
+                    :is-forking="isForking"
+                    :is-archiving="isArchiving"
+                    @update:active-port="activePort = $event"
+                    @advance-to-build="advanceToBuild"
+                    @fork-step="forkCurrentStep"
+                    @archive-branch="archiveBranch"
+                    @set-stance="advanceToNext"
+                    @locate-canvas="locateStageOnCanvas"
+                    @open-artifact="triggerOpenArtifact"
+                />
 
                 <!-- 2. SINGLE FULL-WIDTH INSPECTOR VIEWPORT -->
-                <div class="col full-width column no-wrap overflow-hidden relative-position" style="flex: 1 1 0%; min-height: 0; height: calc(100% - 38px);">
+                <div class="col full-width column no-wrap overflow-hidden relative-position" style="flex: 1 1 0%; min-height: 0;">
                     
                     <!-- CASE A: NO PIPELINE SELECTED -->
                     <template v-if="!discussionId">
-                        <div class="fit column flex-center text-slate-500 font-mono">
-                            <q-icon name="account_tree" size="32px" class="q-mb-sm text-cyan-4" />
-                            <span>Select or create a pipeline initiative in the bar above.</span>
+                        <div class="fit column flex-center text-slate-500 font-mono q-pa-xl">
+                            <q-icon name="account_tree" size="40px" class="q-mb-md text-cyan-4" />
+                            <span class="text-body2">Select or create a pipeline initiative in the bar above.</span>
                         </div>
                     </template>
 
                     <!-- CASE B: NO STAGE SELECTED (INITIALIZE ROOT STEP 1) -->
                     <template v-else-if="!selectedStage">
-                        <div class="col q-pa-md overflow-auto" style="flex: 1 1 0%; min-height: 0; height: 100%;">
-                            <div class="column q-gutter-y-md" style="max-width: 900px; margin: 0 auto;">
-                                <div class="row items-center q-gutter-x-sm q-pa-sm rounded-borders" style="background-color: #0b1329; border: 1px solid #0284c7;">
-                                    <q-icon name="rocket_launch" color="cyan-3" size="20px" />
+                        <div class="col q-pa-lg overflow-auto" style="flex: 1 1 0%; min-height: 0; height: 100%;">
+                            <div class="column q-gutter-y-lg" style="max-width: 960px; margin: 0 auto;">
+                                <div class="row items-center q-gutter-x-md q-pa-md rounded-borders" style="background-color: #0b1329; border: 1px solid #0284c7;">
+                                    <q-icon name="rocket_launch" color="cyan-3" size="26px" />
                                     <div>
-                                        <div class="text-weight-bold text-cyan-2" style="font-size: 12px;">INITIALIZE ROOT PIPELINE STEP</div>
-                                        <div class="text-caption text-slate-400" style="font-size: 10px;">Author the initial directive prompt to launch Step 1 of this pipeline.</div>
+                                        <div class="text-weight-bold text-cyan-2" style="font-size: 13px;">INITIALIZE ROOT PIPELINE STEP</div>
+                                        <div class="text-caption text-slate-400 q-mt-xs" style="font-size: 11px;">Author the initial directive prompt to launch Step 1 of this pipeline.</div>
                                     </div>
                                 </div>
 
-                                <div class="column q-gutter-y-xs">
-                                    <label class="text-caption font-mono text-weight-bold" style="color: #94a3b8; font-size: 10px;">TARGET ARTIFACT LOCATION (OPTIONAL):</label>
+                                <div class="column q-gutter-y-sm">
+                                    <label class="text-caption font-mono text-weight-bold text-slate-300" style="font-size: 11px;">TARGET ARTIFACT LOCATION (OPTIONAL):</label>
                                     <q-input 
                                         v-model="inputTargetArtifact" 
                                         dense dark outlined 
@@ -860,12 +934,12 @@
                                     />
                                 </div>
 
-                                <div class="column q-gutter-y-xs">
-                                    <label class="text-caption font-mono text-weight-bold" style="color: #94a3b8; font-size: 10px;">INITIAL DIRECTIVE / DISPATCH PROMPT:</label>
+                                <div class="column q-gutter-y-sm">
+                                    <label class="text-caption font-mono text-weight-bold text-slate-300" style="font-size: 11px;">INITIAL DIRECTIVE / DISPATCH PROMPT:</label>
                                     <q-input 
                                         v-model="inputDirective" 
                                         type="textarea" 
-                                        rows="6" 
+                                        rows="8" 
                                         dense dark outlined 
                                         color="cyan-3"
                                         class="font-mono text-caption"
@@ -875,10 +949,10 @@
                                     />
                                 </div>
 
-                                <div class="row items-center justify-between q-pa-sm rounded-borders" style="background-color: #0f172a; border: 1px solid #1e293b;">
-                                    <div class="row items-center q-gutter-x-xs">
-                                        <span class="text-caption font-mono" style="color: #cbd5e1; font-size: 10px;">Mantle UDM Invariants Enforced</span>
-                                        <q-toggle v-model="inputMantleInvariants" dense color="cyan-4" size="xs" />
+                                <div class="row items-center justify-between q-pa-md rounded-borders q-mt-sm" style="background-color: #0f172a; border: 1px solid #1e293b;">
+                                    <div class="row items-center q-gutter-x-sm">
+                                        <span class="text-caption font-mono text-slate-200" style="font-size: 11px;">Mantle UDM Invariants Enforced</span>
+                                        <q-toggle v-model="inputMantleInvariants" dense color="cyan-4" size="sm" />
                                     </div>
 
                                     <q-btn 
@@ -887,7 +961,8 @@
                                         icon="bolt" 
                                         label="Dispatch Root Step 1" 
                                         dense no-caps 
-                                        class="text-weight-bold q-px-md q-py-xs font-mono"
+                                        class="text-weight-bold q-px-lg q-py-xs font-mono"
+                                        style="height: 32px;"
                                         :loading="isDispatching"
                                         @click="executeComputeStage"
                                     />
@@ -896,160 +971,46 @@
                         </div>
                     </template>
 
-                    <!-- CASE C: [IN] INGRESS VIEWPORT -->
+                    <!-- CASE C: [IN] INGRESS VIEWPORT (DELEGATED TO CHILD) -->
                     <template v-else-if="activePort === 'IN'">
-                        <div class="row items-center justify-between q-px-sm" style="background-color: #0b1329; border-bottom: 1px solid #1e293b; height: 32px; min-height: 32px; flex: 0 0 32px;">
-                            <div class="row items-center q-gutter-x-xs">
-                                <q-icon name="login" size="13px" color="cyan-4" />
-                                <span class="text-caption text-weight-bolder" style="color: #38bdf8; font-size: 10px;">
-                                    INGRESS CONTRACT: STEP #{{ stepId }}
-                                </span>
-                                <span v-if="selectedStage?.parentStepId" class="text-caption text-slate-400" style="font-size: 9px;">
-                                    (Inherited from Parent #{{ selectedStage.parentStepId }})
-                                </span>
-                            </div>
-
-                            <div class="row items-center q-gutter-x-sm">
-                                <div v-if="isDraft" class="row items-center q-gutter-x-xs">
-                                    <span class="text-caption font-mono text-weight-bold" :class="editIngressSpec ? 'text-amber-3' : 'text-slate-400'" style="font-size: 9px;">EDIT SPEC OVERRIDES:</span>
-                                    <q-toggle v-model="editIngressSpec" dense color="amber-4" size="xs" />
-                                </div>
-
-                                <div class="row items-center q-gutter-x-xs">
-                                    <span class="text-caption font-mono" style="color: #94a3b8; font-size: 9px;">DIFF VS PRIOR:</span>
-                                    <q-toggle v-model="showIngressDiff" dense color="cyan-4" size="xs" />
-                                </div>
-
-                                <q-btn flat round dense size="xs" icon="content_copy" style="color: #94a3b8;" @click="copyToClipboard(inputDirective, 'Ingress Directive')">
-                                    <q-tooltip>Copy Directive</q-tooltip>
-                                </q-btn>
-                            </div>
-                        </div>
-
-                        <div class="col q-pa-md overflow-auto" style="flex: 1 1 0%; min-height: 0; height: 100%; overflow-y: auto !important;">
-                            <div class="column q-gutter-y-md" style="max-width: 1200px; margin: 0 auto;">
-                                
-                                <div class="column q-gutter-y-xs">
-                                    <label class="text-caption font-mono text-weight-bold" style="color: #94a3b8; font-size: 10px;">TARGET ARTIFACT LOCATION:</label>
-                                    <q-input 
-                                        v-model="inputTargetArtifact" 
-                                        dense dark outlined 
-                                        color="cyan-3"
-                                        class="font-mono text-caption"
-                                        input-class="font-mono text-cyan-2"
-                                        style="background-color: #020617; border-radius: 4px;"
-                                        placeholder="component://nursinghome/screen/..."
-                                    />
-                                </div>
-
-                                <div class="column q-gutter-y-xs">
-                                    <div class="row items-center justify-between">
-                                        <label class="text-caption font-mono text-weight-bold" style="color: #94a3b8; font-size: 10px;">DIRECTIVE / DISPATCH PROMPT:</label>
-                                        <span v-if="!isDraft" class="text-caption text-slate-500 font-mono" style="font-size: 9px;">(Committed Prompt)</span>
-                                    </div>
-                                    <q-input 
-                                        v-model="inputDirective" 
-                                        type="textarea" 
-                                        rows="4" 
-                                        dense dark outlined 
-                                        color="cyan-3"
-                                        class="font-mono text-caption"
-                                        input-class="font-mono text-slate-100"
-                                        style="background-color: #020617; border-radius: 4px;"
-                                        placeholder="Enter step directive or transition instructions..."
-                                    />
-                                </div>
-
-                                <!-- INTERACTIVE INGRESS SPEC OVERRIDE PANEL -->
-                                <div v-if="editIngressSpec" class="column q-gutter-y-sm q-pa-sm rounded-borders" style="background-color: #0f172a; border: 1px solid #f59e0b;">
-                                    <div class="row items-center justify-between">
-                                        <span class="text-caption text-weight-bold text-amber-3" style="font-size: 10px;">
-                                            INGRESS SPEC OVERRIDES (PRE-FLIGHT CONFIGURATION FOR BUILD):
-                                        </span>
-                                        <span class="text-caption font-mono text-slate-400" style="font-size: 9px;">Editing will clone and isolate the ingress contract</span>
-                                    </div>
-
-                                    <div class="row q-col-gutter-sm">
-                                        <div class="col-6">
-                                            <label class="text-caption font-mono text-slate-400" style="font-size: 9px;">OVERRIDE ARCHETYPE:</label>
-                                            <q-input v-model="customArchetype" dense dark outlined color="amber-4" class="font-mono text-caption" input-class="font-mono text-amber-2" style="background-color: #020617;" placeholder="master-detail, single-form, etc." />
-                                        </div>
-                                        <div class="col-6">
-                                            <label class="text-caption font-mono text-slate-400" style="font-size: 9px;">BOUND ENTITIES (COMMA-SEPARATED):</label>
-                                            <q-input v-model="customEntitiesText" dense dark outlined color="amber-4" class="font-mono text-caption" input-class="font-mono text-cyan-2" style="background-color: #020617;" placeholder="mantle.facility.Facility, mantle.party.Person..." />
-                                        </div>
-                                    </div>
-
-                                    <div class="column q-gutter-y-xs q-mt-xs">
-                                        <label class="text-caption font-mono text-slate-400" style="font-size: 9px;">CLEANSED INGRESS JSON CONTRACT:</label>
-                                        <q-input v-model="customRawJson" type="textarea" rows="8" dense dark outlined color="amber-4" class="font-mono text-caption" input-class="font-mono text-slate-200" style="background-color: #020617; font-size: 10px;" />
-                                    </div>
-                                </div>
-
-                                <!-- DELTA DIFF VIEW -->
-                                <div v-if="showIngressDiff" class="column q-gutter-y-xs q-pa-sm rounded-borders" style="background-color: #0f172a; border: 1px solid #0284c7;">
-                                    <div class="row items-center justify-between">
-                                        <span class="text-caption text-weight-bold text-cyan-3" style="font-size: 10px;">DELTA COMPARISON (INGRESS VS EGRESS):</span>
-                                        <div class="row items-center q-gutter-x-xs text-caption font-mono" style="font-size: 9px;">
-                                            <span class="text-teal-4">+{{ computedDeltaSummary.added.length }} added</span>
-                                            <span class="text-amber-4">~{{ computedDeltaSummary.changed.length }} changed</span>
-                                            <span class="text-rose-4">-{{ computedDeltaSummary.removed.length }} removed</span>
-                                        </div>
-                                    </div>
-
-                                    <div class="row q-col-gutter-sm q-mt-xs">
-                                        <div class="col-6">
-                                            <div class="text-caption text-slate-400 font-bold q-mb-xs" style="font-size: 9px;">PREDECESSOR CONTRACT (INPUT):</div>
-                                            <pre class="bg-black q-pa-xs rounded font-mono text-caption text-slate-300" style="max-height: 220px; overflow: auto; font-size: 10px;">{{ formattedIngressJsonString || 'No ingress contract payload.' }}</pre>
-                                        </div>
-                                        <div class="col-6">
-                                            <div class="text-caption text-slate-400 font-bold q-mb-xs" style="font-size: 9px;">CURRENT STAGE EGRESS (OUTPUT):</div>
-                                            <pre class="bg-black q-pa-xs rounded font-mono text-caption text-cyan-2" style="max-height: 220px; overflow: auto; font-size: 10px;">{{ formattedEgressJsonString || 'Awaiting compute execution.' }}</pre>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="row items-center justify-between q-pa-sm rounded-borders" style="background-color: #0f172a; border: 1px solid #1e293b;">
-                                    <div class="row items-center q-gutter-x-xs">
-                                        <span class="text-caption font-mono" style="color: #cbd5e1; font-size: 10px;">Mantle UDM Invariants Enforced</span>
-                                        <q-toggle v-model="inputMantleInvariants" dense color="cyan-4" size="xs" />
-                                    </div>
-
-                                    <q-btn 
-                                        :color="currentActionType === 'build' ? 'amber-9' : (currentActionType === 'plan' ? 'deep-purple-7' : 'primary')"
-                                        :text-color="currentActionType === 'build' ? 'black' : 'white'"
-                                        icon="bolt" 
-                                        :label="'Dispatch ' + currentActionType.toUpperCase() + ' Compute'" 
-                                        dense no-caps 
-                                        class="text-weight-bold q-px-md q-py-xs font-mono"
-                                        :loading="isDispatching"
-                                        @click="executeComputeStage"
-                                    />
-                                </div>
-
-                            </div>
-                        </div>
+                        <agi-stage-ingress-viewport 
+                            :selected-stage="selectedStage"
+                            :selected-parent-stage="selectedParentStage"
+                            :ingress-payload="resolvedIngressPayload"
+                            :formatted-ingress-json-string="formattedIngressJsonString"
+                            :formatted-egress-json-string="formattedEgressJsonString"
+                            :computed-delta-summary="computedDeltaSummary"
+                            :current-action-type="currentActionType"
+                            :is-draft="isDraft"
+                            :is-dispatching="isDispatching"
+                            :step-id="stepId"
+                            v-model:model-value-directive="inputDirective"
+                            v-model:model-value-target-artifact="inputTargetArtifact"
+                            v-model:model-value-mantle-invariants="inputMantleInvariants"
+                            @dispatch-stage="handleIngressDispatch"
+                            @copy-clipboard="copyToClipboard"
+                        />
                     </template>
 
                     <!-- CASE D: [OUT] EGRESS VIEWPORT -->
                     <template v-else>
-                        <div class="row items-center justify-between q-px-sm" style="background-color: #0b1329; border-bottom: 1px solid #1e293b; height: 32px; min-height: 32px; flex: 0 0 32px;">
-                            <div class="row items-center q-gutter-x-xs no-wrap ellipsis">
-                                <q-icon name="output" size="13px" color="amber-4" />
-                                <span class="text-caption text-weight-bolder" style="color: #38bdf8; font-size: 10px;">
+                        <div class="row items-center justify-between q-px-md" style="background-color: #0b1329; border-bottom: 1px solid #1e293b; height: 36px; min-height: 36px; flex: 0 0 36px;">
+                            <div class="row items-center q-gutter-x-sm no-wrap ellipsis">
+                                <q-icon name="output" size="15px" color="amber-4" />
+                                <span class="text-caption text-weight-bolder text-cyan-3" style="font-size: 11px;">
                                     EGRESS ARTIFACT: STEP #{{ stepId }}
                                 </span>
                                 <span 
                                     v-if="selectedStage?.egressPayloadId" 
-                                    class="q-px-xs rounded font-mono text-weight-bolder" 
-                                    style="background-color: #581c87; color: #f3e8ff; font-size: 9px; border: 1px solid #7e22ce;"
+                                    class="q-px-sm rounded font-mono text-weight-bolder" 
+                                    style="background-color: #581c87; color: #f3e8ff; font-size: 10px; border: 1px solid #7e22ce;"
                                 >
                                     PAYLOAD #{{ selectedStage.egressPayloadId }}
                                 </span>
-                                <q-spinner-dots v-if="loadingPayload" color="cyan-4" size="14px" />
+                                <q-spinner-dots v-if="loadingPayload" color="cyan-4" size="16px" />
                             </div>
 
-                            <div class="row items-center q-gutter-x-xs">
+                            <div class="row items-center q-gutter-x-sm">
                                 <!-- STAGED VIRTUAL SCREEN XML QUICK LAUNCH BUTTON -->
                                 <q-btn 
                                     v-if="resolvedRawXml"
@@ -1057,31 +1018,29 @@
                                     icon="code"
                                     label="Open in Screen Editor"
                                     color="amber-3"
-                                    class="q-px-xs rounded-borders bg-amber-10 text-weight-bolder q-mr-xs"
-                                    style="border: 1px solid #f59e0b;"
+                                    class="q-px-sm rounded-borders bg-amber-10 text-weight-bolder"
+                                    style="border: 1px solid #f59e0b; height: 24px;"
                                     @click="triggerOpenArtifact(displayTargetArtifactUri)"
                                 >
                                     <q-tooltip>Load this generated XML buffer directly into Screen XML Editor</q-tooltip>
                                 </q-btn>
 
-                                <div class="row items-center q-gutter-x-none rounded-borders" style="background-color: #020617; border: 1px solid #334155; padding: 1px;">
+                                <div class="row items-center q-gutter-x-none rounded-borders" style="background-color: #020617; border: 1px solid #334155; padding: 2px;">
                                     <button 
                                         type="button"
                                         class="cursor-pointer font-mono text-caption text-weight-bold"
                                         :style="{
-                                            backgroundColor: activeOutputTab === 'contract' ? '#0284c7' : '#0f172a',
-                                            color: activeOutputTab === 'contract' ? '#ffffff' : '#cbd5e1',
-                                            border: activeOutputTab === 'contract' ? '1px solid #38bdf8' : '1px solid transparent',
+                                            backgroundColor: activeOutputTab === 'structured' ? '#0284c7' : '#0f172a',
+                                            color: activeOutputTab === 'structured' ? '#ffffff' : '#cbd5e1',
+                                            border: activeOutputTab === 'structured' ? '1px solid #38bdf8' : '1px solid transparent',
                                             borderRadius: '3px',
-                                            padding: '2px 8px',
-                                            fontSize: '9px',
-                                            opacity: resolvedEgressPayload ? '1' : '0.4',
-                                            cursor: resolvedEgressPayload ? 'pointer' : 'not-allowed'
+                                            padding: '2px 10px',
+                                            fontSize: '10px',
+                                            height: '22px'
                                         }"
-                                        :disabled="!resolvedEgressPayload"
-                                        @click="activeOutputTab = 'contract'"
+                                        @click="activeOutputTab = 'structured'"
                                     >
-                                        Moqui Spec
+                                        {{ payloadKind === 'DISCUSSION' ? 'Overview & Pillars' : (payloadKind === 'PLAN' ? 'Moqui Spec' : 'Artifact Preview') }}
                                     </button>
 
                                     <button 
@@ -1092,31 +1051,16 @@
                                             color: activeOutputTab === 'json' ? '#ffffff' : '#cbd5e1',
                                             border: activeOutputTab === 'json' ? '1px solid #38bdf8' : '1px solid transparent',
                                             borderRadius: '3px',
-                                            padding: '2px 8px',
-                                            fontSize: '9px',
+                                            padding: '2px 10px',
+                                            fontSize: '10px',
+                                            height: '22px',
                                             opacity: resolvedEgressPayload ? '1' : '0.4',
                                             cursor: resolvedEgressPayload ? 'pointer' : 'not-allowed'
                                         }"
                                         :disabled="!resolvedEgressPayload"
                                         @click="activeOutputTab = 'json'"
                                     >
-                                        JSON
-                                    </button>
-
-                                    <button 
-                                        type="button"
-                                        class="cursor-pointer font-mono text-caption text-weight-bold"
-                                        :style="{
-                                            backgroundColor: activeOutputTab === 'prompt' ? '#0284c7' : '#0f172a',
-                                            color: activeOutputTab === 'prompt' ? '#ffffff' : '#cbd5e1',
-                                            border: activeOutputTab === 'prompt' ? '1px solid #38bdf8' : '1px solid transparent',
-                                            borderRadius: '3px',
-                                            padding: '2px 8px',
-                                            fontSize: '9px'
-                                        }"
-                                        @click="activeOutputTab = 'prompt'"
-                                    >
-                                        Prompt
+                                        Contract JSON
                                     </button>
 
                                     <button 
@@ -1127,12 +1071,13 @@
                                             color: activeOutputTab === 'raw' ? '#ffffff' : '#cbd5e1',
                                             border: activeOutputTab === 'raw' ? '1px solid #38bdf8' : '1px solid transparent',
                                             borderRadius: '3px',
-                                            padding: '2px 8px',
-                                            fontSize: '9px'
+                                            padding: '2px 10px',
+                                            fontSize: '10px',
+                                            height: '22px'
                                         }"
                                         @click="activeOutputTab = 'raw'"
                                     >
-                                        {{ currentActionType === 'build' ? 'XML Code' : 'Raw' }}
+                                        Raw / Diagnostics
                                     </button>
                                 </div>
 
@@ -1147,118 +1092,55 @@
                             </div>
                         </div>
 
-                        <div class="col q-pa-md overflow-auto" style="flex: 1 1 0%; min-height: 0; height: 100%; overflow-y: auto !important;">
+                        <div class="col q-pa-lg overflow-auto" style="flex: 1 1 0%; min-height: 0; height: 100%; overflow-y: auto !important;">
                             <div style="max-width: 1200px; margin: 0 auto;">
                                 
                                 <div v-if="isDraft && !resolvedEgressPayload" class="column flex-center q-my-xl text-slate-500 font-mono">
-                                    <q-icon name="pending" size="36px" color="amber-4" class="q-mb-sm" />
-                                    <div class="text-weight-bold text-slate-300">Step #{{ stepId }} is in DRAFT state.</div>
-                                    <div class="text-caption text-slate-500 q-mb-md">No output artifact has been generated yet.</div>
-                                    <q-btn color="cyan-8" text-color="white" icon="login" label="Switch to [IN] to review and dispatch" no-caps dense @click="activePort = 'IN'" />
+                                    <q-icon name="pending" size="42px" color="amber-4" class="q-mb-md" />
+                                    <div class="text-weight-bold text-slate-300 text-body2">Step #{{ stepId }} is in DRAFT state.</div>
+                                    <div class="text-caption text-slate-400 q-mb-lg">No output artifact has been generated yet.</div>
+                                    <q-btn color="cyan-8" text-color="white" icon="login" label="Switch to [IN] to review and dispatch" no-caps dense class="q-px-md q-py-xs" @click="activePort = 'IN'" />
                                 </div>
 
-                                <!-- B. MOQUI SPEC VIEW -->
-                                <div v-else-if="activeOutputTab === 'contract' && resolvedEgressPayload" class="column q-gutter-y-sm">
-                                    <div class="row items-center justify-between q-pa-xs rounded-borders" style="background-color: #0f172a; border: 1px solid #1e293b;">
-                                        <div class="row items-center q-gutter-x-xs">
-                                            <span class="text-caption font-bold" style="color: #94a3b8; font-size: 10px;">ARCHETYPE:</span>
-                                            <span class="q-px-xs rounded font-mono text-caption text-weight-bold" style="background-color: #581c87; color: #ffffff; font-size: 9px;">
-                                                {{ resolvedEgressPayload.recommendedArchetype || 'default' }}
-                                            </span>
-                                        </div>
-                                        <span v-if="resolvedEgressPayload.status" class="text-caption font-bold" style="color: #38bdf8; font-size: 10px;">
-                                            STATUS: {{ resolvedEgressPayload.status }}
-                                        </span>
-                                    </div>
+                                <!-- 1. POLYMORPHIC STRUCTURED VIEW -->
+                                <div v-else-if="activeOutputTab === 'structured' && resolvedEgressPayload" class="column q-gutter-y-md">
+                                    
+                                    <!-- A. DISCUSS / 5-PILLARS VIEW (DELEGATED TO CHILD) -->
+                                    <template v-if="payloadKind === 'DISCUSSION'">
+                                        <agi-discussion-viewer :payload="resolvedEgressPayload" />
+                                    </template>
 
-                                    <div v-if="resolvedEgressPayload.suggestedEntities && resolvedEgressPayload.suggestedEntities.length > 0" class="column q-gutter-y-xs q-pa-xs rounded-borders" style="background-color: #0f172a; border: 1px solid #1e293b;">
-                                        <span class="text-caption font-bold" style="color: #94a3b8; font-size: 10px;">ENTITIES BOUND:</span>
-                                        <div class="row q-gutter-xs">
-                                            <span 
-                                                v-for="ent in resolvedEgressPayload.suggestedEntities" 
-                                                :key="ent"
-                                                class="q-px-xs rounded font-mono text-caption text-weight-bold" 
-                                                style="background-color: #020617; border: 1px solid #0284c7; color: #38bdf8; font-size: 9px;"
-                                            >
-                                                {{ ent }}
-                                            </span>
-                                        </div>
-                                    </div>
+                                    <!-- B. PLAN / SPEC VIEW (DELEGATED TO CHILD) -->
+                                    <template v-else-if="payloadKind === 'PLAN'">
+                                        <agi-plan-spec-viewer :payload="resolvedEgressPayload" />
+                                    </template>
 
-                                    <div v-if="resolvedEgressPayload.screenContract" class="column q-gutter-y-xs q-pa-xs rounded-borders" style="background-color: #0f172a; border: 1px solid #1e293b;">
-                                        <div v-if="resolvedEgressPayload.screenContract.requiredPermissions && resolvedEgressPayload.screenContract.requiredPermissions.length > 0">
-                                            <span class="text-caption font-bold" style="color: #94a3b8; font-size: 10px;">REQUIRED PERMISSIONS:</span>
-                                            <div class="row q-gutter-xs">
-                                                <span 
-                                                    v-for="perm in resolvedEgressPayload.screenContract.requiredPermissions" 
-                                                    :key="perm"
-                                                    class="q-px-xs rounded font-mono text-caption text-weight-bold" 
-                                                    style="background-color: #020617; border: 1px solid #d97706; color: #fde047; font-size: 9px;"
-                                                >
-                                                    {{ perm }}
-                                                </span>
+                                    <!-- C. BUILD / XML SPEC VIEW -->
+                                    <template v-else-if="payloadKind === 'BUILD'">
+                                        <div class="column q-gutter-y-sm">
+                                            <div class="row items-center justify-between q-pa-sm rounded bg-slate-900 text-caption">
+                                                <span class="text-amber-3 text-weight-bold font-mono" style="font-size: 11px;">GENERATED MOQUI XML SPECIFICATION:</span>
+                                                <q-btn flat dense no-caps size="xs" color="cyan-3" icon="launch" label="Open in Screen Editor" class="q-px-sm" style="height: 24px;" @click="triggerOpenArtifact(displayTargetArtifactUri)" />
                                             </div>
+                                            <pre class="q-ma-none q-pa-md rounded bg-black text-amber-2" style="white-space: pre-wrap; font-size: 11px; line-height: 1.5; min-height: 300px; max-height: 800px; overflow: auto;">{{ resolvedRawXml }}</pre>
                                         </div>
+                                    </template>
 
-                                        <div v-if="resolvedEgressPayload.screenContract.requiredParameters && resolvedEgressPayload.screenContract.requiredParameters.length > 0" class="q-mt-xs">
-                                            <span class="text-caption font-bold" style="color: #94a3b8; font-size: 10px;">REQUIRED PARAMETERS:</span>
-                                            <div class="row q-gutter-xs">
-                                                <span 
-                                                    v-for="param in resolvedEgressPayload.screenContract.requiredParameters" 
-                                                    :key="param"
-                                                    class="q-px-xs rounded font-mono text-caption text-weight-bold" 
-                                                    style="background-color: #020617; border: 1px solid #0d9488; color: #5eead4; font-size: 9px;"
-                                                >
-                                                    {{ param }}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div v-if="resolvedEgressPayload.entityFieldBindings && resolvedEgressPayload.entityFieldBindings.length > 0" class="column q-gutter-y-xs q-pa-xs rounded-borders" style="background-color: #0f172a; border: 1px solid #1e293b;">
-                                        <span class="text-caption font-bold" style="color: #94a3b8; font-size: 10px;">FIELD BINDINGS:</span>
-                                        <div v-for="(b, bIdx) in resolvedEgressPayload.entityFieldBindings" :key="bIdx" class="q-pa-xs rounded font-mono text-caption" style="background-color: #020617; border: 1px solid #334155; font-size: 10px;">
-                                            <div class="row items-center justify-between">
-                                                <span class="text-weight-bold" style="color: #38bdf8;">{{ b.entity }}</span>
-                                                <span style="color: #fbbf24;">{{ b.targetWidget }}</span>
-                                            </div>
-                                            <div class="q-mt-xs text-caption" style="color: #94a3b8; font-size: 9px;">
-                                                Fields: {{ b.fields ? b.fields.join(', ') : 'All' }}
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div v-if="resolvedEgressPayload.architectureSummary || resolvedEgressPayload.message" class="q-pa-xs rounded-borders text-caption" style="background-color: #0f172a; border: 1px solid #1e293b; color: #e2e8f0;">
-                                        <div class="text-weight-bold q-mb-xs" style="color: #38bdf8;">Architecture Summary:</div>
-                                        <div class="font-mono text-caption" style="line-height: 1.4;">
-                                            {{ resolvedEgressPayload.architectureSummary || resolvedEgressPayload.message }}
-                                        </div>
-                                    </div>
-
-                                    <div v-if="resolvedEgressPayload.formulationSteps && resolvedEgressPayload.formulationSteps.length > 0" class="column q-gutter-y-xs q-pa-xs rounded-borders" style="background-color: #0f172a; border: 1px solid #1e293b;">
-                                        <span class="text-caption font-bold" style="color: #94a3b8; font-size: 10px;">FORMULATION STEPS:</span>
-                                        <div v-for="(step, sIdx) in resolvedEgressPayload.formulationSteps" :key="sIdx" class="row no-wrap items-start q-gutter-x-xs font-mono text-caption" style="color: #cbd5e1; font-size: 10px;">
-                                            <q-icon name="check_circle" size="12px" color="cyan-4" class="q-mt-xs" />
-                                            <span>{{ step }}</span>
-                                        </div>
-                                    </div>
+                                    <!-- D. GENERIC / FALLBACK VIEW -->
+                                    <template v-else>
+                                        <div class="markdown-body font-mono text-caption q-pa-xs" style="line-height: 1.6;" v-html="formatOutput(rawStageBody)"></div>
+                                    </template>
                                 </div>
 
-                                <!-- C. FORMATTED JSON VIEW -->
-                                <div v-else-if="activeOutputTab === 'json' && resolvedEgressPayload" class="q-pa-sm rounded-borders font-mono text-caption" style="background-color: #0f172a; border: 1px solid #1e3a5f;">
-                                    <pre class="q-ma-none" style="color: #38bdf8; white-space: pre-wrap; font-size: 11px; line-height: 1.4;">{{ formattedEgressJsonString }}</pre>
+                                <!-- 2. CONTRACT JSON TAB -->
+                                <div v-else-if="activeOutputTab === 'json' && resolvedEgressPayload" class="q-pa-md rounded-borders font-mono text-caption" style="background-color: #0f172a; border: 1px solid #1e3a5f;">
+                                    <pre class="q-ma-none text-cyan-3" style="white-space: pre-wrap; font-size: 11px; line-height: 1.5;">{{ formattedEgressJsonString }}</pre>
                                 </div>
 
-                                <!-- D. RAW XML / MARKDOWN VIEW -->
-                                <div v-else class="q-pa-xs rounded-borders font-mono text-caption" style="background-color: #0f172a; border: 1px solid #1e3a5f; color: #f1f5f9;">
-                                    <div v-if="resolvedRawXml">
-                                        <div class="row items-center justify-between q-pa-xs rounded bg-slate-900 q-mb-xs text-caption">
-                                            <span class="text-amber-3 text-weight-bold font-mono">GENERATED MOQUI XML SPECIFICATION:</span>
-                                            <q-btn flat dense no-caps size="xs" color="cyan-3" icon="launch" label="Open in Screen Editor" @click="triggerOpenArtifact(displayTargetArtifactUri)" />
-                                        </div>
-                                        <pre class="q-ma-none q-pa-sm rounded bg-black text-amber-2" style="white-space: pre-wrap; font-size: 11px; line-height: 1.4; max-height: 600px; overflow: auto;">{{ resolvedRawXml }}</pre>
-                                    </div>
-                                    <div v-else class="markdown-body font-mono text-caption" v-html="formatOutput(rawStageBody)"></div>
+                                <!-- 3. RAW / DIAGNOSTICS TAB -->
+                                <div v-else class="q-pa-md rounded-borders font-mono text-caption" style="background-color: #0f172a; border: 1px solid #1e3a5f; color: #f1f5f9;">
+                                    <div class="text-caption text-slate-400 font-bold q-mb-sm">RAW UNWRAPPED EGRESS BUFFER:</div>
+                                    <pre class="q-ma-none q-pa-sm rounded bg-black text-slate-200" style="white-space: pre-wrap; font-size: 11px; line-height: 1.4; max-height: 600px; overflow: auto;">{{ rawStageBody || 'No raw stage body content available.' }}</pre>
                                 </div>
 
                             </div>
@@ -1274,12 +1156,15 @@
     window.AgiStageInspector = AgiStageInspector;
     if (!window.AgiComponents) window.AgiComponents = {};
     window.AgiComponents['agi-stage-inspector'] = AgiStageInspector;
+    window.AgiComponents['AgiStageInspector'] = AgiStageInspector;
 
     const registerComp = () => {
-        if (window.moqui && window.moqui.webrootVueApp) {
-            window.moqui.webrootVueApp.component('agi-stage-inspector', AgiStageInspector);
+        const app = window.moqui?.webrootVueApp;
+        if (app) {
+            if (!app.component('AgiStageInspector')) app.component('AgiStageInspector', AgiStageInspector);
+            if (!app.component('agi-stage-inspector')) app.component('agi-stage-inspector', AgiStageInspector);
         } else {
-            setTimeout(registerComp, 50);
+            setTimeout(registerComp, 25);
         }
     };
     registerComp();

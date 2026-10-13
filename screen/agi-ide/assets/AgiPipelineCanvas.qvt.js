@@ -112,6 +112,26 @@
                     this.rawNodes = resp.data?.pipelineNodes || [];
                     this.rawEdges = resp.data?.pipelineEdges || [];
 
+                    // 🛡️ Global Hydration: Store full graph and step-to-payload lookup map
+                    window.__agiCurrentPipelineGraph = {
+                        discussionId: this.discussionId,
+                        nodes: this.rawNodes,
+                        edges: this.rawEdges
+                    };
+
+                    if (!window.__agiPipelinePayloadMap) window.__agiPipelinePayloadMap = {};
+                    this.rawNodes.forEach(n => {
+                        const sId = String(n.id || n.stepId || n.pipelineStepId || n.stageId || '');
+                        const egressId = n.egressPayloadId || n.stagedPayloadId;
+                        const ingressId = n.ingressPayloadId;
+                        if (sId && egressId) {
+                            window.__agiPipelinePayloadMap[sId] = String(egressId);
+                        }
+                        if (sId && ingressId) {
+                            window.__agiPipelinePayloadMap[sId + '_in'] = String(ingressId);
+                        }
+                    });
+
                     if (!this.selectedStageId && this.rawNodes.length > 0) {
                         const lastNode = this.rawNodes[this.rawNodes.length - 1];
                         this.selectStage(lastNode, lastNode.egressPayloadId ? 'OUT' : 'IN');
@@ -201,10 +221,25 @@
                     parentNode = nodeMap[String(mappedNode.parentStepId || mappedNode.parentStageId)];
                 }
 
+                // Ensure global payload lookup registers current selection
+                if (!window.__agiPipelinePayloadMap) window.__agiPipelinePayloadMap = {};
+                if (targetStepId && (mappedNode.egressPayloadId || mappedNode.stagedPayloadId)) {
+                    window.__agiPipelinePayloadMap[targetStepId] = String(mappedNode.egressPayloadId || mappedNode.stagedPayloadId);
+                }
+                if (parentNode) {
+                    const pStepId = String(parentNode.stepId || parentNode.pipelineStepId || parentNode.stageId);
+                    const pEgressId = parentNode.egressPayloadId || parentNode.stagedPayloadId;
+                    if (pStepId && pEgressId) {
+                        window.__agiPipelinePayloadMap[pStepId] = String(pEgressId);
+                    }
+                }
+
                 const enrichedPayload = {
                     stage: Object.assign({}, mappedNode, {
                         stepId: targetStepId,
                         stageId: targetStepId,
+                        parentStepId: parentNode ? String(parentNode.stepId || parentNode.pipelineStepId || parentNode.stageId) : (mappedNode.parentStepId || null),
+                        parentEgressPayloadId: parentNode?.egressPayloadId || (parentNode ? window.__agiPipelinePayloadMap[String(parentNode.stepId || parentNode.pipelineStepId)] : null),
                         stepNumber: mappedNode.stepSequenceNum || (mappedNode.depth || 0) + 1,
                         totalSteps: this.dagLayout.columns.length,
                         activePort: this.activePortSelection
