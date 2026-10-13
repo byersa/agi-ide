@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="false">
+    <widgets>
+        <container style="q-pa-lg text-white font-mono bg-slate-950 full-height">
+            <container style="text-h5 text-purple-3 q-mb-sm">MoquiAI Documentation</container>
+            <container style="text-body2 text-slate-400">Architecture guidelines, Mantle UDM patterns, and MCP tool references.</container>
+        </container>
+    </widgets>
+</screen>

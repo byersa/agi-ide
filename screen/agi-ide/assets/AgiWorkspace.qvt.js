@@ -17,37 +17,37 @@
                 companionQvtPath: '',
                 themeArtifactPath: 'component://nursinghome/theme/default.theme.json',
                 showArtifactPalette: false,
-                showPromptStudio: true,
                 targetComponentName: 'nursinghome',
                 ignoredFrameworkComponents: ['agi-ide', 'agi-ai', 'moqui-usl', 'mantle-usl', 'webroot', 'tools'],
+
+                // 5-Point Flex Split Ratio for Left Pane (Studio): 0, 35, 50, 65, 100 (%)
+                studioWidthPercent: 50,
+
+                // Full-Width Top Sliding Drawer States
+                showDiscussionDrawer: false,
+                showDagDrawer: false,
+
+                // Active Discussion / DAG Context
+                activeDiscussionId: '',
+                activeDiscussionTitle: '',
+                selectedStage: null,
+                selectedParentStage: null,
+
+                // Multi-Editor Visibility State (Right Pane)
+                activeEditors: ['AgiScreenEditor'],
+                availableEditors: [
+                    { id: 'AgiCanvasEditor', label: 'Canvas Viewport', icon: 'preview', color: 'cyan-4' },
+                    { id: 'AgiScreenEditor', label: 'Screen XML', icon: 'code', color: 'amber-4' },
+                    { id: 'AgiComponentEditor', label: 'Component Source', icon: 'extension', color: 'teal-4' },
+                    { id: 'AgiTestRunner', label: 'Test Runner', icon: 'science', color: 'purple-3' },
+                    { id: 'AgiReportEditor', label: 'Report / Print', icon: 'description', color: 'blue-4' }
+                ],
 
                 activeFocusedCoordinate: '',
                 activeServiceUri: '',
                 isDirty: false,
                 showUnsavedSwitchDialog: false,
                 pendingSwitchItem: null,
-
-                windowDisplayMode: 'Collage Grid',
-                displayModeOptions: ['Collage Grid', 'Focus Canvas', 'Focus Source', 'Focus Theme'],
-                activeScreens: ['AgiCanvasEditor', 'AgiScreenEditor', 'AgiComponentEditor', 'AgiStyleEditor'],
-                availableScreensOptions: [
-                    { label: 'Canvas Viewport', value: 'AgiCanvasEditor' },
-                    { label: 'Screen Source', value: 'AgiScreenEditor' },
-                    { label: 'Service Editor', value: 'AgiServiceEditor' },
-                    { label: 'Entity Editor', value: 'AgiEntityEditor' },
-                    { label: 'Component Source', value: 'AgiComponentEditor' },
-                    { label: 'Theme / Style Editor', value: 'AgiStyleEditor' }
-                ],
-
-                activeLayoutGrid: {
-                    AgiCanvasEditor: { state: 'docked', windowRef: null },
-                    AgiScreenEditor: { state: 'docked', windowRef: null },
-                    AgiServiceEditor: { state: 'docked', windowRef: null },
-                    AgiEntityEditor: { state: 'docked', windowRef: null },
-                    AgiComponentEditor: { state: 'docked', windowRef: null },
-                    AgiStyleEditor: { state: 'docked', windowRef: null }
-                },
-                focusedPanel: 'AgiCanvasEditor',
 
                 activeWorkspaceBuffer: {
                     workspaceBufferId: '',
@@ -64,12 +64,14 @@
                     AgiComponentEditor: false,
                     AgiStyleEditor: false,
                     AgiStudio: false,
+                    AgiEditors: false,
                     MoquiXmlHost: true,
                     AgiArtifactPalette: false,
                     AgiWorkEffortDetail: false,
                     AgiNewComponentWizard: false,
                     AgiIntentDetail: false,
                     AgiTestRunner: false,
+                    AgiReportEditor: false
                 },
                 editorConstructors: {
                     AgiPipelineIndex: null,
@@ -82,28 +84,55 @@
                     AgiComponentEditor: null,
                     AgiStyleEditor: null,
                     AgiStudio: null,
+                    AgiEditors: null,
                     AgiArtifactPalette: null,
                     MoquiXmlHost: null,
                     AgiWorkEffortDetail: null,
                     AgiNewComponentWizard: null,
                     AgiIntentDetail: null,
                     AgiTestRunner: null,
+                    AgiReportEditor: null
                 }
             };
         },
         computed: {
             isWorkspaceReady() {
                 return !!(
-                    this.loadedComponents.AgiCanvasEditor &&
-                    this.loadedComponents.AgiScreenEditor &&
-                    this.loadedComponents.AgiComponentEditor &&
-                    this.loadedComponents.AgiStyleEditor
+                    this.loadedComponents.AgiStudio &&
+                    this.loadedComponents.AgiEditors &&
+                    this.loadedComponents.AgiPipelineIndex &&
+                    this.loadedComponents.AgiPipelineCanvas
                 );
             },
             currentArtifactLabel() {
                 if (!this.localScreenPath) return 'No Artifact Loaded';
                 const parts = this.localScreenPath.split('/');
                 return parts[parts.length - 1];
+            },
+            editorWidthPercent() {
+                return 100 - this.studioWidthPercent;
+            },
+            leftPaneStyle() {
+                if (this.studioWidthPercent <= 0) return { display: 'none' };
+                if (this.studioWidthPercent >= 100) return { flex: '0 0 100%', width: '100%' };
+                return {
+                    flex: `0 0 ${this.studioWidthPercent}%`,
+                    width: `${this.studioWidthPercent}%`,
+                    maxWidth: `${this.studioWidthPercent}%`
+                };
+            },
+            rightPaneStyle() {
+                const rightPercent = this.editorWidthPercent;
+                if (rightPercent <= 0) return { display: 'none' };
+                if (rightPercent >= 100) return { flex: '0 0 100%', width: '100%' };
+                return {
+                    flex: `0 0 ${rightPercent}%`,
+                    width: `${rightPercent}%`,
+                    maxWidth: `${rightPercent}%`
+                };
+            },
+            activeEditorCount() {
+                return this.activeEditors.length;
             }
         },
         mounted() {
@@ -113,12 +142,16 @@
             this.contextBus.onmessage = function (event) {
                 if (!event.data) return;
 
+                if (event.data.event === 'set-studio-width' && event.data.widthPercent !== undefined) {
+                    vm.setStudioWidth(event.data.widthPercent);
+                    return;
+                }
+
                 if (event.data.event === 'artifact-relocated') {
                     const oldUri = event.data.oldUri;
                     const newUri = event.data.newUri;
 
                     if (vm.localScreenPath === oldUri || !vm.localScreenPath) {
-                        console.info(`[AgiWorkspace] Switching active artifact path from ${oldUri} -> ${newUri}`);
                         vm.executeArtifactSwitch({ value: newUri });
                     }
                     return;
@@ -128,31 +161,21 @@
                     if (vm.localScreenPath !== event.data.artifactUri) {
                         vm.executeArtifactSwitch({ value: event.data.artifactUri });
                     }
-                    return;
-                }
-
-                if (event.data.event === 'open-prompt-editor' || event.data.event === 'force-open-command-palette') {
-                    vm.showPromptStudio = true;
-                    if (event.data.artifactLocation && event.data.artifactLocation !== vm.localScreenPath) {
-                        vm.executeArtifactSwitch({ value: event.data.artifactLocation });
+                    if (!vm.activeEditors.includes('AgiScreenEditor')) {
+                        vm.activeEditors.push('AgiScreenEditor');
                     }
                     return;
                 }
 
-                if (event.data.event === 'close-prompt-editor') {
-                    vm.showPromptStudio = false;
-                    return;
-                }
-
-                if (event.data.event === 'element-selected-by-id' && event.data.mariaId) {
-                    if (!event.data.mariaId.includes('agi-workspace-root') && !event.data.mariaId.includes('AgiWorkspace')) {
-                        vm.activeFocusedCoordinate = event.data.mariaId;
+                if (event.data.event === 'focus-editor-panel' && event.data.panelName) {
+                    const target = event.data.panelName;
+                    if (!vm.activeEditors.includes(target)) {
+                        vm.activeEditors.push(target);
                     }
                     return;
                 }
 
                 if (event.data.event === 'artifact-state-mutated') {
-                    console.info("[AgiWorkspace] Detected artifact mutation via ContextBus. Setting isDirty=true...");
                     vm.isDirty = true;
                     if (event.data.artifactUri && event.data.artifactUri !== vm.localScreenPath) {
                         vm.localScreenPath = event.data.artifactUri;
@@ -162,46 +185,9 @@
                 }
 
                 if (event.data.event === 'artifact-saved-to-disk') {
-                    console.info("[AgiWorkspace] Artifact saved to disk. Refreshing buffer and setting isDirty=false...");
                     vm.isDirty = false;
                     vm.hydrateWorkspaceBuffer();
                     return;
-                }
-
-                if (event.data?.event === 'open-service-artifact') {
-                    vm.activeServiceUri = event.data.serviceUri || '';
-                    if (!vm.activeScreens.includes('AgiServiceEditor')) {
-                        vm.activeScreens.push('AgiServiceEditor');
-                    }
-                    vm.focusedPanel = 'AgiServiceEditor';
-                    return;
-                }
-
-                // Focus/Bring Editor Into View from AgiStudio Viewport badges
-                if (event.data.event === 'focus-editor-panel' && event.data.panelName) {
-                    const target = event.data.panelName;
-                    if (!vm.activeScreens.includes(target)) {
-                        vm.activeScreens.push(target);
-                    }
-                    if (vm.activeLayoutGrid[target]) {
-                        vm.activeLayoutGrid[target].state = 'docked';
-                    }
-                    vm.focusedPanel = target;
-
-                    // If a single-focus display mode is active, switch to Collage Grid or focus the target panel
-                    if (vm.windowDisplayMode !== 'Collage Grid') {
-                        if (target === 'AgiCanvasEditor') vm.windowDisplayMode = 'Focus Canvas';
-                        else if (target === 'AgiScreenEditor') vm.windowDisplayMode = 'Focus Source';
-                        else if (target === 'AgiStyleEditor') vm.windowDisplayMode = 'Focus Theme';
-                        else vm.windowDisplayMode = 'Collage Grid';
-                        vm.handleDisplayModeChange(vm.windowDisplayMode);
-                    }
-
-                    vm.$q?.notify({
-                        type: 'info',
-                        message: `Focused viewport: ${target}`,
-                        timeout: 900
-                    });
                 }
             };
 
@@ -212,9 +198,7 @@
                 if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
                     e.preventDefault();
                     vm.handleChildEditorSave();
-                    return;
                 }
-                vm.handleKeyboardSnapping(e);
             };
             window.addEventListener('keydown', this._keyHandler);
 
@@ -224,20 +208,8 @@
                     e.returnValue = 'You have unsaved changes in the workspace buffer. Are you sure you want to leave?';
                     return e.returnValue;
                 }
-                vm.closeExternalWindows();
             };
             window.addEventListener('beforeunload', this._unloadHandler);
-
-            this.poller = setInterval(() => {
-                Object.keys(this.activeLayoutGrid).forEach(name => {
-                    const panel = this.activeLayoutGrid[name];
-                    if (panel.state === 'external' && panel.windowRef && panel.windowRef.closed) {
-                        panel.state = 'docked';
-                        panel.windowRef = null;
-                        if (!this.activeScreens.includes(name)) this.activeScreens.push(name);
-                    }
-                });
-            }, 1000);
 
             this.hydrateMcpOrchestratorFromDatabase();
             this.hydrateWorkspaceBuffer();
@@ -246,218 +218,280 @@
         beforeUnmount() {
             if (this._keyHandler) window.removeEventListener('keydown', this._keyHandler);
             if (this._unloadHandler) window.removeEventListener('beforeunload', this._unloadHandler);
-            if (this.poller) clearInterval(this.poller);
-            this.closeExternalWindows();
+            if (this.contextBus) this.contextBus.close();
         },
 
         template: `
-            <div class="column fit no-wrap q-pa-md q-gutter-y-sm" style="min-height: 90vh;">
-                <!-- 1. Header Controls Toolbar -->
-                <div id="agi-workspace-header" @click.stop class="row items-center justify-between q-pa-sm bg-grey-10 text-white rounded-borders shadow-2">
-                    
-                    <!-- Left Identity Badge & Active Artifact Anchor -->
-                    <div class="row items-center q-gutter-x-sm">
-                        <q-icon name="dashboard_customize" color="primary" size="sm" />
-                        <div>
-                            <div class="text-caption text-grey-4 text-uppercase font-mono" style="font-size: 10px; letter-spacing: 1px;">
-                                ACTIVE TARGET APP
-                            </div>
-                            <div class="text-subtitle1 text-weight-bolder text-primary font-mono row items-center">
-                                {{ targetComponentName }}
-                                <q-badge color="deep-purple-8" class="q-ml-xs text-caption font-mono" style="font-size: 9px;">
-                                    DOMAIN APP
-                                </q-badge>
-                                <q-badge v-if="isDirty" color="amber-10" text-color="black" class="q-ml-sm text-caption font-mono text-weight-bold animate-pulse">
-                                    <q-icon name="warning" size="xs" class="q-mr-xs" /> DRAFT
-                                </q-badge>
-                            </div>
-                        </div>
+            <div class="column fit no-wrap bg-slate-950 font-mono text-white overflow-hidden" style="height: 100vh; min-height: 0; width: 100%;">
+                
+                <!-- 1. FULL WIDTH, SINGLE-LINE HEADER (FIXED 36px) -->
+                <div 
+                    id="agi-workspace-header" 
+                    class="row items-center justify-between q-px-sm bg-black border-bottom-dark" 
+                    style="height: 36px; min-height: 36px; max-height: 36px; flex: 0 0 36px; border-bottom: 1px solid #1e293b; z-index: 40;"
+                >
+                    <!-- Left: Development Label + Domain Dropdown + Artifacts Button -->
+                    <div class="row items-center q-gutter-x-sm no-wrap">
+                        <span class="text-caption text-weight-bolder text-cyan-3 letter-spacing-1">
+                            DEVELOPMENT
+                        </span>
 
-                        <q-separator vertical dark class="q-mx-sm" />
-
-                        <!-- Active Artifact Pill -->
-                        <div class="column">
-                            <span class="text-caption text-grey-4 font-mono" style="font-size: 9px;">FOCUSED ARTIFACT</span>
-                            <div class="row items-center q-gutter-x-xs font-mono text-caption text-cyan-3">
-                                <q-icon name="code" size="xs" color="cyan-4" />
-                                <span class="text-weight-bold">{{ currentArtifactLabel }}</span>
-                            </div>
-                        </div>
-                    </div>
-                
-                    <!-- Right Controls -->
-                    <div class="row items-center q-gutter-x-sm" @click.stop>
-                        
-                        <q-btn 
-                            :color="isDirty ? 'positive' : 'grey-8'" 
-                            icon="save" 
-                            :label="isDirty ? 'Save to Disk (*)' : 'Saved'" 
-                            dense 
-                            class="q-px-sm font-mono text-weight-bold"
-                            @click.stop="handleChildEditorSave"
-                        >
-                            <q-tooltip class="bg-grey-10 text-caption">Compile and write workspace draft to physical XML file (Ctrl+S)</q-tooltip>
-                        </q-btn>
-                
-                        <q-btn 
-                            v-if="isDirty"
-                            color="negative" 
-                            flat
-                            icon="undo" 
-                            label="Revert" 
-                            dense 
-                            class="q-px-sm font-mono"
-                            @click.stop="revertBufferToDisk"
-                        >
-                            <q-tooltip class="bg-grey-10 text-caption">Discard buffer draft and restore original file from disk</q-tooltip>
-                        </q-btn>
-                
                         <q-separator vertical dark class="q-mx-xs" />
-                
-                        <q-select
-                            v-model="windowDisplayMode"
-                            :options="displayModeOptions"
-                            label="Display Mode"
-                            dense
-                            outlined
-                            dark
-                            bg-color="grey-9"
-                            style="min-width: 150px;"
-                            @click.stop
-                            @update:model-value="handleDisplayModeChange"
-                        ></q-select>
-                
-                        <q-select
-                            v-model="activeScreens"
-                            :options="availableScreensOptions"
-                            label="Active Canvas Editors"
-                            multiple
-                            use-chips
-                            emit-value
-                            map-options
-                            dense
-                            outlined
-                            dark
-                            bg-color="grey-9"
-                            style="min-width: 240px;"
-                            @click.stop
-                        ></q-select>
-                
-                        <q-btn 
-                            :color="showPromptStudio ? 'purple-6' : 'deep-purple-7'" 
-                            icon="psychology" 
-                            :label="showPromptStudio ? 'Studio (Open)' : 'AI Studio'" 
-                            dense 
-                            class="q-px-sm font-mono text-weight-bold"
-                            @click.stop="showPromptStudio = !showPromptStudio"
+
+                        <!-- Domain Dropdown (e.g., nursinghome) -->
+                        <q-btn-dropdown 
+                            flat dense no-caps 
+                            color="deep-purple-3" 
+                            class="q-px-xs rounded-borders text-weight-bold"
+                            style="border: 1px solid rgba(167, 139, 250, 0.3); font-size: 11px;"
+                            :label="targetComponentName"
                         >
-                            <q-tooltip class="bg-grey-10 text-caption">Toggle Docked AGI Command Studio</q-tooltip>
-                        </q-btn>
-                        
+                            <q-list dense class="bg-slate-900 text-white font-mono" style="min-width: 140px; border: 1px solid #334155;">
+                                <q-item clickable v-close-popup @click="handleDomainAction('new')">
+                                    <q-item-section avatar style="min-width: 24px;">
+                                        <q-icon name="add" size="xs" color="cyan-3" />
+                                    </q-item-section>
+                                    <q-item-section class="text-caption">New</q-item-section>
+                                </q-item>
+                                <q-item clickable v-close-popup @click="handleDomainAction('save')">
+                                    <q-item-section avatar style="min-width: 24px;">
+                                        <q-icon name="save" size="xs" color="teal-3" />
+                                    </q-item-section>
+                                    <q-item-section class="text-caption">Save</q-item-section>
+                                </q-item>
+                                <q-item clickable v-close-popup @click="handleDomainAction('rename')">
+                                    <q-item-section avatar style="min-width: 24px;">
+                                        <q-icon name="edit" size="xs" color="amber-3" />
+                                    </q-item-section>
+                                    <q-item-section class="text-caption">Rename</q-item-section>
+                                </q-item>
+                                <q-separator dark />
+                                <q-item clickable v-close-popup @click="handleDomainAction('delete')">
+                                    <q-item-section avatar style="min-width: 24px;">
+                                        <q-icon name="delete" size="xs" color="rose-4" />
+                                    </q-item-section>
+                                    <q-item-section class="text-caption text-rose-3">Delete</q-item-section>
+                                </q-item>
+                            </q-list>
+                        </q-btn-dropdown>
+
+                        <!-- Artifacts Palette Button -->
                         <q-btn 
-                            color="primary" 
-                            icon="add_box" 
-                            label="New Component" 
-                            dense 
-                            class="q-px-sm"
-                            @click.stop="triggerNewComponentWizard"
-                        >
-                            <q-tooltip class="bg-grey-10 text-caption">Initialize a new Moqui component skeleton</q-tooltip>
-                        </q-btn>
-                
-                        <q-btn 
-                            color="cyan-8" 
+                            flat dense no-caps size="xs"
+                            color="cyan-3" 
                             icon="folder_open" 
                             label="Artifacts" 
-                            dense 
-                            class="q-px-sm"
-                            @click.stop="showArtifactPalette = true"
+                            class="q-px-xs rounded-borders"
+                            style="border: 1px solid rgba(56, 189, 248, 0.3); font-size: 11px;"
+                            @click="showArtifactPalette = true"
                         >
-                            <q-tooltip class="bg-grey-10 text-caption">Browse and focus workspace artifacts</q-tooltip>
+                            <q-tooltip>Browse and select component workspace artifacts</q-tooltip>
                         </q-btn>
+                    </div>
 
-                        <q-btn 
-                            color="teal-8" 
-                            icon="science" 
-                            label="Tests" 
-                            dense 
-                            class="q-px-mono"
-                            @click.stop="triggerTestRunnerOverlay"
-                        >
-                            <q-tooltip class="bg-grey-10 text-caption">Run in-app test suites and verify invariants</q-tooltip>
-                        </q-btn>
+                    <!-- Right: Focused Artifact Label -->
+                    <div class="row items-center q-gutter-x-xs text-caption text-slate-400">
+                        <q-icon name="code" size="xs" color="cyan-4" />
+                        <span class="text-weight-bold text-slate-300">{{ currentArtifactLabel }}</span>
+                        <q-badge v-if="isDirty" color="amber-10" text-color="black" class="q-ml-xs text-weight-bolder" style="font-size: 8px;">
+                            DRAFT
+                        </q-badge>
                     </div>
                 </div>
 
-                <!-- 2. Loading Spinner Placeholder -->
-                <div v-if="!isWorkspaceReady" class="col column justify-center items-center q-gutter-md bg-grey-1 text-center">
-                    <q-spinner-gears color="deep-purple-7" size="4em" />
-                    <div class="text-subtitle1 text-grey-8 text-weight-medium">Synchronizing Workspace Components for {{ targetComponentName }}...</div>
+                <!-- 2. FULL-WIDTH SLIDING DRAWERS (SPANNING 100% OF WORKSPACE) -->
+
+                <!-- DRAWER A: AgiPipelineIndex (DISCUSSION INITIATIVES) -->
+                <q-slide-transition>
+                    <div 
+                        v-if="showDiscussionDrawer" 
+                        class="full-width column no-wrap bg-slate-900 shadow-10 relative-position overflow-hidden" 
+                        style="height: 340px; min-height: 340px; max-height: 340px; border-bottom: 2px solid #0284c7; z-index: 35; flex: 0 0 340px;"
+                    >
+                        <div class="row items-center justify-between q-px-sm bg-black" style="height: 26px; min-height: 26px; flex: 0 0 26px; border-bottom: 1px solid #1e293b;">
+                            <span class="text-caption font-mono text-cyan-3 text-weight-bold" style="font-size: 11px;">
+                                <q-icon name="forum" size="14px" class="q-mr-xs" /> PIPELINE INITIATIVES &amp; DISCUSSIONS
+                            </span>
+                            <q-btn flat round dense icon="close" size="xs" color="slate-400" @click="showDiscussionDrawer = false" />
+                        </div>
+                        <div class="col full-width overflow-auto relative-position" style="flex: 1 1 0%; min-height: 0;">
+                            <component 
+                                :is="editorConstructors.AgiPipelineIndex"
+                                v-if="editorConstructors.AgiPipelineIndex"
+                                :active-discussion-id="activeDiscussionId"
+                                :target-component="targetComponentName"
+                                @pipeline-selected="onPipelineSelectedFromDrawer"
+                                @new-pipeline-created="onPipelineSelectedFromDrawer"
+                            />
+                        </div>
+                    </div>
+                </q-slide-transition>
+
+                <!-- DRAWER B: AgiPipelineCanvas (FULL-WIDTH 2D VISUAL DAG) -->
+                <q-slide-transition>
+                    <div 
+                        v-if="showDagDrawer" 
+                        class="full-width column no-wrap bg-slate-900 shadow-10 relative-position overflow-hidden" 
+                        style="height: 440px; min-height: 440px; max-height: 440px; border-bottom: 2px solid #f59e0b; z-index: 35; flex: 0 0 440px;"
+                    >
+                        <div class="row items-center justify-between q-px-sm bg-black" style="height: 26px; min-height: 26px; flex: 0 0 26px; border-bottom: 1px solid #1e293b;">
+                            <span class="text-caption font-mono text-amber-3 text-weight-bold" style="font-size: 11px;">
+                                <q-icon name="account_tree" size="14px" class="q-mr-xs" /> PIPELINE DIRECTED ACYCLIC GRAPH (DAG)
+                            </span>
+                            <q-btn flat round dense icon="close" size="xs" color="slate-400" @click="showDagDrawer = false" />
+                        </div>
+                        <div class="col full-width overflow-hidden relative-position" style="flex: 1 1 0%; min-height: 0;">
+                            <component 
+                                :is="editorConstructors.AgiPipelineCanvas"
+                                v-if="editorConstructors.AgiPipelineCanvas"
+                                ref="globalCanvasRef"
+                                :discussion-id="activeDiscussionId"
+                                :target-component="targetComponentName"
+                                :selected-stage-id="selectedStage?.pipelineStepId || selectedStage?.stageId || ''"
+                                @stage-selected="onStageSelectedFromDrawer"
+                                @open-artifact="onArtifactOpened"
+                            />
+                        </div>
+                    </div>
+                </q-slide-transition>
+
+                <!-- 3. LOADING STATE -->
+                <div v-if="!isWorkspaceReady" class="col column justify-center items-center q-gutter-md bg-slate-950 text-center">
+                    <q-spinner-gears color="cyan-4" size="3em" />
+                    <div class="text-caption text-slate-400 font-mono">Synchronizing Development Environment for {{ targetComponentName }}...</div>
                 </div>
 
-                <!-- 3. Active Workspace Panes -->
-                <div v-else class="col full-width relative-position overflow-hidden" style="flex: 1 1 0%; height: calc(100vh - 120px); min-height: 0;">
-
-                    <!-- FULL WORKSPACE: AGI STUDIO TIER -->
+                <!-- 4. SPLIT WORKSPACE: LEFT (AgiStudio) & RIGHT (AgiEditors) -->
+                <div 
+                    v-else 
+                    class="col full-width row no-wrap relative-position overflow-hidden" 
+                    style="flex: 1 1 0%; min-height: 0; height: 100%;"
+                >
+                    <!-- LEFT PANE: AgiStudio -->
                     <div 
-                        v-if="showPromptStudio && editorConstructors.AgiStudio" 
-                        class="fit rounded-borders overflow-hidden shadow-10 relative-position"
-                        style="height: 100%; min-height: 0; width: 100%; border: 1px solid #334155;"
+                        v-show="studioWidthPercent > 0"
+                        class="column no-wrap overflow-hidden relative-position" 
+                        :style="[leftPaneStyle, { borderRight: '1px solid #1e293b', minHeight: '0', height: '100%' }]"
                     >
                         <component 
                             :is="editorConstructors.AgiStudio" 
+                            v-if="editorConstructors.AgiStudio"
                             :active-artifact="localScreenPath"
                             :target-component-prop="targetComponentName"
-                            @close="showPromptStudio = false"
+                            :width-percent="studioWidthPercent"
+                            :show-discussion-drawer="showDiscussionDrawer"
+                            :show-dag-drawer="showDagDrawer"
+                            :active-discussion-id-prop="activeDiscussionId"
+                            :active-discussion-title-prop="activeDiscussionTitle"
+                            :selected-stage-prop="selectedStage"
+                            @toggle-discussion="toggleDiscussionDrawer"
+                            @toggle-dag="toggleDagDrawer"
+                            @pipeline-selected="onPipelineSelectedFromDrawer"
+                            @stage-selected="onStageSelectedFromDrawer"
+                            @stage-dispatched="onStageDispatched"
+                            @set-width="setStudioWidth"
+                            @open-artifact="onArtifactOpened"
                         ></component>
                     </div>
 
-                    <!-- FALLBACK: LEGACY WORKSPACE EDITORS (When Studio is explicitly closed) -->
-                    <div v-else class="col column fit no-wrap overflow-hidden" style="height: 100%; min-height: 0;">
-                        <div v-if="!localScreenPath || localScreenPath === ''" class="column justify-center items-center col q-gutter-md bg-grey-1 text-center rounded-borders">
-                            <q-icon name="folder_open" size="64px" color="primary" />
-                            <div class="text-h5 text-grey-8 text-weight-bold">Target App: {{ targetComponentName }}</div>
-                            <p class="text-caption text-grey-8 max-w-sm">
-                                Studio is closed and no artifact screen is selected.<br/>
-                                Click <strong>AI Studio</strong> above or select an artifact from the palette to begin.
-                            </p>
-                        </div>
-
-                        <div v-else class="row q-col-gutter-md items-stretch align-content-start overflow-y-auto scroll fit">
-                            <!-- Canvas Renderer Panel -->
-                            <div v-if="isPanelVisible('AgiCanvasEditor')" :class="[getPanelClass('AgiCanvasEditor')]" style="min-height: 420px;" @click="focusedPanel = 'AgiCanvasEditor'">
-                                <div class="fit column rounded-borders border-dark overflow-hidden bg-grey-10" style="border: 1px solid #334155;">
-                                    <div class="bg-black text-white q-pa-xs row items-center justify-between font-mono text-caption">
-                                        <div class="row items-center q-gutter-x-xs"><q-icon name="preview" color="info" /><span class="text-weight-bold">Canvas Renderer</span></div>
-                                    </div>
-                                    <div class="col overflow-auto">
-                                        <component v-if="editorConstructors.AgiCanvasEditor" :is="editorConstructors.AgiCanvasEditor" :screen-path="localScreenPath" :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" @trigger-save="handleChildEditorSave" />
-                                    </div>
-                                </div>
+                    <!-- RIGHT PANE: Multi-Editor Shell -->
+                    <div 
+                        v-show="studioWidthPercent < 100"
+                        class="col column no-wrap overflow-hidden relative-position bg-slate-900" 
+                        :style="[rightPaneStyle, { minHeight: '0', height: '100%' }]"
+                    >
+                        <!-- Right Pane Header: Reciprocal Sizing Presets & Editor Checkboxes -->
+                        <div 
+                            class="row items-center justify-between q-px-sm bg-slate-950" 
+                            style="height: 32px; min-height: 32px; flex: 0 0 32px; border-bottom: 1px solid #1e293b;"
+                        >
+                            <!-- Left: Reciprocal 5-Point Splitter Buttons (100% down to 0%) -->
+                            <div class="row items-center q-gutter-x-none rounded-borders bg-slate-900" style="border: 1px solid #334155;">
+                                <q-btn 
+                                    v-for="preset in [100, 65, 50, 35, 0]" 
+                                    :key="preset"
+                                    flat dense size="xs"
+                                    :label="preset + '%'"
+                                    :color="editorWidthPercent === preset ? 'amber-3' : 'slate-500'"
+                                    :class="editorWidthPercent === preset ? 'bg-slate-800 text-weight-bolder' : ''"
+                                    class="q-px-xs"
+                                    @click="setEditorWidth(preset)"
+                                >
+                                    <q-tooltip>Set Right Pane width to {{ preset }}% (Left to {{ 100 - preset }}%)</q-tooltip>
+                                </q-btn>
                             </div>
 
-                            <!-- Screen Source Editor Panel -->
-                            <div v-if="isPanelVisible('AgiScreenEditor')" :class="[getPanelClass('AgiScreenEditor')]" style="min-height: 420px;" @click="focusedPanel = 'AgiScreenEditor'">
-                                <div class="fit column rounded-borders border-dark overflow-hidden bg-grey-10" style="border: 1px solid #334155;">
-                                    <div class="bg-black text-white q-pa-xs row items-center justify-between font-mono text-caption">
-                                        <div class="row items-center q-gutter-x-xs"><q-icon name="code" color="cyan-4" /><span class="text-weight-bold">XML Screen Editor</span></div>
-                                    </div>
-                                    <div class="col overflow-auto">
-                                        <component v-if="editorConstructors.AgiScreenEditor" :is="editorConstructors.AgiScreenEditor" :screen-path="localScreenPath" :layout-tree="activeWorkspaceBuffer.metaJsonBuffer" @trigger-save="handleChildEditorSave" />
-                                    </div>
-                                </div>
+                            <!-- Center: Current Artifact Path -->
+                            <div class="text-caption text-slate-300 font-mono ellipsis q-px-sm" style="max-width: 45%;">
+                                {{ localScreenPath || 'No Artifact Focused' }}
+                            </div>
+
+                            <!-- Right: Multi-Editor Selection Dropdown Menu -->
+                            <q-btn-dropdown 
+                                flat dense no-caps size="xs" 
+                                color="cyan-3" 
+                                icon="tune" 
+                                :label="'Editors (' + activeEditorCount + ')'"
+                                class="q-px-xs rounded-borders"
+                                style="border: 1px solid rgba(56, 189, 248, 0.3);"
+                            >
+                                <q-list dense dark class="bg-slate-900 font-mono text-caption q-pa-xs" style="min-width: 200px; border: 1px solid #334155;">
+                                    <div class="text-overline text-slate-400 q-px-xs" style="font-size: 9px;">ACTIVE EDITORS</div>
+                                    <q-item 
+                                        v-for="ed in availableEditors" 
+                                        :key="ed.id"
+                                        tag="label" 
+                                        dense 
+                                        clickable
+                                        class="rounded-borders q-my-none"
+                                    >
+                                        <q-item-section side>
+                                            <q-checkbox 
+                                                v-model="activeEditors" 
+                                                :val="ed.id" 
+                                                size="xs" 
+                                                color="cyan-4" 
+                                                dark 
+                                            />
+                                        </q-item-section>
+                                        <q-item-section avatar style="min-width: 20px;">
+                                            <q-icon :name="ed.icon" size="14px" :color="ed.color" />
+                                        </q-item-section>
+                                        <q-item-section>
+                                            <span :class="activeEditors.includes(ed.id) ? 'text-white text-weight-bold' : 'text-slate-400'">
+                                                {{ ed.label }}
+                                            </span>
+                                        </q-item-section>
+                                    </q-item>
+                                </q-list>
+                            </q-btn-dropdown>
+                        </div>
+
+                        <!-- Right Pane Body: Mounted AgiEditors Component -->
+                        <div class="col full-width overflow-hidden relative-position" style="flex: 1 1 0%; min-height: 0;">
+                            <component 
+                                :is="editorConstructors.AgiEditors"
+                                v-if="editorConstructors.AgiEditors"
+                                :active-editors="activeEditors"
+                                :available-editors="availableEditors"
+                                :local-screen-path="localScreenPath"
+                                :companion-qvt-path="companionQvtPath"
+                                :target-component-name="targetComponentName"
+                                :layout-tree="activeWorkspaceBuffer.metaJsonBuffer"
+                                :editor-constructors="editorConstructors"
+                                @toggle-editor="toggleEditor"
+                                @trigger-save="handleChildEditorSave"
+                            />
+                            <div v-else class="fit row flex-center text-slate-500 text-caption font-mono">
+                                Loading Editors Container...
                             </div>
                         </div>
                     </div>
-
                 </div>
-                
-                <component :is="editorConstructors.AgiTestRunner" v-if="loadedComponents.AgiTestRunner"></component>
-                <component :is="editorConstructors.AgiNewComponentWizard" v-if="loadedComponents.AgiNewComponentWizard"></component>
 
                 <!-- ARTIFACT PALETTE MODAL -->
                 <q-dialog v-model="showArtifactPalette" position="top">
-                    <q-card style="width: 600px; max-width: 90vw;" class="bg-grey-10 text-white shadow-24">
+                    <q-card style="width: 600px; max-width: 90vw;" class="bg-slate-900 text-white shadow-24 border border-slate-700">
                         <q-card-section class="row items-center justify-between bg-black q-pa-sm border-bottom-dark">
                             <div class="text-subtitle2 text-weight-bold font-mono text-cyan-4">
                                 <q-icon name="folder_open" class="q-mr-xs" /> WORKSPACE ARTIFACT PALETTE
@@ -505,59 +539,120 @@
                     || "";
             },
 
-            getPanelClass(panelName) {
-                const panel = this.activeLayoutGrid[panelName];
-                if (panel.state === 'maximized') return 'col-12';
-                if (panel.state === 'left' || panel.state === 'right') return 'col-12 col-md-6';
-
-                const hasMaximized = Object.keys(this.activeLayoutGrid).some(
-                    name => this.activeLayoutGrid[name].state === 'maximized' && this.activeScreens.includes(name)
-                );
-                if (hasMaximized) {
-                    return panel.state === 'maximized' ? 'col-12' : 'hidden';
-                }
-                return 'col-12 col-md-6';
-            },
-
-            isPanelVisible(panelName) {
-                if (!this.loadedComponents[panelName]) return false;
-                if (!this.activeScreens.includes(panelName)) return false;
-                return this.activeLayoutGrid[panelName].state !== 'minimized';
-            },
-
-            handleKeyboardSnapping(e) {
-                const isSuper = e.metaKey || e.ctrlKey || e.altKey;
-                if (!isSuper || !this.focusedPanel) return;
-
-                if (e.key === 'ArrowLeft') {
-                    e.preventDefault();
-                    this.snapPanel(this.focusedPanel, 'left');
-                } else if (e.key === 'ArrowRight') {
-                    e.preventDefault();
-                    this.snapPanel(this.focusedPanel, 'right');
-                } else if (e.key === 'ArrowUp') {
-                    e.preventDefault();
-                    this.toggleMaximize(this.focusedPanel);
-                } else if (e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    this.activeLayoutGrid[this.focusedPanel].state = 'docked';
+            toggleDiscussionDrawer() {
+                this.showDiscussionDrawer = !this.showDiscussionDrawer;
+                if (this.showDiscussionDrawer) {
+                    this.showDagDrawer = false;
                 }
             },
 
-            snapPanel(panelName, side) {
-                const current = this.activeLayoutGrid[panelName].state;
-                this.activeLayoutGrid[panelName].state = (current === side) ? 'docked' : side;
-            },
-
-            toggleMaximize(panelName) {
-                const panel = this.activeLayoutGrid[panelName];
-                if (panel.state === 'maximized') {
-                    panel.state = 'docked';
-                } else {
-                    Object.keys(this.activeLayoutGrid).forEach(name => {
-                        this.activeLayoutGrid[name].state = 'docked';
+            toggleDagDrawer() {
+                this.showDagDrawer = !this.showDagDrawer;
+                if (this.showDagDrawer) {
+                    this.showDiscussionDrawer = false;
+                    this.$nextTick(() => {
+                        setTimeout(() => {
+                            if (this.$refs.globalCanvasRef && typeof this.$refs.globalCanvasRef.scheduleRecalcEdges === 'function') {
+                                this.$refs.globalCanvasRef.scheduleRecalcEdges();
+                            }
+                        }, 150);
                     });
-                    panel.state = 'maximized';
+                }
+            },
+
+            onPipelineSelectedFromDrawer(item) {
+                if (!item) return;
+                const newId = String(item.discussionId || '');
+                const wasAlreadyOpen = this.showDiscussionDrawer;
+                const isInitialSelection = !this.activeDiscussionId && newId;
+
+                this.activeDiscussionId = newId;
+                this.activeDiscussionTitle = item.title || item.topic || `Pipeline #${newId}`;
+                this.selectedStage = null;
+                this.selectedParentStage = null;
+                if (item.targetArtifactUri) {
+                    this.localScreenPath = item.targetArtifactUri;
+                }
+
+                // If this is the initial load on mount, KEEP the drawer open so the user can interact with it.
+                // Only collapse it if user selected an item while the drawer was already actively displayed.
+                if (!isInitialSelection && wasAlreadyOpen) {
+                    this.showDiscussionDrawer = false;
+                }
+            },
+
+            onStageSelectedFromDrawer(payload) {
+                if (payload && payload.stage) {
+                    this.selectedStage = payload.stage;
+                    this.selectedParentStage = payload.parentStage;
+                } else {
+                    this.selectedStage = payload;
+                    this.selectedParentStage = null;
+                }
+            },
+
+            async onStageDispatched(eventData) {
+                if (this.$refs.globalCanvasRef && typeof this.$refs.globalCanvasRef.fetchPipelineGraph === 'function') {
+                    await this.$refs.globalCanvasRef.fetchPipelineGraph();
+                    const newStepId = eventData?.pipelineStepId;
+                    if (newStepId && this.$refs.globalCanvasRef.dagLayout?.nodeMap) {
+                        const targetNode = this.$refs.globalCanvasRef.dagLayout.nodeMap[String(newStepId)];
+                        if (targetNode) {
+                            this.$refs.globalCanvasRef.selectStage(targetNode, 'OUT');
+                        }
+                    }
+                }
+            },
+
+            toggleEditor(edId) {
+                const idx = this.activeEditors.indexOf(edId);
+                if (idx !== -1) {
+                    this.activeEditors.splice(idx, 1);
+                } else {
+                    this.activeEditors.push(edId);
+                }
+            },
+
+            setStudioWidth(pct) {
+                const numeric = Number(pct);
+                if (!isNaN(numeric) && numeric >= 0 && numeric <= 100) {
+                    this.studioWidthPercent = numeric;
+                }
+            },
+
+            setEditorWidth(pct) {
+                const numeric = Number(pct);
+                if (!isNaN(numeric) && numeric >= 0 && numeric <= 100) {
+                    this.studioWidthPercent = 100 - numeric;
+                }
+            },
+
+            handleDomainAction(action) {
+                if (action === 'new') {
+                    if (this.contextBus) this.contextBus.postMessage({ event: 'open-new-component-wizard' });
+                } else if (action === 'save') {
+                    this.handleChildEditorSave();
+                } else if (action === 'rename') {
+                    const newName = prompt(`Rename domain component "${this.targetComponentName}" to:`, this.targetComponentName);
+                    if (newName && newName.trim()) {
+                        this.targetComponentName = newName.trim();
+                        this.$q?.notify({ type: 'info', message: `Target domain updated to: ${this.targetComponentName}` });
+                    }
+                } else if (action === 'delete') {
+                    if (confirm(`Are you sure you want to remove the domain configuration for "${this.targetComponentName}"?`)) {
+                        this.$q?.notify({ type: 'warning', message: `Domain deletion queued for ${this.targetComponentName}` });
+                    }
+                }
+            },
+
+            onArtifactOpened(eventData) {
+                if (typeof eventData === 'string') {
+                    this.executeArtifactSwitch({ value: eventData });
+                } else if (eventData?.artifactUri) {
+                    this.executeArtifactSwitch({ value: eventData.artifactUri });
+                }
+                if (!this.activeEditors.includes('AgiScreenEditor')) {
+                    this.activeEditors.push('AgiScreenEditor');
                 }
             },
 
@@ -617,19 +712,32 @@
                     { name: 'AgiNewComponentWizard', url: '/agi-ide-assets/AgiNewComponentWizard.qvt.js', globalVar: 'AgiNewComponentWizard' },
                     { name: 'AgiIntentDetail', url: '/agi-ide-assets/AgiIntentDetail.qvt.js', globalVar: 'AgiIntentDetail' },
                     { name: 'AgiStudio', url: '/agi-ide-assets/AgiStudio.qvt.js', globalVar: 'AgiStudio' },
+                    { name: 'AgiEditors', url: '/agi-ide-assets/AgiEditors.qvt.js', globalVar: 'AgiEditors' },
                     { name: 'AgiInstructions', url: '/agi-ide-assets/AgiInstructions.qvt.js', globalVar: 'AgiInstructions' },
                     { name: 'AgiTestRunner', url: '/agi-ide-assets/util/AgiTestRunner.qvt.js', globalVar: 'AgiTestRunner' },
                 ];
 
                 assets.forEach(asset => {
+                    const register = (compDef) => {
+                        const rawDef = markRaw(compDef);
+                        vm.editorConstructors[asset.name] = rawDef;
+                        vm.loadedComponents[asset.name] = true;
+
+                        const app = window.moqui?.webrootVueApp;
+                        if (app) {
+                            if (!app.component(asset.name)) app.component(asset.name, rawDef);
+                            const kebab = asset.name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+                            if (!app.component(kebab)) app.component(kebab, rawDef);
+                        }
+                    };
+
                     const compDef = window[asset.globalVar]
                         || window.AgiComponents?.[asset.name]
                         || window.AgiComponents?.[asset.name.toLowerCase()]
                         || (window.moqui?.webrootVueApp?._context?.components?.[asset.name.toLowerCase()]);
 
                     if (compDef) {
-                        vm.editorConstructors[asset.name] = markRaw(compDef);
-                        vm.loadedComponents[asset.name] = true;
+                        register(compDef);
                         return;
                     }
 
@@ -645,8 +753,7 @@
                                 || window.AgiComponents?.[asset.name.toLowerCase()];
 
                             if (loadedDef) {
-                                vm.editorConstructors[asset.name] = markRaw(loadedDef);
-                                vm.loadedComponents[asset.name] = true;
+                                register(loadedDef);
                             } else if (attempts < 20) {
                                 setTimeout(() => checkRegistration(attempts + 1), 25);
                             }
@@ -665,55 +772,6 @@
                     };
 
                     document.head.appendChild(script);
-                });
-            },
-
-            handleDisplayModeChange(val) {
-                if (val === 'Focus Canvas') {
-                    this.activeScreens = ['AgiCanvasEditor'];
-                } else if (val === 'Focus Source') {
-                    this.activeScreens = ['AgiScreenEditor'];
-                } else if (val === 'Focus Theme') {
-                    this.activeScreens = ['AgiStyleEditor'];
-                } else {
-                    this.activeScreens = ['AgiCanvasEditor', 'AgiScreenEditor', 'AgiComponentEditor', 'AgiStyleEditor'];
-                }
-            },
-
-            detachPanelToExternalWindow(panelName) {
-                const panel = this.activeLayoutGrid[panelName];
-                panel.state = 'external';
-
-                const childWin = window.open('/apps/agi-ide/amaTerminal?componentName=' + panelName, '_blank', 'width=1000,height=800,menubar=no,toolbar=no,location=no,status=no');
-                if (childWin) {
-                    panel.windowRef = childWin;
-
-                    const injectStyles = () => {
-                        try {
-                            const doc = childWin.document;
-                            if (!doc || !doc.head) return;
-                            document.querySelectorAll('link[rel="stylesheet"], style').forEach(el => {
-                                const clone = doc.importNode(el, true);
-                                doc.head.appendChild(clone);
-                            });
-                        } catch (e) { }
-                    };
-
-                    setTimeout(injectStyles, 500);
-                    childWin.addEventListener('load', injectStyles);
-                }
-            },
-
-            closeExternalWindows() {
-                Object.keys(this.activeLayoutGrid).forEach(name => {
-                    const win = this.activeLayoutGrid[name].windowRef;
-                    if (win && !win.closed) {
-                        win.close();
-                    }
-                    this.activeLayoutGrid[name].windowRef = null;
-                    if (this.activeLayoutGrid[name].state === 'external') {
-                        this.activeLayoutGrid[name].state = 'docked';
-                    }
                 });
             },
 
@@ -742,41 +800,9 @@
                                     });
                                 } catch (err) { }
                             });
-                        } else {
-                            vm.injectLocalFallbackTools();
                         }
                     })
-                    .catch(function () {
-                        vm.injectLocalFallbackTools();
-                    });
-            },
-
-            injectLocalFallbackTools() {
-                window.AgiMcpEngine.registerTool({
-                    commandstore: '/add-mock-field',
-                    description: 'Fallback testing field tool',
-                    scope: 'AgiCanvasEditor',
-                    execute: (currentTree) => {
-                        const newTree = JSON.parse(JSON.stringify(currentTree));
-                        const mockNode = {
-                            type: 'FormField',
-                            name: 'mockControl_' + Date.now(),
-                            text: 'Mocked Input Field Element',
-                            mariaId: 'SampleForm#mockControl_' + Date.now(),
-                            children: []
-                        };
-                        if (newTree.children) newTree.children.push(mockNode);
-                        return newTree;
-                    }
-                });
-            },
-
-            triggerNewComponentWizard() {
-                if (this.contextBus) {
-                    this.contextBus.postMessage({
-                        event: 'open-new-component-wizard'
-                    });
-                }
+                    .catch(function () { });
             },
 
             async hydrateWorkspaceBuffer() {
@@ -807,30 +833,6 @@
                     }
                 } catch (err) {
                     console.error("Failed to hydrate workspace buffer:", err);
-                }
-            },
-
-            async revertBufferToDisk() {
-                if (!this.localScreenPath) return;
-                if (!confirm(`Discard all unsaved draft changes and reload "${this.localScreenPath}" from disk?`)) return;
-
-                const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
-                try {
-                    await axios.post('/rest/s1/agi-ide/clearWorkspaceBuffer', {
-                        artifactUri: this.localScreenPath
-                    }, { headers });
-
-                    this.isDirty = false;
-                    if (this.$q) {
-                        this.$q.notify({
-                            type: 'info',
-                            message: 'Buffer discarded. Reloaded from disk.'
-                        });
-                    }
-
-                    await this.hydrateWorkspaceBuffer();
-                } catch (err) {
-                    console.error("Failed to clear workspace buffer:", err);
                 }
             },
 
@@ -882,31 +884,6 @@
                 }
             },
 
-            async handleThemeSave(payload) {
-                const headers = {
-                    'moquiSessionToken': this.resolveCsrfToken(),
-                    'Content-Type': 'application/json'
-                };
-                try {
-                    const resp = await axios.post('/rest/s1/agi-ide/saveThemeJson', {
-                        artifactUri: payload.themeUri || this.themeArtifactPath,
-                        themeData: payload
-                    }, { headers });
-
-                    if (resp.data?.status === 'SUCCESS' || resp.status === 200) {
-                        this.$q?.notify({
-                            type: 'positive',
-                            message: 'Theme artifact successfully saved to disk!'
-                        });
-                    }
-                } catch (err) {
-                    this.$q?.notify({
-                        type: 'negative',
-                        message: err.response?.data?.errors || err.message || 'Failed to save theme artifact.'
-                    });
-                }
-            },
-
             onArtifactSelectedFromWorkspace(item) {
                 if (this.isDirty) {
                     this.pendingSwitchItem = item;
@@ -940,7 +917,6 @@
 
                 if (uri.endsWith('.xml')) {
                     this.localScreenPath = uri;
-                    // Do not assume companion QVT exists for standard XML screens
                     this.companionQvtPath = '';
                 } else if (uri.endsWith('.qvt.js')) {
                     this.companionQvtPath = uri;
@@ -956,7 +932,6 @@
                     this.companionQvtPath = null;
                 }
 
-                this.activeScreens = ['AgiCanvasEditor', 'AgiScreenEditor', 'AgiComponentEditor', 'AgiStyleEditor'];
                 this.hydrateWorkspaceBuffer();
 
                 if (this.contextBus) {
@@ -967,15 +942,7 @@
                         targetComponent: this.targetComponentName
                     });
                 }
-            },
-
-            triggerTestRunnerOverlay() {
-                if (this.contextBus) {
-                    this.contextBus.postMessage({
-                        event: 'open-test-runner'
-                    });
-                }
-            },
+            }
         },
     };
 

@@ -3,17 +3,15 @@
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         require-authentication="false"
         standalone="true"
-        default-subscreen="AgiWorkspace">
+        default-subscreen="Develop">
 
-    <!-- 🎯 Keep only the explicit text/qmeta compiler macro active -->
     <macro-template type="html" location="component://agi-ai/template/screen-macro/DefaultScreenMacros.qmeta.ftl"/>
 
-    <transition name="getFormMetadata" read-only="true" >
+    <transition name="getFormMetadata" read-only="true">
         <actions>
-            <set field="activeUserId" from="ec.user.getUserId()" />
-            <log message="In getFormMetadata, userId: ${activeUserId}" />
+            <set field="activeUserId" from="ec.user.getUserId() ?: 'system_ide_user'"/>
             <service-call name="org.moqui.ide.AgiMcpServices.get#FormMetadata" 
-                          in-map="[screenPath: screenPath, userId:activeUserId]" 
+                          in-map="[screenPath: screenPath, userId: activeUserId]" 
                           out-map="context"/>
             <script>
                 ec.web.sendJsonResponse([metadataJson: metadataJson])
@@ -24,34 +22,70 @@
 
     <pre-actions>
         <script><![CDATA[
-            // Route asset calls smoothly over your streaming macro endpoint
             html_stylesheets.add('/agi-ide-include/agi-ide.css')
+            // Guard window.AgiComponents against reserved SVG/HTML tags before FTL bootstrap executes
+            html_scripts.add('/agi-ide-assets/util/sanitize-components.js')
         ]]></script>
-        <!--
-        <script location="component://agi-ide/script/AgiBootstrapper.groovy"/>
-        -->
     </pre-actions>
 
     <always-actions>
-        <script>
+        <set field="activeUserId" from="ec.user.userId ?: 'system_ide_user'"/>
+        <script><![CDATA[
             ec.web.response.setContentType("text/html; charset=UTF-8")
-        </script>
+        ]]></script>
     </always-actions>
 
-    <subscreens default-item="AgiWorkspace">
-        <subscreens-item name="AgiDashboard" location="component://agi-ide/screen/agi-ide/AgiDashboard.xml"/>
+    <subscreens default-item="Develop">
+        <subscreens-item name="Home" location="component://agi-ide/screen/agi-ide/Home.xml"/>
+        <subscreens-item name="Production" location="component://agi-ide/screen/agi-ide/Production.xml"/>
+        <subscreens-item name="Develop" location="component://agi-ide/screen/agi-ide/AgiWorkspace.xml"/>
+        <!-- Backward compatibility alias -->
         <subscreens-item name="AgiWorkspace" location="component://agi-ide/screen/agi-ide/AgiWorkspace.xml"/>
+        <subscreens-item name="Documentation" location="component://agi-ide/screen/agi-ide/Documentation.xml"/>
+        <subscreens-item name="AgiDashboard" location="component://agi-ide/screen/agi-ide/AgiDashboard.xml"/>
         <subscreens-item name="AgiInstructions" location="component://agi-ide/screen/agi-ide/AgiInstructions.xml"/>
         <subscreens-item name="TestLlm" location="component://agi-ide/screen/agi-ide/TestLlm.xml"/>
     </subscreens>
 
-    <!-- 🎯 FIX: Wrapped children cleanly into the macro output block -->
     <widgets>
-                <screen-layout view="hHh lpR fFf">
-                    <screen-header elevated="true" />
-                    <screen-content>
-                        <subscreens-active/>
-                    </screen-content>
-                </screen-layout>
+        <screen-layout view="hHh lpR fFf">
+            <screen-header elevated="false" style="background-color: #020617; border-bottom: 1px solid #1e293b; height: 42px; min-height: 42px;">
+                <container style="row items-center justify-between full-width font-mono text-white q-px-md" style-extra="height: 42px; background-color: #020617; border-bottom: 1px solid #1e293b;">
+                    <!-- LEFT: BRAND -->
+                    <container style="row items-center q-gutter-x-sm">
+                        <label text="memory" style="font-size: 20px; font-family: 'Material Icons'; color: #22d3ee;"/>
+                        <label text="MoquiAI" style="text-subtitle1 text-weight-bolder text-cyan-3" style-extra="letter-spacing: 0.5px;"/>
+                    </container>
+
+                    <!-- CENTER: PRIMARY NAVIGATION -->
+                    <container style="row items-center q-gutter-x-xs text-caption">
+                        <link url="/agi-ide/Home" text="Home" 
+                              style="q-px-sm text-slate-300" 
+                              style-extra="text-decoration: none; border-radius: 4px; padding-top: 4px; padding-bottom: 4px;"/>
+                        <link url="/agi-ide/Production" text="Production" 
+                              style="q-px-sm text-slate-300" 
+                              style-extra="text-decoration: none; border-radius: 4px; padding-top: 4px; padding-bottom: 4px;"/>
+                        <link url="/agi-ide/Develop" text="Develop" 
+                              style="text-weight-bolder q-px-sm text-cyan-2 bg-slate-900" 
+                              style-extra="text-decoration: none; border-radius: 4px; border: 1px solid #0284c7; padding-top: 4px; padding-bottom: 4px;"/>
+                        <link url="/agi-ide/Documentation" text="Documentation" 
+                              style="q-px-sm text-slate-300" 
+                              style-extra="text-decoration: none; border-radius: 4px; padding-top: 4px; padding-bottom: 4px;"/>
+                    </container>
+
+                    <!-- RIGHT: USER & VERSION -->
+                    <container style="row items-center q-gutter-x-sm">
+                        <label text="${activeUserId}" style="text-caption text-slate-300"/>
+                        <container style="bg-cyan-9 rounded-borders q-px-xs text-weight-bold" style-extra="font-size: 10px;">
+                            <label text="v1.0" style="text-white"/>
+                        </container>
+                    </container>
+                </container>
+            </screen-header>
+
+            <screen-content>
+                <subscreens-active/>
+            </screen-content>
+        </screen-layout>
     </widgets>
 </screen>

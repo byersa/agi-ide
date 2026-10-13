@@ -4,7 +4,7 @@
         require-authentication="true">
 
     <actions>
-        <set field="screenPath" from="context.screenPath ?: 'component://nursinghome/screen/nursinghome.xml'"/>
+        <set field="screenPath" from="context.screenPath ?: ec.web.parameters.screenPath ?: 'component://nursinghome/screen/nursinghome.xml'"/>
     </actions>
 
     <transition name="deleteArtifact" read-only="false">
@@ -17,13 +17,12 @@
         <subscreen name="AgiCanvasEditor" location="component://agi-ide/screen/agi-ide/AgiCanvasEditor.xml"/>
         <subscreen name="AgiScreenEditor" location="component://agi-ide/screen/agi-ide/AgiScreenEditor.xml"/>
         <subscreen name="AgiComponentEditor" location="component://agi-ide/screen/agi-ide/AgiComponentEditor.xml"/>
-        <subscreen name="AgiPromptEditor" location="component://agi-ide/screen/agi-ide/AgiPromptEditor.xml"/>
     </subscreens>
 
     <widgets>
         <container id="agi-workspace-root" 
                    type="agi-workspace" 
-                   style="screen-path='${screenPath}'">
+                   screen-path="${screenPath}">
         </container>
     </widgets>
 </screen>
