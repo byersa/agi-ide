@@ -299,7 +299,42 @@
                     return { bg: '#7c3aed', fg: '#ffffff', titleColor: '#ddd6fe', icon: 'architecture', border: '#a78bfa' };
                 }
                 return { bg: '#0284c7', fg: '#ffffff', titleColor: '#bae6fd', icon: 'chat', border: '#38bdf8' };
-            }
+            },
+            async branchFromCanvas(node, targetStance) {
+                if (!node) return;
+                const stepId = String(node.pipelineStepId || node.stageId || node.stepId);
+                const stanceEnumId = targetStance === 'build' ? 'AamBuild' : (targetStance === 'plan' ? 'AamPlan' : 'AamDiscuss');
+
+                try {
+                    const resp = await axios.post('/rest/s1/agi-ai/pipeline/step/fork', {
+                        sourceStepId: stepId,
+                        targetStanceEnumId: stanceEnumId,
+                        ingressPayloadId: node.egressPayloadId || null,
+                        directivePrompt: `Continue with ${targetStance.toUpperCase()} following Step #${stepId}.`
+                    }, { headers: { 'moquiSessionToken': this.resolveCsrf() } });
+
+                    const newStepId = resp.data?.newStepId;
+                    this.$q?.notify({
+                        type: 'positive',
+                        message: `Child ${targetStance.toUpperCase()} Step #${newStepId} spawned.`,
+                        icon: 'account_tree'
+                    });
+
+                    // Refresh canvas graph to render new node & edge
+                    await this.fetchPipelineGraph();
+
+                    // Select new node in INGRESS mode
+                    const newNode = this.rawNodes.find(n => String(n.pipelineStepId || n.stepId) === String(newStepId));
+                    if (newNode) {
+                        this.selectStage(newNode, 'IN');
+                    }
+                } catch (e) {
+                    this.$q?.notify({
+                        type: 'negative',
+                        message: 'Branch failed: ' + (e.response?.data?.errors || e.message)
+                    });
+                }
+            },
         },
         template: `
             <div class="agi-pipeline-canvas fit column no-wrap bg-slate-950 font-mono text-white relative-position overflow-hidden" style="height: 100%; min-height: 0; width: 100%;">
@@ -551,11 +586,11 @@
 
                                             <span class="text-slate-600 font-mono" style="font-size: 8px;">──►</span>
 
-                                            <!-- RIGHT: [OUT] EGRESS PORT BUTTON -->
+                                        <!-- RIGHT: [OUT] EGRESS PORT BUTTON WITH BRANCHING POPUP -->
                                             <button
                                                 :id="'port-out-' + node.stepId"
                                                 type="button"
-                                                class="port-btn row items-center q-px-xs rounded cursor-pointer"
+                                                class="port-btn row items-center q-px-xs rounded cursor-pointer relative-position"
                                                 :style="{
                                                     backgroundColor: (String(selectedStageId) === String(node.stepId) && activePortSelection === 'OUT') ? '#0284c7' : '#0f172a',
                                                     border: (String(selectedStageId) === String(node.stepId) && activePortSelection === 'OUT') ? '1px solid #38bdf8' : '1px solid #334155',
@@ -574,6 +609,37 @@
                                                     [DRAFT]
                                                 </span>
                                                 <q-icon name="logout" size="11px" class="q-ml-xs" color="amber-4" />
+
+                                                <!-- 🎯 Context Menu for Committed Steps: Branch Off Node -->
+                                                <q-menu v-if="node.egressPayloadId" context-menu dark class="bg-slate-950 font-mono text-white" style="border: 1px solid #0284c7; min-width: 170px;">
+                                                    <q-list dense style="font-size: 11px;">
+                                                        <q-item-label header class="text-cyan-3 font-bold text-caption" style="font-size: 10px; padding: 4px 8px;">
+                                                            BRANCH FROM STEP #{{ node.stepId }}
+                                                        </q-item-label>
+                                                        <q-separator dark class="q-mb-xs" />
+                                                        
+                                                        <q-item clickable v-close-popup @click="branchFromCanvas(node, 'discuss')">
+                                                            <q-item-section avatar style="min-width: 22px;">
+                                                                <q-icon name="chat" size="13px" color="cyan-3" />
+                                                            </q-item-section>
+                                                            <q-item-section>+ Child DISCUSS</q-item-section>
+                                                        </q-item>
+
+                                                        <q-item clickable v-close-popup @click="branchFromCanvas(node, 'plan')">
+                                                            <q-item-section avatar style="min-width: 22px;">
+                                                                <q-icon name="architecture" size="13px" color="purple-3" />
+                                                            </q-item-section>
+                                                            <q-item-section>+ Child PLAN</q-item-section>
+                                                        </q-item>
+
+                                                        <q-item clickable v-close-popup @click="branchFromCanvas(node, 'build')">
+                                                            <q-item-section avatar style="min-width: 22px;">
+                                                                <q-icon name="handyman" size="13px" color="amber-3" />
+                                                            </q-item-section>
+                                                            <q-item-section>+ Child BUILD</q-item-section>
+                                                        </q-item>
+                                                    </q-list>
+                                                </q-menu>
                                             </button>
                                         </div>
 

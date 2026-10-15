@@ -695,7 +695,8 @@
 
                 this.isDispatching = true;
                 const activeStance = this.selectedStage ? this.currentActionType : (this.rootStance || 'plan');
-                const parentId = this.selectedStage?.parentStepId || this.selectedParentStage?.pipelineStepId || null;
+                const currentStepId = this.selectedStage?.pipelineStepId || this.selectedStage?.stageId;
+                const parentId = currentStepId || this.selectedParentStage?.pipelineStepId || null;
 
                 let effectiveIngressId = this.selectedStage?.ingressPayloadId || null;
                 let payloadOverrideJson = null;
@@ -718,7 +719,8 @@
                 try {
                     const dispatchPayload = {
                         discussionId: this.discussionId,
-                        parentStepId: parentId,
+                        pipelineStepId: null,
+                        parentStepId: currentStepId,
                         stanceEnumId: activeStance,
                         directivePrompt: this.inputDirective,
                         ingressPayloadId: effectiveIngressId,
@@ -871,7 +873,90 @@
                 } else {
                     this.rootStance = stance;
                 }
-            }
+            },
+            async branchSuccessorStep({ sourceStepId, targetStance }) {
+                const parentId = sourceStepId || this.stepId;
+                if (!parentId) return;
+
+                this.isAdvancing = true;
+                const stance = (targetStance || 'plan').toLowerCase();
+                const stanceEnumId = stance === 'build' ? 'AamBuild' : (stance === 'plan' ? 'AamPlan' : 'AamDiscuss');
+
+                try {
+                    const sourceEgressId = this.selectedStage?.egressPayloadId || this.selectedStage?.stagedPayloadId;
+                    const cleanContract = this.cleanseContract(this.resolvedEgressPayload);
+                    const cleanContractJson = JSON.stringify(cleanContract, null, 2);
+
+                    let synthesizedPrompt = '';
+                    if (stance === 'build') {
+                        synthesizedPrompt = this.synthesizeBuildDirective(this.resolvedEgressPayload);
+                    } else if (stance === 'plan') {
+                        synthesizedPrompt = `Formulate canonical Moqui architecture plan based on Step #${parentId} specification.`;
+                    } else {
+                        synthesizedPrompt = `Refine requirements and continue discussion based on Step #${parentId} outputs.`;
+                    }
+
+                    const resp = await axios.post('/rest/s1/agi-ai/pipeline/step/fork', {
+                        sourceStepId: parentId,
+                        targetStanceEnumId: stanceEnumId,
+                        ingressPayloadId: sourceEgressId,
+                        modifiedPayloadJson: cleanContractJson,
+                        directivePrompt: synthesizedPrompt
+                    }, { headers: { 'moquiSessionToken': this.resolveCsrf() } });
+
+                    this.isAdvancing = false;
+                    const newStepId = resp.data?.newStepId;
+                    this.$q?.notify({
+                        type: 'positive',
+                        message: `Successor Step #${newStepId} (${stance.toUpperCase()}) created [DRAFT].`,
+                        icon: 'account_tree'
+                    });
+
+                    this.activePort = 'IN';
+                    this.$emit('stage-dispatched', {
+                        discussionId: this.discussionId,
+                        pipelineStepId: newStepId
+                    });
+                } catch (e) {
+                    this.isAdvancing = false;
+                    this.$q?.notify({
+                        type: 'negative',
+                        message: 'Branch failed: ' + (e.response?.data?.errors || e.message)
+                    });
+                }
+            },
+            async orchestrateModule({ sourceStepId, subplans }) {
+                if (!sourceStepId || !subplans || subplans.length === 0) return;
+
+                this.isAdvancing = true;
+                try {
+                    const resp = await axios.post('/rest/s1/agi-ai/pipeline/orchestrate', {
+                        sourceStepId: sourceStepId,
+                        subplans: subplans,
+                        targetStanceEnumId: 'AamPlan'
+                    }, { headers: { 'moquiSessionToken': this.resolveCsrf() } });
+
+                    this.isAdvancing = false;
+                    const count = resp.data?.spawnedCount || resp.data?.spawnedStepIds?.length || 0;
+                    this.$q?.notify({
+                        type: 'positive',
+                        message: `Successfully orchestrated ${count} sub-screen PLAN steps.`,
+                        icon: 'bolt'
+                    });
+
+                    // Trigger graph refresh
+                    this.$emit('stage-dispatched', {
+                        discussionId: this.discussionId,
+                        pipelineStepId: resp.data?.spawnedStepIds?.[0]
+                    });
+                } catch (e) {
+                    this.isAdvancing = false;
+                    this.$q?.notify({
+                        type: 'negative',
+                        message: 'Orchestration failed: ' + (e.response?.data?.errors || e.message)
+                    });
+                }
+            },
         },
         template: `
             <div class="agi-stage-inspector fit column no-wrap font-mono text-white overflow-hidden" style="background-color: #020617; height: 100%; min-height: 0; width: 100%;">
@@ -886,10 +971,13 @@
                     :is-draft="isDraft"
                     :step-id="stepId"
                     :display-target-artifact-uri="displayTargetArtifactUri"
+                    :egress-payload="resolvedEgressPayload"
                     :is-advancing="isAdvancing"
                     :is-forking="isForking"
                     :is-archiving="isArchiving"
                     @update:active-port="activePort = $event"
+                    @branch-successor="branchSuccessorStep"
+                    @orchestrate-module="orchestrateModule"
                     @advance-to-build="advanceToBuild"
                     @fork-step="forkCurrentStep"
                     @archive-branch="archiveBranch"

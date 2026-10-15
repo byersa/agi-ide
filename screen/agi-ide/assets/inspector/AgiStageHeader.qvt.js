@@ -15,23 +15,85 @@
             displayTargetArtifactUri: { type: String, default: '' },
             isAdvancing: { type: Boolean, default: false },
             isForking: { type: Boolean, default: false },
-            isArchiving: { type: Boolean, default: false }
+            isArchiving: { type: Boolean, default: false },
+            egressPayload: { type: Object, default: () => null }
         },
         emits: [
             'update:activePort',
             'advance-to-build',
+            'branch-successor',
+            'orchestrate-module',
             'fork-step',
             'archive-branch',
             'set-stance',
             'locate-canvas',
             'open-artifact'
         ],
+        data() {
+            return {
+                showOrchestrateDialog: false,
+                isOrchestrating: false,
+                stagedSubplans: []
+            };
+        },
+        computed: {
+            isReadyToOrchestrate() {
+                if (this.isDraft || !this.selectedStage) return false;
+                const p = this.egressPayload || {};
+                const rawBody = String(this.selectedStage.egressJsonData || this.selectedStage.message || '');
+                return p.readyToOrchestrate === true ||
+                    p.status === 'READY_TO_ORCHESTRATE' ||
+                    rawBody.includes('"readyToOrchestrate": true') ||
+                    rawBody.includes('READY TO ORCHESTRATE: YES') ||
+                    rawBody.includes('READY TO ORCHESTRATE:YES');
+            },
+            discoveredModules() {
+                const p = this.egressPayload || {};
+                let mods = [];
+                if (Array.isArray(p.proposedModules) && p.proposedModules.length > 0) {
+                    mods = p.proposedModules;
+                } else if (Array.isArray(p.subplans) && p.subplans.length > 0) {
+                    mods = p.subplans;
+                }
+                return mods;
+            }
+        },
         methods: {
             setPort(port) {
                 this.$emit('update:activePort', port);
             },
             advanceStance(stance) {
                 this.$emit('set-stance', stance);
+            },
+            branchStep(stance) {
+                this.$emit('branch-successor', {
+                    sourceStepId: this.stepId,
+                    targetStance: stance
+                });
+            },
+            openOrchestrationModal() {
+                const mods = this.discoveredModules;
+                this.stagedSubplans = mods.map((m, idx) => ({
+                    selected: true,
+                    key: m.key || 'module_' + (idx + 1),
+                    title: m.title || m.name || 'Sub-Screen ' + (idx + 1),
+                    description: m.description || '',
+                    suggestedArchetype: m.suggestedArchetype || m.archetype || 'master-detail',
+                    targetArtifactUri: m.targetArtifactUri || ''
+                }));
+                this.showOrchestrateDialog = true;
+            },
+            confirmOrchestration() {
+                const active = this.stagedSubplans.filter(s => s.selected);
+                if (active.length === 0) {
+                    this.$q?.notify({ type: 'warning', message: 'Select at least one sub-screen to orchestrate.' });
+                    return;
+                }
+                this.showOrchestrateDialog = false;
+                this.$emit('orchestrate-module', {
+                    sourceStepId: this.stepId,
+                    subplans: active
+                });
             }
         },
         template: `
@@ -47,7 +109,6 @@
                 <!-- TIER 1: STAGE PROVENANCE, STATUS, & [IN]/[OUT] PORT TOGGLE -->
                 <div class="row items-center justify-between full-width q-py-xs" style="min-height: 32px;">
                     
-                    <!-- Left: Badges & Viewport Port Toggle -->
                     <div class="row items-center q-gutter-x-xs no-wrap ellipsis">
                         <template v-if="selectedStage && stepId">
                             <div 
@@ -133,11 +194,6 @@
                             </div>
                             <span class="text-caption text-slate-400 font-mono q-ml-xs" style="font-size: 10px;">Pipeline #{{ discussionId }}</span>
                         </template>
-
-                        <template v-else>
-                            <q-icon name="info" color="slate-500" size="16px" />
-                            <span class="text-caption italic q-ml-xs" style="color: #94a3b8;">Select or create a pipeline initiative.</span>
-                        </template>
                     </div>
 
                     <!-- Right: Target Artifact & DAG Locate -->
@@ -145,12 +201,7 @@
                         <div v-if="displayTargetArtifactUri" class="row items-center q-gutter-x-xs text-caption text-cyan-3">
                             <q-icon name="code" size="12px" />
                             <span class="text-weight-bold" style="font-size: 10px;">{{ displayTargetArtifactUri.split('/').pop() }}</span>
-                            <q-btn 
-                                flat round dense size="xs" 
-                                icon="open_in_new" 
-                                color="amber-4" 
-                                @click="$emit('open-artifact', displayTargetArtifactUri)"
-                            >
+                            <q-btn flat round dense size="xs" icon="open_in_new" color="amber-4" @click="$emit('open-artifact', displayTargetArtifactUri)">
                                 <q-tooltip>Open in Workspace Viewport</q-tooltip>
                             </q-btn>
                         </div>
@@ -161,81 +212,108 @@
                     </div>
                 </div>
 
-                <!-- TIER 2: ACTIONS (ADVANCE, FORK, ARCHIVE) & STANCE CONTROLS -->
+                <!-- TIER 2: ACTIONS & ORCHESTRATION -->
                 <div v-if="selectedStage" class="row items-center justify-between full-width q-pt-xs" style="border-top: 1px solid #1e293b; min-height: 30px;">
+                    
                     <div class="row items-center q-gutter-x-xs">
+                        
+                        <!-- ⚡ ORCHESTRATE MODULE (Appears when readyToOrchestrate is confirmed) -->
                         <q-btn 
-                            v-if="!isDraft && currentActionType === 'plan'"
+                            v-if="isReadyToOrchestrate"
                             flat dense no-caps size="xs"
-                            icon="handyman"
-                            label="Advance to BUILD"
-                            color="amber-3"
-                            class="q-px-xs rounded-borders bg-amber-10 text-weight-bolder"
-                            style="border: 1px solid #f59e0b; height: 22px;"
-                            :loading="isAdvancing"
-                            @click="$emit('advance-to-build')"
+                            icon="bolt"
+                            :label="'Orchestrate Sub-Screens' + (discoveredModules.length > 0 ? ' (' + discoveredModules.length + ')' : '')"
+                            color="white"
+                            class="q-px-sm rounded-borders bg-deep-purple-8 text-weight-bolder q-mr-xs animate-pulse"
+                            style="border: 1px solid #a855f7; height: 22px;"
+                            @click="openOrchestrationModal"
                         >
-                            <q-tooltip>Spawn a downstream BUILD step inheriting this plan's egress contract</q-tooltip>
+                            <q-tooltip>Scope is mature. Decompose and fan out parallel PLAN steps for these sub-screens</q-tooltip>
                         </q-btn>
 
-                        <q-btn 
-                            flat dense no-caps size="xs"
-                            icon="fork_right"
-                            label="Fork Branch"
-                            color="amber-4"
-                            class="q-px-xs rounded-borders"
-                            style="border: 1px solid rgba(251, 191, 36, 0.4); height: 22px;"
-                            :loading="isForking"
-                            @click="$emit('fork-step')"
-                        >
-                            <q-tooltip>Clone input and branch new execution path</q-tooltip>
-                        </q-btn>
+                        <!-- Standard Branching Hub -->
+                        <template v-if="!isDraft">
+                            <span class="text-slate-400 font-mono text-caption text-weight-bold q-mr-xs" style="font-size: 10px;">BRANCH:</span>
+                            
+                            <q-btn flat dense no-caps size="xs" icon="chat" label="+ Discuss" color="cyan-3" class="q-px-xs rounded-borders bg-cyan-10 text-weight-bolder" style="border: 1px solid #0284c7; height: 22px;" :loading="isAdvancing" @click="branchStep('discuss')" />
+                            <q-btn flat dense no-caps size="xs" icon="architecture" label="+ Plan" color="purple-3" class="q-px-xs rounded-borders bg-purple-10 text-weight-bolder" style="border: 1px solid #7c3aed; height: 22px;" :loading="isAdvancing" @click="branchStep('plan')" />
+                            <q-btn flat dense no-caps size="xs" icon="handyman" label="+ Build" color="amber-3" class="q-px-xs rounded-borders bg-amber-10 text-weight-bolder" style="border: 1px solid #f59e0b; height: 22px;" :loading="isAdvancing" @click="branchStep('build')" />
+                        </template>
 
-                        <q-btn 
-                            flat dense no-caps size="xs"
-                            icon="archive"
-                            label="Archive"
-                            color="slate-400"
-                            class="q-px-xs rounded-borders"
-                            style="border: 1px solid #334155; height: 22px;"
-                            :loading="isArchiving"
-                            @click="$emit('archive-branch')"
-                        >
-                            <q-tooltip>Soft-archive this step and downstream sub-branch</q-tooltip>
-                        </q-btn>
+                        <q-btn flat dense no-caps size="xs" icon="fork_right" label="Fork" color="amber-4" class="q-px-xs rounded-borders q-ml-sm" style="border: 1px solid rgba(251, 191, 36, 0.4); height: 22px;" :loading="isForking" @click="$emit('fork-step')" />
+                        <q-btn flat dense no-caps size="xs" icon="archive" label="Archive" color="slate-400" class="q-px-xs rounded-borders" style="border: 1px solid #334155; height: 22px;" :loading="isArchiving" @click="$emit('archive-branch')" />
                     </div>
 
                     <!-- Stance Selector -->
                     <div class="row items-center q-gutter-x-xs">
                         <span class="text-slate-500 font-mono text-caption" style="font-size: 9px;">STANCE:</span>
                         <q-btn-group flat dense style="border: 1px solid #334155; border-radius: 3px;">
-                            <q-btn 
-                                flat dense size="xs" 
-                                :color="currentActionType === 'discuss' ? 'cyan-3' : 'slate-400'" 
-                                :class="currentActionType === 'discuss' ? 'bg-cyan-10 text-weight-bolder' : ''"
-                                style="height: 20px; font-size: 9px;"
-                                label="Discuss" 
-                                @click="advanceStance('discuss')" 
-                            />
-                            <q-btn 
-                                flat dense size="xs" 
-                                :color="currentActionType === 'plan' ? 'purple-3' : 'slate-400'" 
-                                :class="currentActionType === 'plan' ? 'bg-purple-10 text-weight-bolder' : ''"
-                                style="height: 20px; font-size: 9px;"
-                                label="Plan" 
-                                @click="advanceStance('plan')" 
-                            />
-                            <q-btn 
-                                flat dense size="xs" 
-                                :color="currentActionType === 'build' ? 'amber-4' : 'slate-400'" 
-                                :class="currentActionType === 'build' ? 'bg-amber-10 text-weight-bolder' : ''"
-                                style="height: 20px; font-size: 9px;"
-                                label="Build" 
-                                @click="advanceStance('build')" 
-                            />
+                            <q-btn flat dense size="xs" :color="currentActionType === 'discuss' ? 'cyan-3' : 'slate-400'" :class="currentActionType === 'discuss' ? 'bg-cyan-10 text-weight-bolder' : ''" style="height: 20px; font-size: 9px;" label="Discuss" @click="advanceStance('discuss')" />
+                            <q-btn flat dense size="xs" :color="currentActionType === 'plan' ? 'purple-3' : 'slate-400'" :class="currentActionType === 'plan' ? 'bg-purple-10 text-weight-bolder' : ''" style="height: 20px; font-size: 9px;" label="Plan" @click="advanceStance('plan')" />
+                            <q-btn flat dense size="xs" :color="currentActionType === 'build' ? 'amber-4' : 'slate-400'" :class="currentActionType === 'build' ? 'bg-amber-10 text-weight-bolder' : ''" style="height: 20px; font-size: 9px;" label="Build" @click="advanceStance('build')" />
                         </q-btn-group>
                     </div>
                 </div>
+
+                <!-- ORCHESTRATION STAGING DIALOG -->
+                <q-dialog v-model="showOrchestrateDialog" dark persistent>
+                    <q-card dark class="bg-slate-950 font-mono text-white" style="min-width: 580px; max-width: 720px; border: 1px solid #7c3aed;">
+                        <q-card-section class="row items-center justify-between q-py-sm" style="background-color: #1e1b4b; border-bottom: 1px solid #4338ca;">
+                            <div class="row items-center q-gutter-x-sm">
+                                <q-icon name="bolt" color="amber-4" size="20px" />
+                                <span class="text-subtitle2 font-bold text-cyan-2">ORCHESTRATE MODULE SUB-SCREENS</span>
+                            </div>
+                            <q-btn flat round dense icon="close" size="sm" color="slate-400" v-close-popup />
+                        </q-card-section>
+
+                        <q-card-section class="q-py-md">
+                            <div class="text-caption text-slate-300 q-mb-md">
+                                The scope for Step #{{ stepId }} has been marked <strong>READY TO ORCHESTRATE</strong>. Select the sub-screens to branch into parallel draft PLAN steps:
+                            </div>
+
+                            <div class="column q-gutter-y-sm" style="max-height: 380px; overflow-y: auto;">
+                                <div 
+                                    v-for="(sub, sIdx) in stagedSubplans" 
+                                    :key="sIdx"
+                                    class="row items-center justify-between q-pa-sm rounded-borders"
+                                    :style="{
+                                        backgroundColor: sub.selected ? '#0b1329' : '#0f172a',
+                                        border: sub.selected ? '1px solid #0284c7' : '1px solid #1e293b'
+                                    }"
+                                >
+                                    <div class="row items-center q-gutter-x-sm col">
+                                        <q-checkbox v-model="sub.selected" dense color="cyan-4" />
+                                        <div class="column col">
+                                            <div class="row items-center q-gutter-x-xs">
+                                                <span class="text-weight-bold text-cyan-2" style="font-size: 11px;">{{ sub.title }}</span>
+                                                <span class="text-caption text-slate-500 font-mono">({{ sub.key }})</span>
+                                            </div>
+                                            <div class="text-caption text-slate-400 ellipsis" style="font-size: 10px;">{{ sub.description || 'No description provided' }}</div>
+                                        </div>
+                                    </div>
+
+                                    <div class="row items-center q-gutter-x-xs font-mono text-caption" style="font-size: 10px;">
+                                        <q-badge color="purple-9" text-color="white">{{ sub.suggestedArchetype }}</q-badge>
+                                    </div>
+                                </div>
+                            </div>
+                        </q-card-section>
+
+                        <q-card-actions align="right" class="q-pa-md" style="border-top: 1px solid #1e293b;">
+                            <q-btn flat label="Cancel" color="slate-400" dense no-caps class="q-px-sm" v-close-popup />
+                            <q-btn 
+                                color="deep-purple-7" 
+                                text-color="white" 
+                                icon="bolt" 
+                                label="Spawn Parallel Plans" 
+                                dense no-caps 
+                                class="text-weight-bold q-px-md"
+                                @click="confirmOrchestration"
+                            />
+                        </q-card-actions>
+                    </q-card>
+                </q-dialog>
+
             </div>
         `
     };
