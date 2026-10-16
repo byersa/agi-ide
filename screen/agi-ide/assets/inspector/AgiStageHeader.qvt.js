@@ -27,13 +27,15 @@
             'archive-branch',
             'set-stance',
             'locate-canvas',
-            'open-artifact'
+            'open-artifact',
+            'update-target-artifact'
         ],
         data() {
             return {
                 showOrchestrateDialog: false,
                 isOrchestrating: false,
-                stagedSubplans: []
+                stagedSubplans: [],
+                showArtifactModal: false
             };
         },
         computed: {
@@ -94,7 +96,22 @@
                     sourceStepId: this.stepId,
                     subplans: active
                 });
-            }
+            },
+            onArtifactChosenForStep(item) {
+                const rawUri = item.value || '';
+                let canonical = rawUri;
+                if (canonical.includes('runtime/component/')) {
+                    canonical = 'component://' + canonical.substring(canonical.indexOf('runtime/component/') + 'runtime/component/'.length());
+                } else if (!canonical.startsWith('component://')) {
+                    canonical = 'component://' + canonical;
+                }
+
+                this.showArtifactModal = false;
+                this.$emit('update-target-artifact', {
+                    pipelineStepId: this.stepId,
+                    targetArtifactUri: canonical
+                });
+            },
         },
         template: `
             <div 
@@ -198,14 +215,22 @@
 
                     <!-- Right: Target Artifact & DAG Locate -->
                     <div v-if="selectedStage && stepId" class="row items-center q-gutter-x-xs no-wrap">
-                        <div v-if="displayTargetArtifactUri" class="row items-center q-gutter-x-xs text-caption text-cyan-3">
+                        <div class="row items-center q-gutter-x-xs text-caption text-cyan-3">
                             <q-icon name="code" size="12px" />
-                            <span class="text-weight-bold" style="font-size: 10px;">{{ displayTargetArtifactUri.split('/').pop() }}</span>
-                            <q-btn flat round dense size="xs" icon="open_in_new" color="amber-4" @click="$emit('open-artifact', displayTargetArtifactUri)">
+                            <span class="text-weight-bold" style="font-size: 10px;">
+                                {{ displayTargetArtifactUri ? displayTargetArtifactUri.split('/').pop() : 'No Target Artifact' }}
+                            </span>
+                    
+                            <!-- Edit/Change Step Target Artifact Button -->
+                            <q-btn flat round dense size="xs" icon="edit" color="cyan-3" @click="showArtifactModal = true">
+                                <q-tooltip>Change Target Artifact for this Step</q-tooltip>
+                            </q-btn>
+                    
+                            <q-btn v-if="displayTargetArtifactUri" flat round dense size="xs" icon="open_in_new" color="amber-4" @click="$emit('open-artifact', displayTargetArtifactUri)">
                                 <q-tooltip>Open in Workspace Viewport</q-tooltip>
                             </q-btn>
                         </div>
-
+                    
                         <q-btn flat round dense size="xs" icon="my_location" color="cyan-3" @click="$emit('locate-canvas', stepId)">
                             <q-tooltip>Scroll to this card on DAG Canvas</q-tooltip>
                         </q-btn>
@@ -311,6 +336,24 @@
                                 @click="confirmOrchestration"
                             />
                         </q-card-actions>
+                    </q-card>
+                </q-dialog>
+
+                <!-- ARTIFACT SELECTOR MODAL FOR ACTIVE STEP -->
+                <q-dialog v-model="showArtifactModal" position="top">
+                    <q-card style="width: 600px; max-width: 90vw;" class="bg-slate-900 text-white shadow-24 border border-slate-700">
+                        <q-card-section class="row items-center justify-between bg-black q-pa-sm border-bottom-dark">
+                            <div class="text-subtitle2 text-weight-bold font-mono text-cyan-4">
+                                <q-icon name="folder_open" class="q-mr-xs" /> ASSIGN TARGET ARTIFACT (STEP #{{ stepId }})
+                            </div>
+                            <q-btn flat round dense icon="close" text-color="white" v-close-popup />
+                        </q-card-section>
+                        <q-card-section class="q-pa-sm">
+                            <component 
+                                :is="'agi-artifact-palette'" 
+                                @artifact-selected="onArtifactChosenForStep"
+                            ></component>
+                        </q-card-section>
                     </q-card>
                 </q-dialog>
 

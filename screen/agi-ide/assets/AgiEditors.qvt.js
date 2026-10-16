@@ -52,8 +52,9 @@
             closeEditor(edId) {
                 this.$emit('toggle-editor', edId);
             },
-            handleSave() {
-                this.$emit('trigger-save');
+            handleSave(payload) {
+                // Relay the full save payload (artifactUri, xmlContent, layoutTree) to AgiWorkspace
+                this.$emit('trigger-save', payload);
             }
         },
         template: `

@@ -9,6 +9,9 @@
                 <div class="q-mb-xs row items-center justify-between">
                     <div class="row items-center q-gutter-x-sm">
                         <span class="text-caption text-weight-bold text-grey-4 font-mono">XML SCREEN EDITOR</span>
+                        <span v-if="currentArtifactUri" class="text-caption text-cyan-3 font-mono text-weight-bold" style="font-size: 11px;">
+                            [{{ currentArtifactLabel }}]
+                        </span>
                         <q-btn icon="save" label="Save (Ctrl+S)" color="primary" dense size="xs" class="q-px-xs" @click="executeBufferSave" />
                     </div>
                     
@@ -61,7 +64,7 @@
         `,
 
         props: {
-            screenPath: { type: String, required: true },
+            screenPath: { type: String, default: '' },
             layoutTree: { type: [Object, Array], default: () => [] }
         },
 
@@ -70,14 +73,22 @@
                 cmInstance: null,
                 cmAvailable: false,
                 rawXmlSource: '',
+                currentArtifactUri: this.screenPath || '',
                 activeHighlightedMariaId: '',
                 contextBus: null,
                 activeTextMarker: null,
-                localBlueprintTree: { id: "root", tagName: "form", children: [] }
+                localBlueprintTree: { id: "root", tagName: "screen", children: [] },
+                isViewingVirtualBuffer: false,
             };
         },
 
         computed: {
+            currentArtifactLabel() {
+                if (!this.currentArtifactUri) return '';
+                const parts = this.currentArtifactUri.split('/');
+                return parts[parts.length - 1];
+            },
+
             displayElementName() {
                 if (!this.activeHighlightedMariaId) return '';
                 const parts = this.activeHighlightedMariaId.split('#');
@@ -134,16 +145,23 @@
         },
 
         watch: {
+            screenPath: {
+                immediate: true,
+                handler(newPath) {
+                    if (newPath) {
+                        this.currentArtifactUri = newPath;
+                    }
+                }
+            },
             layoutTree: {
                 handler(newTree) {
-                    if (newTree) {
+                    if (newTree && !this.isViewingVirtualBuffer) {
                         this.localBlueprintTree = JSON.parse(JSON.stringify(newTree));
                         this.compileTreeToXmlText();
                     }
                 },
-                immediate: true,
                 deep: true
-            }
+            },
         },
 
         mounted() {
@@ -151,20 +169,36 @@
 
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
             this.contextBus.onmessage = (msg) => {
-                if (msg.data?.event === 'element-selected-by-id') {
+                if (!msg.data) return;
+
+                // 🎯 1. Catch open-screen-artifact broadcast from AgiStudio / Inspector
+                if (msg.data.event === 'open-screen-artifact') {
+                    this.handleOpenScreenArtifact(msg.data);
+                }
+
+                if (msg.data.event === 'element-selected-by-id') {
                     this.highlightAndScrollToSourceElement(msg.data.mariaId, msg.data.node);
                 }
-                if (msg.data?.event === 'artifact-relocated') {
+
+                if (msg.data.event === 'artifact-relocated') {
                     this.clearHighlight();
                 }
             };
 
+            // Window event fallbacks for local component dispatches
             this.onWindowSelection = (e) => {
                 if (e.detail?.event === 'element-selected-by-id' || e.detail?.mariaId) {
                     this.highlightAndScrollToSourceElement(e.detail.mariaId, e.detail.node);
                 }
             };
             window.addEventListener('element-selected-by-id', this.onWindowSelection);
+
+            this.onWindowOpenArtifact = (e) => {
+                if (e.detail?.event === 'open-screen-artifact' || e.detail?.artifactUri) {
+                    this.handleOpenScreenArtifact(e.detail);
+                }
+            };
+            window.addEventListener('open-screen-artifact', this.onWindowOpenArtifact);
         },
 
         beforeUnmount() {
@@ -172,12 +206,77 @@
             if (this.onWindowSelection) {
                 window.removeEventListener('element-selected-by-id', this.onWindowSelection);
             }
+            if (this.onWindowOpenArtifact) {
+                window.removeEventListener('open-screen-artifact', this.onWindowOpenArtifact);
+            }
             if (this.cmInstance) {
                 this.cmInstance.toTextArea?.();
             }
         },
 
         methods: {
+            handleOpenScreenArtifact(payload) {
+                if (!payload) return;
+                const uri = payload.artifactUri || payload.screenPath || '';
+                const xml = payload.stagedXml || payload.rawXmlContent || '';
+                const tree = payload.layoutTree || payload.astTree || null;
+
+                if (uri) this.currentArtifactUri = uri;
+
+                // Case A: A virtual or staged XML string was provided
+                if (xml && typeof xml === 'string' && xml.trim().length > 0) {
+                    this.isViewingVirtualBuffer = true;
+                    this.setEditorContent(xml);
+                    return;
+                }
+
+                // Case B: A Layout Tree AST was provided
+                if (tree && typeof tree === 'object') {
+                    this.isViewingVirtualBuffer = false;
+                    this.localBlueprintTree = JSON.parse(JSON.stringify(tree));
+                    this.compileTreeToXmlText();
+                    return;
+                }
+
+                // Case C: File URI provided without inline content -> Fetch workspace buffer from backend
+                if (uri) {
+                    this.isViewingVirtualBuffer = false;
+                    this.fetchRemoteScreenBuffer(uri);
+                }
+            },
+
+            setEditorContent(text) {
+                this.rawXmlSource = text;
+                if (this.cmInstance) {
+                    if (this.cmInstance.getValue() !== text) {
+                        this.cmInstance.setValue(text);
+                    }
+                    this.$nextTick(() => {
+                        setTimeout(() => this.cmInstance?.refresh(), 50);
+                    });
+                }
+            },
+
+            async fetchRemoteScreenBuffer(uri) {
+                if (!uri) return;
+                const headers = {};
+                if (window.AGI_SERVER_CSRF_TOKEN) {
+                    headers['X-CSRF-Token'] = window.AGI_SERVER_CSRF_TOKEN;
+                }
+                try {
+                    const resp = await axios.get('/rest/s1/agi-ide/getWorkspaceBuffer', {
+                        params: { artifactUri: uri },
+                        headers
+                    });
+                    const xml = resp.data?.bufferText || resp.data?.fileContent || resp.data?.xmlText || '';
+                    if (xml) {
+                        this.setEditorContent(xml);
+                    }
+                } catch (e) {
+                    console.warn(`Could not load remote screen buffer for ${uri}:`, e.message);
+                }
+            },
+
             tryInitCodeMirror(attempts = 0) {
                 if (typeof CodeMirror === 'undefined') {
                     if (attempts < 10) setTimeout(() => this.tryInitCodeMirror(attempts + 1), 100);
@@ -251,18 +350,19 @@
                         layoutTree: this.localBlueprintTree
                     }, { headers });
 
-                    vm.rawXmlSource = response.data?.xmlText || '';
-                    if (vm.cmInstance && vm.cmInstance.getValue() !== vm.rawXmlSource) {
-                        vm.cmInstance.setValue(vm.rawXmlSource);
-                        setTimeout(() => vm.cmInstance?.refresh(), 50);
-                    }
+                    const xml = response.data?.xmlText || '';
+                    vm.setEditorContent(xml);
                 } catch (err) {
                     console.error("Error compiling tree to XML:", err);
                 }
             },
 
             executeBufferSave() {
-                this.$emit('trigger-save', this.localBlueprintTree || this.layoutTree);
+                this.$emit('trigger-save', {
+                    artifactUri: this.currentArtifactUri,
+                    xmlContent: this.rawXmlSource,
+                    layoutTree: this.localBlueprintTree || this.layoutTree
+                });
             },
 
             clearHighlight() {

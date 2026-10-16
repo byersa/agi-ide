@@ -4,8 +4,12 @@
         require-authentication="false">
     <widgets>
         <container style="q-pa-lg text-white font-mono bg-slate-950 full-height">
-            <container style="text-h5 text-cyan-3 q-mb-sm">MoquiAI Home</container>
-            <container style="text-body2 text-slate-400">Overview, metrics, and active initiatives will live here.</container>
+            <container style="text-h5 text-cyan-3 q-mb-sm">
+                <label text="MoquiAI Production"/>
+            </container>
+            <container style="text-body2 text-slate-400">
+                <label text="Active deployed production view and runtime verification."/>
+            </container>
         </container>
     </widgets>
 </screen>

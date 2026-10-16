@@ -136,6 +136,7 @@
             }
         },
         mounted() {
+            window.openProductionPreview = () => this.openProductionView();
             const vm = this;
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
 
@@ -158,9 +159,36 @@
                 }
 
                 if (event.data.event === 'open-screen-artifact' && event.data.artifactUri) {
-                    if (vm.localScreenPath !== event.data.artifactUri) {
-                        vm.executeArtifactSwitch({ value: event.data.artifactUri });
+                    const targetUri = vm.normalizeArtifactUri(event.data.artifactUri);
+                    const hasStagedContent = Boolean(event.data.stagedXml || event.data.layoutTree);
+
+                    if (hasStagedContent) {
+                        vm.localScreenPath = targetUri;
+                        vm.isDirty = true; // Mark as staged/draft in workspace header
+
+                        if (event.data.layoutTree) {
+                            vm.activeWorkspaceBuffer.metaJsonBuffer = event.data.layoutTree;
+                        }
+
+                        // Store into DB workspace buffer asynchronously so subsequent reloads know about it
+                        if (event.data.layoutTree || event.data.stagedXml) {
+                            const bufferPayload = event.data.layoutTree
+                                ? JSON.stringify(event.data.layoutTree)
+                                : JSON.stringify({ _moquiTag: "screen", rawXmlContent: event.data.stagedXml });
+
+                            axios.post('/rest/s1/agi-ide/storeWorkspaceBuffer', {
+                                workspaceBufferId: vm.activeWorkspaceBuffer.workspaceBufferId,
+                                artifactUri: targetUri,
+                                userId: window.AGI_SERVER_USER_ID || 'ANONYMOUS',
+                                metaJsonBuffer: bufferPayload
+                            }, {
+                                headers: { 'moquiSessionToken': vm.resolveCsrfToken() }
+                            }).catch(e => console.warn("Failed background store of staged buffer:", e.message));
+                        }
+                    } else if (vm.localScreenPath !== targetUri) {
+                        vm.executeArtifactSwitch({ value: targetUri });
                     }
+
                     if (!vm.activeEditors.includes('AgiScreenEditor')) {
                         vm.activeEditors.push('AgiScreenEditor');
                     }
@@ -216,6 +244,7 @@
         },
 
         beforeUnmount() {
+            if (window.openProductionPreview) delete window.openProductionPreview;
             if (this._keyHandler) window.removeEventListener('keydown', this._keyHandler);
             if (this._unloadHandler) window.removeEventListener('beforeunload', this._unloadHandler);
             if (this.contextBus) this.contextBus.close();
@@ -286,6 +315,18 @@
                             @click="showArtifactPalette = true"
                         >
                             <q-tooltip>Browse and select component workspace artifacts</q-tooltip>
+                        </q-btn>
+                        <!-- Inside #agi-workspace-header template -->
+                        <q-btn 
+                            flat dense no-caps size="xs"
+                            color="positive" 
+                            icon="play_arrow" 
+                            label="Production" 
+                            class="q-px-xs rounded-borders text-weight-bold"
+                            style="border: 1px solid rgba(74, 222, 128, 0.4); font-size: 11px;"
+                            @click="openProductionView"
+                        >
+                            <q-tooltip>Launch live application screen in dedicated tab</q-tooltip>
                         </q-btn>
                     </div>
 
@@ -571,7 +612,7 @@
                 this.selectedStage = null;
                 this.selectedParentStage = null;
                 if (item.targetArtifactUri) {
-                    this.localScreenPath = item.targetArtifactUri;
+                    this.localScreenPath = this.normalizeArtifactUri(item.targetArtifactUri);
                 }
 
                 // If this is the initial load on mount, KEEP the drawer open so the user can interact with it.
@@ -662,7 +703,7 @@
                 let queryPath = urlParams.get('screenPath') || this.screenPath || '';
 
                 if (queryPath) {
-                    this.localScreenPath = queryPath;
+                    this.localScreenPath = this.normalizeArtifactUri(queryPath);
                 } else {
                     const workspaceToken = "/AgiWorkspace";
                     const wsIndex = path.indexOf(workspaceToken);
@@ -840,29 +881,63 @@
                 }
             },
 
-            async handleChildEditorSave() {
-                const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
-                const activeBlueprint = ideStore ? ideStore.getActiveBlueprint : this.activeWorkspaceBuffer.metaJsonBuffer;
-
-                if (!activeBlueprint) return;
-
+            async handleChildEditorSave(savePayload = null) {
                 const activeUser = window.AGI_SERVER_USER_ID || 'ANONYMOUS';
                 const headers = {
                     'moquiSessionToken': this.resolveCsrfToken(),
                     'Content-Type': 'application/json'
                 };
-                const jsonStringPayload = JSON.stringify(activeBlueprint);
+
+                let targetUri = this.localScreenPath;
+                let rawXml = null;
+                let activeBlueprint = null;
+
+                if (savePayload && typeof savePayload === 'object') {
+                    if (savePayload.artifactUri) targetUri = this.normalizeArtifactUri(savePayload.artifactUri);
+                    if (savePayload.xmlContent) rawXml = savePayload.xmlContent;
+                    if (savePayload.layoutTree) activeBlueprint = savePayload.layoutTree;
+                }
+
+                // If no explicit payload passed, check Pinia store or existing buffer
+                if (!activeBlueprint && !rawXml) {
+                    const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
+                    activeBlueprint = ideStore ? ideStore.getActiveBlueprint : this.activeWorkspaceBuffer.metaJsonBuffer;
+                }
+
+                // If we have raw XML (e.g., from AgiScreenEditor), parse it to tree first to keep AST in sync
+                if (rawXml && rawXml.trim()) {
+                    try {
+                        const parseResp = await axios.post('/rest/s1/agi-ide/parseXmlToTree', {
+                            artifactUri: targetUri,
+                            xmlContent: rawXml
+                        }, { headers });
+                        if (parseResp.data?.layoutTree) {
+                            activeBlueprint = parseResp.data.layoutTree;
+                            this.activeWorkspaceBuffer.metaJsonBuffer = activeBlueprint;
+                        }
+                    } catch (pe) {
+                        console.warn("Could not parse raw XML to AST before save:", pe.message);
+                    }
+                }
+
+                if (!activeBlueprint && !rawXml) return;
+
+                const jsonStringPayload = activeBlueprint ? JSON.stringify(activeBlueprint) : null;
 
                 try {
-                    await axios.post('/rest/s1/agi-ide/storeWorkspaceBuffer', {
-                        workspaceBufferId: this.activeWorkspaceBuffer.workspaceBufferId,
-                        artifactUri: this.localScreenPath,
-                        userId: activeUser,
-                        metaJsonBuffer: jsonStringPayload
-                    }, { headers });
+                    if (jsonStringPayload) {
+                        await axios.post('/rest/s1/agi-ide/storeWorkspaceBuffer', {
+                            workspaceBufferId: this.activeWorkspaceBuffer.workspaceBufferId,
+                            artifactUri: targetUri,
+                            userId: activeUser,
+                            metaJsonBuffer: jsonStringPayload
+                        }, { headers });
+                    }
 
+                    // Pass both xmlText and metaJsonBuffer so save#ScreenXml can write directly
                     const fileSaveResponse = await axios.post('/rest/s1/agi-ide/saveScreenXml', {
-                        artifactUri: this.localScreenPath,
+                        artifactUri: targetUri,
+                        xmlText: rawXml || null,
                         metaJsonBuffer: jsonStringPayload
                     }, { headers });
 
@@ -870,13 +945,14 @@
                         this.isDirty = false;
                         this.$q?.notify({
                             type: 'positive',
-                            message: 'Screen XML successfully compiled and saved to disk!'
+                            message: `Successfully saved ${targetUri.split('/').pop()} to disk!`,
+                            icon: 'save'
                         });
 
                         if (this.contextBus) {
                             this.contextBus.postMessage({
                                 event: 'artifact-saved-to-disk',
-                                artifactUri: this.localScreenPath
+                                artifactUri: targetUri
                             });
                         }
                     }
@@ -917,7 +993,8 @@
 
             executeArtifactSwitch(item) {
                 this.showArtifactPalette = false;
-                const uri = item.value || '';
+                const rawUri = item.value || '';
+                const uri = this.normalizeArtifactUri(rawUri);
 
                 if (uri.endsWith('.xml')) {
                     this.localScreenPath = uri;
@@ -946,7 +1023,42 @@
                         targetComponent: this.targetComponentName
                     });
                 }
-            }
+            },
+            normalizeArtifactUri(rawUri) {
+                if (!rawUri || typeof rawUri !== 'string') return '';
+                let uri = rawUri.trim();
+                if (uri.startsWith('component://')) return uri;
+
+                const compMarker = 'runtime/component/';
+                const markerIdx = uri.indexOf(compMarker);
+                if (markerIdx !== -1) {
+                    return 'component://' + uri.substring(markerIdx + compMarker.length);
+                }
+
+                // If it's a relative path like "screen/nursinghome.xml"
+                if (!uri.startsWith('/')) {
+                    return `component://${this.targetComponentName}/${uri}`;
+                }
+
+                return uri;
+            },
+            openProductionView() {
+                let targetUrl = `/apps/${this.targetComponentName}`;
+
+                if (this.localScreenPath && this.localScreenPath.startsWith(`component://${this.targetComponentName}/screen/`)) {
+                    let subPath = this.localScreenPath
+                        .replace(`component://${this.targetComponentName}/screen/`, '')
+                        .replace(/\.xml$/, '');
+
+                    // Exclude root application screens from appending duplicate paths
+                    if (subPath !== this.targetComponentName && !subPath.endsWith('/' + this.targetComponentName)) {
+                        targetUrl = `/apps/${this.targetComponentName}/${subPath}`;
+                    }
+                }
+
+                // Using a named target ('moqui-production-preview') reuses the same preview tab on repeated clicks
+                window.open(targetUrl, 'moqui-production-preview');
+            },
         },
     };
 

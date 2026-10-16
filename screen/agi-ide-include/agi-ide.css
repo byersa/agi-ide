@@ -219,3 +219,43 @@
 .markdown-body tr:nth-child(even) {
     background-color: rgba(15, 23, 42, 0.5);
 }
+
+/* ========================================================================== */
+/* AGI THEME CONTRACT: FORCE DARK HEADER CONTRAST                             */
+/* ========================================================================== */
+/* Guarantee header background and text contrast across all agi-ide screens */
+.q-header,
+header.q-header,
+.m-screen-header,
+[data-maria-id="agi-ide#container-0"] {
+    background-color: #020617 !important;
+    color: #f1f5f9 !important;
+}
+
+[data-maria-id="agi-ide#container-0"] a.q-link {
+    color: #94a3b8 !important;
+    text-decoration: none;
+}
+
+[data-maria-id="agi-ide#container-0"] a.q-link:hover {
+    color: #38bdf8 !important;
+}
+
+/* Ensure links inside header are always legible */
+.q-header a,
+.q-header .m-link,
+.q-header .q-btn {
+    color: #cbd5e1 !important;
+}
+
+.q-header a:hover,
+.q-header .m-link:hover {
+    color: #38bdf8 !important;
+}
+
+.q-header a.text-cyan-2,
+.q-header .m-link.bg-slate-900 {
+    background-color: #0f172a !important;
+    color: #38bdf8 !important;
+    border: 1px solid #0284c7 !important;
+}

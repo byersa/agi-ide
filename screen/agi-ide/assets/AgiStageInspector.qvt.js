@@ -634,12 +634,17 @@
             triggerOpenArtifact(uri) {
                 const targetUri = uri || this.displayTargetArtifactUri;
                 if (!targetUri) {
-                    this.$q.notify({ type: 'warning', message: 'No target artifact URI specified.' });
+                    this.$q?.notify({ type: 'warning', message: 'No target artifact URI specified.' });
                     return;
                 }
+
+                const payload = this.resolvedEgressPayload;
+                const astTree = payload?.astTree || payload?.layoutTree || null;
+
                 this.$emit('open-artifact', {
                     artifactUri: targetUri,
-                    rawXmlContent: this.resolvedRawXml || null
+                    rawXmlContent: this.resolvedRawXml || null,
+                    astTree: astTree
                 });
             },
 
@@ -957,6 +962,39 @@
                     });
                 }
             },
+            async handleUpdateTargetArtifact({ pipelineStepId, targetArtifactUri }) {
+                if (!pipelineStepId || !targetArtifactUri) return;
+
+                try {
+                    await axios.post('/rest/s1/agi-ai/pipeline/step/artifact', {
+                        pipelineStepId: pipelineStepId,
+                        targetArtifactUri: targetArtifactUri
+                    }, {
+                        headers: { 'moquiSessionToken': this.resolveCsrf() }
+                    });
+
+                    // Update local step state
+                    if (this.selectedStage) {
+                        this.selectedStage.targetArtifactUri = targetArtifactUri;
+                    }
+                    this.inputTargetArtifact = targetArtifactUri;
+
+                    this.$q?.notify({
+                        type: 'positive',
+                        message: `Target artifact for Step #${pipelineStepId} set to: ${targetArtifactUri.split('/').pop()}`,
+                        icon: 'check'
+                    });
+
+                    // Notify parent workspace so localScreenPath aligns if desired
+                    this.$emit('open-artifact', { artifactUri: targetArtifactUri });
+
+                } catch (e) {
+                    this.$q?.notify({
+                        type: 'negative',
+                        message: 'Failed to update artifact: ' + (e.response?.data?.errors || e.message)
+                    });
+                }
+            },
         },
         template: `
             <div class="agi-stage-inspector fit column no-wrap font-mono text-white overflow-hidden" style="background-color: #020617; height: 100%; min-height: 0; width: 100%;">
@@ -984,6 +1022,7 @@
                     @set-stance="advanceToNext"
                     @locate-canvas="locateStageOnCanvas"
                     @open-artifact="triggerOpenArtifact"
+                    @update-target-artifact="handleUpdateTargetArtifact"
                 />
 
                 <!-- 2. SINGLE FULL-WIDTH INSPECTOR VIEWPORT -->

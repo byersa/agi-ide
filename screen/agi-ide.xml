@@ -50,33 +50,34 @@
     <widgets>
         <screen-layout view="hHh lpR fFf">
             <screen-header elevated="false" style="background-color: #020617; border-bottom: 1px solid #1e293b; height: 42px; min-height: 42px;">
-                <container style="row items-center justify-between full-width font-mono text-white q-px-md" style-extra="height: 42px; background-color: #020617; border-bottom: 1px solid #1e293b;">
+                <container style="row items-center justify-between full-width font-mono bg-black text-white q-px-md" style-extra="height: 42px; background-color: #020617; border-bottom: 1px solid #1e293b;">
                     <!-- LEFT: BRAND -->
                     <container style="row items-center q-gutter-x-sm">
                         <label text="memory" style="font-size: 20px; font-family: 'Material Icons'; color: #22d3ee;"/>
-                        <label text="MoquiAI" style="text-subtitle1 text-weight-bolder text-cyan-3" style-extra="letter-spacing: 0.5px;"/>
+                        <label text="MoquiAI" style="text-subtitle1 text-weight-bolder text-cyan-3"/>
                     </container>
-
+                
                     <!-- CENTER: PRIMARY NAVIGATION -->
                     <container style="row items-center q-gutter-x-xs text-caption">
                         <link url="/agi-ide/Home" text="Home" 
-                              style="q-px-sm text-slate-300" 
-                              style-extra="text-decoration: none; border-radius: 4px; padding-top: 4px; padding-bottom: 4px;"/>
-                        <link url="/agi-ide/Production" text="Production" 
-                              style="q-px-sm text-slate-300" 
-                              style-extra="text-decoration: none; border-radius: 4px; padding-top: 4px; padding-bottom: 4px;"/>
+                              style="q-px-sm text-grey-4"/>
+                        <link url="javascript:void(0)" text="Production" 
+                              link-type="anchor"
+                              style="q-px-sm text-grey-4" 
+                              tooltip="Launch production preview in dedicated tab">
+                            <parameter name="onclick" value="window.openProductionPreview ? window.openProductionPreview() : window.open('/apps/nursinghome', 'moqui-production-preview'); return false;"/>
+                        </link>
                         <link url="/agi-ide/Develop" text="Develop" 
-                              style="text-weight-bolder q-px-sm text-cyan-2 bg-slate-900" 
-                              style-extra="text-decoration: none; border-radius: 4px; border: 1px solid #0284c7; padding-top: 4px; padding-bottom: 4px;"/>
+                              style="text-weight-bolder q-px-sm text-cyan-2 bg-grey-10" 
+                              style-extra="border: 1px solid #0284c7;"/>
                         <link url="/agi-ide/Documentation" text="Documentation" 
-                              style="q-px-sm text-slate-300" 
-                              style-extra="text-decoration: none; border-radius: 4px; padding-top: 4px; padding-bottom: 4px;"/>
+                              style="q-px-sm text-grey-4"/>
                     </container>
-
+                
                     <!-- RIGHT: USER & VERSION -->
                     <container style="row items-center q-gutter-x-sm">
-                        <label text="${activeUserId}" style="text-caption text-slate-300"/>
-                        <container style="bg-cyan-9 rounded-borders q-px-xs text-weight-bold" style-extra="font-size: 10px;">
+                        <label text="${activeUserId}" style="text-caption text-grey-4"/>
+                        <container style="bg-cyan-9 rounded-borders q-px-xs text-weight-bold">
                             <label text="v1.0" style="text-white"/>
                         </container>
                     </container>

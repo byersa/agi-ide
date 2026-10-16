@@ -690,17 +690,15 @@ ${widgetsSb.toString()}    </widgets>
         </actions>
     </service>
 
-    <!-- ===================================================================== -->
-    <!-- SAVE SCREEN XML BACK TO DISK                                          -->
-    <!-- ===================================================================== -->
     <service verb="save" noun="ScreenXml" type="inline">
         <description>
-            Compiles the Meta-JSON blueprint layout tree back into standard Moqui XML, 
+            Writes standard Moqui XML directly or compiles the Meta-JSON blueprint layout tree back into XML,
             validates against xml-screen-3.xsd, and writes it cleanly formatted to disk.
         </description>
         <in-parameters>
             <parameter name="artifactUri" type="String" required="true"/>
-            <parameter name="metaJsonBuffer" type="String" required="true"/>
+            <parameter name="xmlText" type="String" required="false" allow-html="any"/>
+            <parameter name="metaJsonBuffer" type="String" required="false"/>
         </in-parameters>
         <out-parameters>
             <parameter name="status" type="String"/>
@@ -714,41 +712,48 @@ ${widgetsSb.toString()}    </widgets>
                 import java.io.File
                 import org.moqui.resource.ResourceReference
 
-                if (!artifactUri || !artifactUri.startsWith("component://")) {
+                String effectiveUri = artifactUri ? artifactUri.trim() : ""
+                if (effectiveUri.contains("runtime/component/")) {
+                    effectiveUri = "component://" + effectiveUri.substring(effectiveUri.indexOf("runtime/component/") + "runtime/component/".length())
+                }
+
+                if (!effectiveUri || !effectiveUri.startsWith("component://")) {
                     ec.logger.error("❌ Cannot write XML file: Invalid artifactUri: ${artifactUri}")
                     context.status = "INVALID_URI"
                     return
                 }
 
-                String relPath = artifactUri.replace("component://", "")
+                String relPath = effectiveUri.replace("component://", "")
                 File physicalFile = new File("runtime/component/" + relPath)
                 if (!physicalFile.exists()) {
                     physicalFile.getParentFile().mkdirs()
                 }
 
-                ResourceReference rr = ec.resource.getLocationReference(artifactUri)
+                ResourceReference rr = ec.resource.getLocationReference(effectiveUri)
                 if (rr == null || !rr.supportsWrite()) {
-                    ec.logger.error("❌ Cannot write XML file: ResourceLocation ${artifactUri} is not writable.")
+                    ec.logger.error("❌ Cannot write XML file: ResourceLocation ${effectiveUri} is not writable.")
                     context.status = "NOT_WRITABLE"
                     return
                 }
 
-                Map layoutTree
-                if (metaJsonBuffer instanceof Map) {
-                    layoutTree = (Map) metaJsonBuffer
-                } else if (metaJsonBuffer instanceof CharSequence && metaJsonBuffer.toString().trim().startsWith('{')) {
-                    layoutTree = new JsonSlurper().parseText(metaJsonBuffer.toString()) as Map
-                } else {
-                    ec.logger.error("❌ Invalid JSON payload provided to save#ScreenXml: ${metaJsonBuffer}")
-                    context.status = "INVALID_PAYLOAD"
-                    return
+                String rawXml = xmlText ? xmlText.trim() : ""
+
+                // If raw XML was not supplied, compile from metaJsonBuffer
+                if (!rawXml && metaJsonBuffer) {
+                    Map layoutTree
+                    if (metaJsonBuffer instanceof Map) {
+                        layoutTree = (Map) metaJsonBuffer
+                    } else if (metaJsonBuffer instanceof CharSequence && metaJsonBuffer.toString().trim().startsWith('{')) {
+                        layoutTree = new JsonSlurper().parseText(metaJsonBuffer.toString()) as Map
+                    }
+
+                    if (layoutTree) {
+                        Map compileResult = ec.service.sync().name("org.moqui.ide.AgiIdeServices.compile#TreeToXml")
+                            .parameter("layoutTree", layoutTree)
+                            .call()
+                        rawXml = compileResult.xmlText
+                    }
                 }
-
-                Map compileResult = ec.service.sync().name("org.moqui.ide.AgiIdeServices.compile#TreeToXml")
-                    .parameter("layoutTree", layoutTree)
-                    .call()
-
-                String rawXml = compileResult.xmlText
 
                 if (rawXml && rawXml.trim().length() > 0) {
                     String prettyXml = rawXml
@@ -761,10 +766,17 @@ ${widgetsSb.toString()}    </widgets>
 
                     rr.putText(prettyXml)
                     ec.logger.info("💾 [save#ScreenXml] Successfully written validated XML to file: ${rr.getUrl()}")
+
+                    // Invalidate caches so runtime picks it up immediately
+                    try {
+                        ec.resource.clearAllCaches()
+                        ec.screen.clearScreenCache(effectiveUri)
+                    } catch (Exception ignored) {}
+
                     context.status = "SUCCESS"
                     context.savedFilePath = rr.getUrl()
                 } else {
-                    ec.logger.error("❌ XML Compilation generated an empty output. Save aborted to prevent file corruption.")
+                    ec.logger.error("❌ XML content is empty. Save aborted to prevent file corruption.")
                     context.status = "COMPILATION_ERROR"
                 }
             ]]></script>
