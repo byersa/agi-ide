@@ -1,36 +1,71 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Master Detail View"
-        description="Master entity summary card on top with multiple related detail form-lists below">
+        require-authentication="true"
+        default-subscreen="${defaultSubscreen}">
 
-    <parameter name="partyId" required="true"/>
+  <parameter name="${masterIdField}"/>
 
-    <actions>
-        <entity-find-one entity-name="mantle.party.Person" value-field="person">
-            <field-map field-name="partyId"/>
-        </entity-find-one>
-    </actions>
+  <transition name="selectItem">
+    <default-response url=".">
+      <parameter name="${masterIdField}"/>
+    </default-response>
+  </transition>
 
-    <widgets>
-        <container-box style="q-mb-md">
-            <box-header title="Primary Details"/>
-            <box-body>
-                <form-single name="MasterSummaryForm" map="person">
-                    <field name="partyId"><default-field title="ID"><display/></default-field></field>
-                    <field name="firstName"><default-field title="First Name"><display/></default-field></field>
-                    <field name="lastName"><default-field title="Last Name"><display/></default-field></field>
-                </form-single>
-            </box-body>
-        </container-box>
+  <subscreens default-item="${defaultSubscreen}">
+    <subscreens-item name="${defaultSubscreen}" location="component://${componentName}/screen/${componentName}/${screenName}/${defaultSubscreen}.xml" menu-title="${defaultSubscreenTitle}"/>
+  </subscreens>
 
-        <container-box>
-            <box-header title="Related List"/>
-            <box-body>
-                <form-list name="DetailList" list="detailList" skip-form="true">
-                    <field name="itemDescription"><default-field title="Description"><display/></default-field></field>
-                </form-list>
-            </box-body>
-        </container-box>
-    </widgets>
+  <actions>
+    <entity-find entity-name="${masterEntityName}" list="masterList" authorize-skip="view">
+      <order-by field-name="${orderByField}"/>
+    </entity-find>
+    <set field="selectedId" from="${masterIdField} ?: (masterList ? masterList[0]?.${masterIdField} : null)"/>
+    <entity-find-one entity-name="${masterEntityName}" value-field="selectedRecord" authorize-skip="view">
+      <field-map field-name="${masterIdField}" from="selectedId"/>
+    </entity-find-one>
+  </actions>
+
+  <widgets>
+    <container id="${screenName}-root" style="q-pa-md">
+      <label type="h4" text="${screenTitle}"/>
+
+      <container style="row q-col-gutter-md q-mt-sm">
+        <!-- Master Column: Selection Directory (e.g. 4-span) -->
+        <container style="col-12 col-md-4">
+          <label type="h5" text="${masterListTitle}" style="q-mb-sm"/>
+          <form-list name="${screenName}MasterList" list="masterList" skip-form="true">
+            <field name="${masterIdField}">
+              <header-field title="ID"/>
+              <default-field>
+                <link text="${${masterIdField}}" url=".">
+                  <parameter name="${masterIdField}" from="${masterIdField}"/>
+                </link>
+              </default-field>
+            </field>
+            <field name="${masterDisplayField}">
+              <header-field title="${masterDisplayTitle}"/>
+              <default-field><display/></default-field>
+            </field>
+          </form-list>
+        </container>
+
+        <!-- Detail Column: Form Details & Subscreens Viewport (e.g. 8-span) -->
+        <container style="col-12 col-md-8">
+          <label type="h5" text="${detailTitle}" style="q-mb-sm"/>
+          <form-single name="${screenName}DetailForm" map="selectedRecord">
+            <field name="${masterIdField}">
+              <default-field title="ID"><display/></default-field>
+            </field>
+            <field name="${masterDisplayField}">
+              <default-field title="${masterDisplayTitle}"><display/></default-field>
+            </field>
+          </form-single>
+
+          <subscreens-menu id="${screenName}-nav-tabs" type="tab" style="q-mt-md"/>
+          <subscreens-active id="${screenName}-body-viewport"/>
+        </container>
+      </container>
+    </container>
+  </widgets>
 </screen>

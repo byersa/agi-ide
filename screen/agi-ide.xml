@@ -61,12 +61,21 @@
                     <container style="row items-center q-gutter-x-xs text-caption">
                         <link url="/agi-ide/Home" text="Home" 
                               style="q-px-sm text-grey-4"/>
-                        <link url="javascript:void(0)" text="Production" 
-                              link-type="anchor"
-                              style="q-px-sm text-grey-4" 
-                              tooltip="Launch production preview in dedicated tab">
-                            <parameter name="onclick" value="window.openProductionPreview ? window.openProductionPreview() : window.open('/apps/nursinghome', 'moqui-production-preview'); return false;"/>
-                        </link>
+                    
+                        <!-- PRODUCTION BUTTON: Direct DOM element with click handler -->
+                        <container style="q-px-sm text-grey-4 cursor-pointer"
+                                   style-extra="display: inline-block;">
+                            <render-mode>
+                                <text type="html"><![CDATA[
+                                    <span onclick="if (window.openProductionPreview) { window.openProductionPreview(); } else { window.open('/nursinghome', 'moqui-production-preview'); } return false;"
+                                          class="text-grey-4 cursor-pointer q-px-sm"
+                                          style="font-family: inherit; font-size: inherit; text-decoration: none;">
+                                        Production
+                                    </span>
+                                ]]></text>
+                            </render-mode>
+                        </container>
+                    
                         <link url="/agi-ide/Develop" text="Develop" 
                               style="text-weight-bolder q-px-sm text-cyan-2 bg-grey-10" 
                               style-extra="border: 1px solid #0284c7;"/>

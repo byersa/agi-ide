@@ -69,6 +69,12 @@
         </method>
     </resource>
 
+    <resource name="parseXmlToTree">
+        <method type="post">
+            <service name="org.moqui.ide.AgiIdeServices.parse#XmlToTree"/>
+        </method>
+    </resource>
+
     <resource name="deleteArtifact">
         <method type="post">
             <service name="org.moqui.ide.AgiIdeServices.delete#WorkspaceArtifact"/>

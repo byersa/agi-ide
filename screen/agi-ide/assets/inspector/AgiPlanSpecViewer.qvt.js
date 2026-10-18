@@ -157,13 +157,13 @@
                                 style="background-color: #020617; border: 1px solid #1e293b;"
                             >
                                 <span class="text-weight-bold text-cyan-2" style="font-size: 10px;">{{ tr.name }}</span>
-                                <span class="text-amber-3" style="font-size: 10px;">{{ tr.service }}</span>
+                                <span class="text-amber-3" style="font-size: 10px;">{{ tr.service || tr.method }}</span>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- 4. ENTITY FIELD BINDINGS -->
+                <!-- 4. ENTITY FIELD BINDINGS (POLYMORPHIC) -->
                 <div v-if="plan.entityFieldBindings.length > 0" class="column q-gutter-y-xs q-pa-sm rounded-borders" style="background-color: #0f172a; border: 1px solid #1e293b;">
                     <span class="text-caption font-bold text-slate-400 q-mb-xs block" style="font-size: 11px;">FIELD BINDINGS:</span>
                     <div class="column q-gutter-y-xs">
@@ -173,13 +173,37 @@
                             class="q-pa-sm rounded font-mono text-caption" 
                             style="background-color: #020617; border: 1px solid #334155;"
                         >
-                            <div class="row items-center justify-between">
-                                <span class="text-weight-bold text-cyan-3" style="font-size: 11px;">{{ b.entity }}</span>
-                                <span class="text-amber-3 text-weight-bold" style="font-size: 11px;">Target: {{ b.targetWidget }}</span>
-                            </div>
-                            <div class="q-mt-xs text-caption text-slate-400" style="font-size: 10px;">
-                                Fields: <span class="text-slate-200">{{ b.fields ? b.fields.join(', ') : 'All' }}</span>
-                            </div>
+                            <!-- Mode 1: Discrete Field Binding (fieldName present) -->
+                            <template v-if="b.fieldName">
+                                <div class="row items-center justify-between">
+                                    <div class="row items-center q-gutter-x-xs no-wrap ellipsis">
+                                        <span class="text-weight-bold text-cyan-3" style="font-size: 11px;">{{ b.entityName || b.entity }}</span>
+                                        <span class="text-slate-400">.</span>
+                                        <span class="text-weight-bold text-white" style="font-size: 11px;">{{ b.fieldName }}</span>
+                                    </div>
+                                    <div class="row items-center q-gutter-x-xs">
+                                        <q-badge v-if="b.encrypt" color="purple-9" text-color="white" style="font-size: 9px; padding: 1px 4px;">
+                                            ENCRYPTED
+                                        </q-badge>
+                                        <span v-if="b.label" class="text-amber-3 text-caption" style="font-size: 10px;">
+                                            {{ b.label }}
+                                        </span>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- Mode 2: Grouped Entity-to-Widget Binding (fields list or targetWidget present) -->
+                            <template v-else>
+                                <div class="row items-center justify-between">
+                                    <span class="text-weight-bold text-cyan-3" style="font-size: 11px;">{{ b.entity || b.entityName }}</span>
+                                    <span v-if="b.targetWidget || b.targetForm" class="text-amber-3 text-weight-bold" style="font-size: 11px;">
+                                        Target: {{ b.targetWidget || b.targetForm }}
+                                    </span>
+                                </div>
+                                <div class="q-mt-xs text-caption text-slate-400" style="font-size: 10px;">
+                                    Fields: <span class="text-slate-200">{{ Array.isArray(b.fields) ? b.fields.join(', ') : 'All' }}</span>
+                                </div>
+                            </template>
                         </div>
                     </div>
                 </div>

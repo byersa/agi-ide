@@ -1043,20 +1043,21 @@
                 return uri;
             },
             openProductionView() {
-                let targetUrl = `/apps/${this.targetComponentName}`;
+                // 1. Root route points directly to /nursinghome rather than /apps/nursinghome
+                let targetUrl = `/${this.targetComponentName}`;
 
                 if (this.localScreenPath && this.localScreenPath.startsWith(`component://${this.targetComponentName}/screen/`)) {
                     let subPath = this.localScreenPath
                         .replace(`component://${this.targetComponentName}/screen/`, '')
                         .replace(/\.xml$/, '');
 
-                    // Exclude root application screens from appending duplicate paths
+                    // Exclude root application screens from appending duplicate paths (e.g., nursinghome/nursinghome)
                     if (subPath !== this.targetComponentName && !subPath.endsWith('/' + this.targetComponentName)) {
-                        targetUrl = `/apps/${this.targetComponentName}/${subPath}`;
+                        targetUrl = `/${this.targetComponentName}/${subPath}`;
                     }
                 }
 
-                // Using a named target ('moqui-production-preview') reuses the same preview tab on repeated clicks
+                // Reuse or open the dedicated production tab
                 window.open(targetUrl, 'moqui-production-preview');
             },
         },
