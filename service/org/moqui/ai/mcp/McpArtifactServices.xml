@@ -85,4 +85,82 @@
         </actions>
     </service>
 
+    <!-- ===================================================================== -->
+    <!-- FIND ENTITIES MCP TOOL SERVICE                                        -->
+    <!-- ===================================================================== -->
+    <service verb="find" noun="Entities" authenticate="anonymous-all" read-only="true">
+        <description><![CDATA[
+            MCP Tool: Searches Moqui and Mantle UDM entity definitions by package 
+            prefix or search keyword. Returns live, verified canonical entity names, 
+            primary keys, and field counts to prevent hallucinations.
+        ]]></description>
+        <in-parameters>
+            <parameter name="searchTerm" required="false"/>
+            <parameter name="packagePrefix" default-value="mantle" required="false"/>
+            <parameter name="limit" type="Integer" default="25"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="entityNames" type="List"/>
+            <parameter name="entitySummaries" type="List"/>
+            <parameter name="totalCount" type="Integer"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                String term = (searchTerm ?: "").trim().toLowerCase()
+                String pkg = (packagePrefix ?: "").trim().toLowerCase()
+                int maxRows = (limit ?: 25) as int
+
+                // 1. ec.entity.getAllEntityNames() returns a Set<String>
+                def allEntities = ec.entity.getAllEntityNames()
+                List<String> matched = []
+
+                for (Object entObj : allEntities) {
+                    String fullEntName = entObj.toString()
+                    String lower = fullEntName.toLowerCase()
+                    
+                    if (pkg && !lower.startsWith(pkg) && !lower.contains(".${pkg}.")) {
+                        continue
+                    }
+                    if (term && !lower.contains(term)) {
+                        continue
+                    }
+
+                    matched.add(fullEntName)
+                }
+
+                matched.sort()
+
+                List results = []
+                List summaries = []
+                int count = 0
+
+                for (String entName : matched) {
+                    if (count >= maxRows) break
+                    results.add(entName)
+
+                    try {
+                        def ed = ec.entity.getEntityDefinition(entName)
+                        if (ed != null) {
+                            summaries.add([
+                                entityName: entName,
+                                shortName : ed.getEntityName(),
+                                groupName : ed.groupName ?: '',
+                                pkFields  : ed.getPkFieldNames() as List,
+                                fieldCount: ed.getFieldNames(true, true)?.size() ?: 0
+                            ])
+                        }
+                    } catch (Exception ignore) {
+                        summaries.add([entityName: entName])
+                    }
+                    count++
+                }
+
+                context.entityNames = results
+                context.entitySummaries = summaries
+                context.totalCount = matched.size()
+                ec.logger.info("🔎 [MCP find#Entities] Matched ${matched.size()} entities (returning top ${results.size()}) for prefix='${pkg}', term='${term}'")
+            ]]></script>
+        </actions>
+    </service>
+
 </services>

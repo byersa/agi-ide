@@ -58,6 +58,25 @@
                     mods = p.subplans;
                 }
                 return mods;
+            },
+            productionScreenUrl() {
+                const uri = this.displayTargetArtifactUri || '';
+                if (!uri || !uri.includes('.xml')) return '';
+
+                // Extract relative path from component://<component>/screen/<path>.xml
+                // Example: component://nursinghome/screen/nursinghome.xml -> /nursinghome
+                // Example: component://nursinghome/screen/nursinghome/facility.xml -> /nursinghome/facility
+                const match = uri.match(/component:\/\/[^\/]+\/screen\/(.+)\.xml$/);
+                if (match && match[1]) {
+                    let path = match[1];
+                    // If root screen matches component name (e.g. nursinghome/nursinghome), collapse to /nursinghome
+                    const parts = path.split('/');
+                    if (parts.length === 2 && parts[0] === parts[1]) {
+                        return '/' + parts[0];
+                    }
+                    return '/' + path;
+                }
+                return '';
             }
         },
         methods: {
@@ -72,6 +91,14 @@
                     sourceStepId: this.stepId,
                     targetStance: stance
                 });
+            },
+            openInProduction() {
+                const url = this.productionScreenUrl;
+                if (!url) {
+                    this.$q?.notify({ type: 'warning', message: 'No valid screen path to view in production.' });
+                    return;
+                }
+                window.open(url, '_blank');
             },
             openOrchestrationModal() {
                 const mods = this.discoveredModules;
@@ -213,7 +240,7 @@
                         </template>
                     </div>
 
-                    <!-- Right: Target Artifact & DAG Locate -->
+                    <!-- Right: Target Artifact, Production Link & DAG Locate -->
                     <div v-if="selectedStage && stepId" class="row items-center q-gutter-x-xs no-wrap">
                         <div class="row items-center q-gutter-x-xs text-caption text-cyan-3">
                             <q-icon name="code" size="12px" />
@@ -226,8 +253,23 @@
                                 <q-tooltip>Change Target Artifact for this Step</q-tooltip>
                             </q-btn>
                     
+                            <!-- Open in AGI-IDE Workspace Viewport -->
                             <q-btn v-if="displayTargetArtifactUri" flat round dense size="xs" icon="open_in_new" color="amber-4" @click="$emit('open-artifact', displayTargetArtifactUri)">
-                                <q-tooltip>Open in Workspace Viewport</q-tooltip>
+                                <q-tooltip>Open in IDE Workspace Viewport</q-tooltip>
+                            </q-btn>
+
+                            <!-- 🚀 VIEW IN PRODUCTION RUNTIME TAB -->
+                            <q-btn 
+                                v-if="productionScreenUrl" 
+                                flat dense no-caps size="xs" 
+                                icon="visibility" 
+                                label="View Live"
+                                color="positive" 
+                                class="q-px-xs rounded-borders bg-green-10 text-weight-bolder q-ml-xs"
+                                style="border: 1px solid #10b981; height: 22px; font-size: 9px;"
+                                @click="openInProduction"
+                            >
+                                <q-tooltip>Open this screen in live Production runtime mode ({{ productionScreenUrl }})</q-tooltip>
                             </q-btn>
                         </div>
                     

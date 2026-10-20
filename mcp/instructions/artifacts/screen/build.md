@@ -26,3 +26,11 @@
 - Entity Queries & Auth Bypasses:
   - On read-only `<entity-find>` or `<entity-find-one>` operations against core Mantle UDM entities (`mantle.party.Person`, `mantle.party.Party`, `mantle.facility.Facility`, `mantle.work.effort.WorkEffort`), ALWAYS include `authorize-skip="view"`.
   - For HIPAA PHI / sensitive fields (e.g. `birthDate`, medical data), include `encrypt="true"` on the field.
+  - Strict Tag Names: In `rawXmlContent`, every XML element MUST use its actual tag name (e.g. `<parameter>`, `<transition>`, `<actions>`, `<entity-find>`, `<label>`, `<form-list>`). NEVER wrap non-widget tags inside `<widgets>` and NEVER output `<container nodeName="...">`!
+
+<FollowUp>
+
+<ElicitationsGroup>
+Would you like to inspect `AgiIdeServices.compile#TreeToXml` to see if the serializer produced `<container nodeName="...">`, or update `build.md` to prevent the LLM from outputting AST syntax in `rawXmlContent`?
+</ElicitationsGroup>
+</FollowUp>

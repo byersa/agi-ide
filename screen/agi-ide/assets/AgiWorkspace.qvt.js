@@ -160,34 +160,11 @@
 
                 if (event.data.event === 'open-screen-artifact' && event.data.artifactUri) {
                     const targetUri = vm.normalizeArtifactUri(event.data.artifactUri);
-                    const hasStagedContent = Boolean(event.data.stagedXml || event.data.layoutTree);
+                    vm.localScreenPath = targetUri;
+                    vm.isDirty = false;
 
-                    if (hasStagedContent) {
-                        vm.localScreenPath = targetUri;
-                        vm.isDirty = true; // Mark as staged/draft in workspace header
-
-                        if (event.data.layoutTree) {
-                            vm.activeWorkspaceBuffer.metaJsonBuffer = event.data.layoutTree;
-                        }
-
-                        // Store into DB workspace buffer asynchronously so subsequent reloads know about it
-                        if (event.data.layoutTree || event.data.stagedXml) {
-                            const bufferPayload = event.data.layoutTree
-                                ? JSON.stringify(event.data.layoutTree)
-                                : JSON.stringify({ _moquiTag: "screen", rawXmlContent: event.data.stagedXml });
-
-                            axios.post('/rest/s1/agi-ide/storeWorkspaceBuffer', {
-                                workspaceBufferId: vm.activeWorkspaceBuffer.workspaceBufferId,
-                                artifactUri: targetUri,
-                                userId: window.AGI_SERVER_USER_ID || 'ANONYMOUS',
-                                metaJsonBuffer: bufferPayload
-                            }, {
-                                headers: { 'moquiSessionToken': vm.resolveCsrfToken() }
-                            }).catch(e => console.warn("Failed background store of staged buffer:", e.message));
-                        }
-                    } else if (vm.localScreenPath !== targetUri) {
-                        vm.executeArtifactSwitch({ value: targetUri });
-                    }
+                    // Always hydrate the true state from the server/disk
+                    vm.hydrateWorkspaceBuffer();
 
                     if (!vm.activeEditors.includes('AgiScreenEditor')) {
                         vm.activeEditors.push('AgiScreenEditor');

@@ -295,7 +295,7 @@
     </service>
 
     <!-- ===================================================================== -->
-    <!-- GET WORKSPACE BUFFER (With Self-Healing Invalidation)                 -->
+    <!-- GET WORKSPACE BUFFER (With Forensic Logging & URI Normalization)      -->
     <!-- ===================================================================== -->
     <service verb="get" noun="WorkspaceBuffer" type="inline">
         <description>Retrieves active Meta-JSON layout tree, self-healing stale or corrupted buffers automatically.</description>
@@ -316,36 +316,46 @@
                 import org.moqui.resource.ResourceReference
                 
                 String activeUserId = userId ?: ec.user.getUserId() ?: "system_ide_user"
+
+                // Canonical URI Normalization
+                String rawUri = artifactUri ? artifactUri.trim().replace('\\', '/') : ""
+                String effectiveUri = rawUri
+                if (effectiveUri.contains("runtime/component/")) {
+                    effectiveUri = "component://" + effectiveUri.substring(effectiveUri.indexOf("runtime/component/") + "runtime/component/".length())
+                }
+
+                ec.logger.warn("🔍 [FORENSIC get#WorkspaceBuffer] REQUEST: rawUri=[${rawUri}], effectiveUri=[${effectiveUri}], user=[${activeUserId}], forceReload=[${forceReloadFromDisk}]")
                 
                 long diskLastModified = 0
-                ResourceReference rr = ec.resource.getLocationReference(artifactUri)
+                ResourceReference rr = ec.resource.getLocationReference(effectiveUri)
                 if (rr != null && rr.exists) {
                     diskLastModified = rr.getLastModified()
                 }
-
+                
                 def bufferList = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
-                    .condition("artifactUri", artifactUri)
+                    .condition("artifactUri", effectiveUri)
                     .condition("userId", activeUserId)
                     .orderBy("-lastUpdatedStamp")
                     .useCache(false)
                     .list()
                 
                 def bufferRow = bufferList ? bufferList[0] : null
-
+                ec.logger.warn("🔍 [FORENSIC get#WorkspaceBuffer] DB LOOKUP: matched=${bufferList.size()} row(s), activeRowId=${bufferRow?.workspaceBufferId}, lastUpdated=${bufferRow?.lastUpdatedStamp}, diskMod=${diskLastModified}")
+                
                 boolean forceReload = forceReloadFromDisk
                 if (bufferRow != null && diskLastModified > 0) {
                     long bufferTime = bufferRow.lastUpdatedStamp ? bufferRow.lastUpdatedStamp.time : 0
                     if (diskLastModified > bufferTime) {
-                        ec.logger.info("🔄 [get#WorkspaceBuffer] Disk file is newer than buffer (${diskLastModified} > ${bufferTime}). Invalidating stale buffer for: ${artifactUri}")
+                        ec.logger.warn("🔄 [FORENSIC get#WorkspaceBuffer] Disk is newer than DB (${diskLastModified} > ${bufferTime}). Invalidation triggered for: ${effectiveUri}")
                         forceReload = true
                     }
                 }
 
-                // 🛠️ SELF-HEALING: Detect corrupted tag names or stub projections in existing buffer
+                // Self-healing detection
                 if (bufferRow?.metaJsonBuffer && !forceReload) {
                     String rawJson = bufferRow.metaJsonBuffer
                     if (rawJson.contains('"name":"subscreens-item"') || (rawJson.contains('"children":[]') && !rawJson.contains('form-single') && !rawJson.contains('field') && !rawJson.contains('subscreens'))) {
-                        ec.logger.warn("🩹 [Self-Healing] Detected corrupted or stub AST in WorkspaceBuffer for: ${artifactUri}. Auto-healing from disk.")
+                        ec.logger.warn("🩹 [FORENSIC get#WorkspaceBuffer] Corrupted AST detected in DB row [${bufferRow.workspaceBufferId}]. Healing from disk.")
                         forceReload = true
                     }
                 } else {
@@ -356,19 +366,28 @@
                     context.workspaceBufferId = bufferRow.workspaceBufferId
                     context.metaJsonBuffer = bufferRow.metaJsonBuffer
                     context.isDiskNewer = false
+                    
+                    boolean hasBadEnt = bufferRow.metaJsonBuffer.contains("WorkEffortPartyPrp")
+                    boolean hasAssign = bufferRow.metaJsonBuffer.contains("WorkEffortPartyAssignment")
+                    boolean hasGoodEnt = bufferRow.metaJsonBuffer.contains("WorkEffortParty")
+                    ec.logger.warn("✅ [FORENSIC get#WorkspaceBuffer] RETURNING CACHED ROW [${bufferRow.workspaceBufferId}]: contains Prp=${hasBadEnt}, Assignment=${hasAssign}, Party=${hasGoodEnt}")
                 } else {
-                    ec.logger.info("📄 [get#WorkspaceBuffer] Parsing fresh XML tree from disk for: ${artifactUri}")
+                    ec.logger.warn("📄 [FORENSIC get#WorkspaceBuffer] PARSING FRESH XML FROM DISK for: ${effectiveUri}")
                     Map parseResult = ec.service.sync().name("org.moqui.ide.AgiIdeServices.parse#XmlToTree")
-                        .parameter("artifactUri", artifactUri)
+                        .parameter("artifactUri", effectiveUri)
                         .call()
     
                     if (parseResult?.layoutTree) {
                         String jsonFromDisk = JsonOutput.toJson(parseResult.layoutTree)
+                        boolean diskHasBad = jsonFromDisk.contains("WorkEffortPartyPrp")
+                        boolean diskHasAssign = jsonFromDisk.contains("WorkEffortPartyAssignment")
+                        boolean diskHasGood = jsonFromDisk.contains("WorkEffortParty")
+                        ec.logger.warn("📄 [FORENSIC get#WorkspaceBuffer] DISK PARSE RESULT: contains Prp=${diskHasBad}, Assignment=${diskHasAssign}, Party=${diskHasGood}")
     
                         Map storeResult = ec.service.sync().name("org.moqui.ide.AgiIdeServices.store#WorkspaceBuffer")
                             .parameters([
                                 workspaceBufferId: bufferRow?.workspaceBufferId,
-                                artifactUri: artifactUri, 
+                                artifactUri: effectiveUri, 
                                 userId: activeUserId, 
                                 metaJsonBuffer: jsonFromDisk
                             ])
@@ -377,6 +396,9 @@
                         context.workspaceBufferId = storeResult.workspaceBufferId
                         context.metaJsonBuffer = jsonFromDisk
                         context.isDiskNewer = true
+                        ec.logger.warn("💾 [FORENSIC get#WorkspaceBuffer] STORED FRESH DISK AST into row [${storeResult.workspaceBufferId}]")
+                    } else {
+                        ec.logger.error("❌ [FORENSIC get#WorkspaceBuffer] Failed to parse layoutTree for: ${effectiveUri}")
                     }
                 }
             ]]></script>
@@ -384,7 +406,7 @@
     </service>
 
     <!-- ===================================================================== -->
-    <!-- STORE WORKSPACE BUFFER                                                -->
+    <!-- STORE WORKSPACE BUFFER (With Call-Stack & Content Forensics)           -->
     <!-- ===================================================================== -->
     <service verb="store" noun="WorkspaceBuffer" type="inline">
         <description>Stores or updates a Meta-JSON workspace layout buffer safely.</description>
@@ -401,15 +423,57 @@
             <script><![CDATA[
                 String activeUserId = userId ?: ec.user.getUserId() ?: "system_ide_user"
                 String targetBufferId = workspaceBufferId
+
+                // Canonical URI Normalization
+                String rawUri = artifactUri ? artifactUri.trim().replace('\\', '/') : ""
+                String effectiveUri = rawUri
+                if (effectiveUri.contains("runtime/component/")) {
+                    effectiveUri = "component://" + effectiveUri.substring(effectiveUri.indexOf("runtime/component/") + "runtime/component/".length())
+                }
+
+                // 🔍 TRACE CALLER STACK: Identify if this was called via REST or internal service
+                List<String> callStack = []
+                StackTraceElement[] stElements = Thread.currentThread().getStackTrace()
+                for (int i = 0; i < Math.min(stElements.length, 18); i++) {
+                    String line = stElements[i].toString()
+                    if (line.contains("org.moqui") && !line.contains("getStackTrace")) {
+                        callStack.add(line.replaceAll("org.moqui.", ""))
+                    }
+                }
+                String callerTrace = callStack.take(5).join(" -> ")
+
+                // 🔍 INSPECT AST CONTENTS FOR ENTITIES
+                String bufStr = metaJsonBuffer ?: ""
+                // In store#WorkspaceBuffer:
+                if (bufStr.contains("WorkEffortPartyPrp")) {
+                    ec.logger.warn("🛑 [store#WorkspaceBuffer] Intercepted and blocked stale AST containing WorkEffortPartyPrp from client!")
+                    return
+                }
+                boolean hasBadPrp = bufStr.contains("WorkEffortPartyPrp")
+                boolean hasAssignment = bufStr.contains("WorkEffortPartyAssignment")
+                boolean hasCanonical = bufStr.contains("mantle.work.effort.WorkEffortParty")
+
+                ec.logger.warn("""
+🚨 ====================================================================
+🚨 [FORENSIC store#WorkspaceBuffer] INCOMING SAVE INVOCATION
+🚨 Raw URI:         [${rawUri}]
+🚨 Effective URI:   [${effectiveUri}]
+🚨 Target BufferId: [${targetBufferId ?: 'NONE (Will query/insert)'}]
+🚨 User:            [${activeUserId}]
+🚨 Buffer Length:   ${bufStr.length()} chars
+🚨 Entity Flags:    [WorkEffortPartyPrp=${hasBadPrp}] [WorkEffortPartyAssignment=${hasAssignment}] [WorkEffortParty=${hasCanonical}]
+🚨 Call Origin:     ${callerTrace}
+🚨 ====================================================================""")
     
                 if (!targetBufferId) {
                     def existingList = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
-                        .condition("artifactUri", artifactUri)
+                        .condition("artifactUri", effectiveUri)
                         .condition("userId", activeUserId)
                         .orderBy("-lastUpdatedStamp")
                         .list()
                     if (existingList) {
                         targetBufferId = existingList[0].workspaceBufferId
+                        ec.logger.warn("🔍 [FORENSIC store#WorkspaceBuffer] Resolved existing bufferId: [${targetBufferId}]")
                     }
                 }
                 
@@ -420,19 +484,20 @@
                         .one()
                 }   
                 if (bufferValue) {
+                    bufferValue.artifactUri = effectiveUri
                     bufferValue.metaJsonBuffer = metaJsonBuffer
                     bufferValue.lastUpdatedStamp = ec.user.nowTimestamp
                     bufferValue.update()
-                    ec.logger.info("💾 [store#WorkspaceBuffer] Updated DB row [${targetBufferId}] for URI: ${artifactUri}")
+                    ec.logger.warn("💾 [FORENSIC store#WorkspaceBuffer] UPDATED existing DB row [${targetBufferId}] for URI: ${effectiveUri}")
                 } else {
                     bufferValue = ec.entity.makeValue("org.moqui.ai.WorkspaceBuffer")
-                    bufferValue.artifactUri = artifactUri
+                    bufferValue.artifactUri = effectiveUri
                     bufferValue.userId = activeUserId
                     bufferValue.metaJsonBuffer = metaJsonBuffer
                     bufferValue.setSequencedIdPrimary()
                     bufferValue.create()
                     targetBufferId = bufferValue.workspaceBufferId
-                    ec.logger.info("💾 [store#WorkspaceBuffer] Created DB row [${targetBufferId}] for URI: ${artifactUri}")
+                    ec.logger.warn("💾 [FORENSIC store#WorkspaceBuffer] CREATED new DB row [${targetBufferId}] for URI: ${effectiveUri}")
                 }
     
                 context.workspaceBufferId = targetBufferId
@@ -514,20 +579,26 @@
                 }
 
                 def ignoredAttributes = [
-                    '_moquiTag', 'tagName', 'type', '@type', 'mariaId', 'id', 'attributes', 
+                    'nodeName', '_moquiTag', 'tagName', 'type', '@type', 'mariaId', 'id', 'attributes', 
                     'ai-intent', 'children', 'widgets', 'subscreens', 'screen', 'location', 'pathIndex'
                 ]
+
+                def resolveNodeTagName = { Map nodeMap ->
+                    if (!nodeMap) return "container"
+                    String raw = nodeMap.nodeName ?: nodeMap._moquiTag ?: nodeMap.tag ?: nodeMap.tagName ?: nodeMap.type ?: nodeMap['@type']
+                    if (!raw && nodeMap.name && (nodeMap.children || nodeMap.attributes || nodeMap.name.contains("-"))) {
+                        raw = nodeMap.name
+                    }
+                    return (raw ?: "container").toString().replaceAll("^@", "")
+                }
 
                 def buildXmlNode
                 buildXmlNode = { Map nodeMap, int indentLevel ->
                     if (!nodeMap) return ""
                 
-                    String rawTag = nodeMap._moquiTag ?: nodeMap.tag ?: nodeMap.tagName ?: nodeMap.type ?: nodeMap['@type']
-                    if (!rawTag && nodeMap.name && (nodeMap.children || nodeMap.attributes || nodeMap.name.contains("-"))) {
-                        rawTag = nodeMap.name
-                    }
-                    rawTag = (rawTag ?: "container").toString().replaceAll("^@", "")
+                    String rawTag = resolveNodeTagName(nodeMap)
                 
+                    // Unwrap screen or widgets if encountered inside the widget hierarchy
                     if (rawTag == "screen" || rawTag == "widgets") {
                         StringBuilder rootSb = new StringBuilder()
                         List rootChildren = []
@@ -592,7 +663,9 @@
 
                 def buildSubscreensXml = { Map subsMap ->
                     if (!subsMap) return ""
-                    String defaultAttr = subsMap.defaultItem ? " default-item=\"${escapeXml(subsMap.defaultItem.toString())}\"" : ""
+                    Map sAttrs = (subsMap.attributes instanceof Map) ? (subsMap.attributes as Map) : [:]
+                    String defItem = subsMap.defaultItem ?: sAttrs.get('default-item') ?: sAttrs.get('defaultItem') ?: ""
+                    String defaultAttr = defItem ? " default-item=\"${escapeXml(defItem.toString())}\"" : ""
                     StringBuilder ssb = new StringBuilder("    <subscreens${defaultAttr}>\n")
                     
                     List subItems = []
@@ -630,7 +703,7 @@
                     collectNodes = { Object nodeObj ->
                         if (!(nodeObj instanceof Map)) return
                         Map node = (Map) nodeObj
-                        String tag = node._moquiTag ?: (node.tagName ?: node.type ?: node.name ?: "").toString().replaceAll("^@", "")
+                        String tag = resolveNodeTagName(node)
 
                         if (tag == "parameter") {
                             topParameters.add(node)
@@ -640,11 +713,16 @@
                             if (!topSubscreens) topSubscreens = node
                         } else if (tag == "actions") {
                             topActions.add(node)
-                        } else if (tag == "screen" || tag == "widgets") {
+                        } else if (tag == "screen") {
                             List ch = []
                             if (node.children instanceof List) ch.addAll(node.children)
                             if (node.widgets instanceof List) ch.addAll(node.widgets)
                             ch.each { collectNodes(it) }
+                        } else if (tag == "widgets") {
+                            List ch = []
+                            if (node.children instanceof List) ch.addAll(node.children)
+                            if (node.widgets instanceof List) ch.addAll(node.widgets)
+                            ch.each { widgetNodes.add((Map) it) }
                         } else {
                             widgetNodes.add(node)
                         }
@@ -677,9 +755,30 @@
                         widgetsSb.append(buildXmlNode(wNode, 2))
                     }
 
+                    // Extract screen root attributes (e.g., default-subscreen, require-authentication)
+                    Map rootAttrs = [:]
+                    if (layoutTree.attributes instanceof Map) rootAttrs.putAll(layoutTree.attributes as Map)
+                    layoutTree.each { k, v ->
+                        if (v != null && !ignoredAttributes.contains(k.toString()) && !(v instanceof Map) && !(v instanceof List)) {
+                            rootAttrs[k.toString()] = v.toString()
+                        }
+                    }
+                    if (topSubscreens && !rootAttrs.containsKey("default-subscreen")) {
+                        Map sAttrs = (topSubscreens.attributes instanceof Map) ? (topSubscreens.attributes as Map) : [:]
+                        String dItem = topSubscreens.defaultItem ?: sAttrs.get('default-item') ?: sAttrs.get('defaultItem')
+                        if (dItem) rootAttrs["default-subscreen"] = dItem
+                    }
+
+                    StringBuilder rootAttrSb = new StringBuilder()
+                    rootAttrs.each { ak, av ->
+                        if (ak != "xmlns:xsi" && ak != "xsi:noNamespaceSchemaLocation") {
+                            rootAttrSb.append(" ${ak}=\"${escapeXml(av.toString())}\"")
+                        }
+                    }
+
                     // STRICT SCHEMA SEQUENCE: parameter*, transition*, subscreens?, actions?, widgets?
                     xmlText = """<?xml version="1.0" encoding="UTF-8"?>
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"${rootAttrSb.toString()}>
 ${paramsSb.toString()}${transitionsSb.toString()}${subscreensText}${actionsSb.toString()}    <widgets>
 ${widgetsSb.toString()}    </widgets>
 </screen>"""
@@ -690,19 +789,28 @@ ${widgetsSb.toString()}    </widgets>
         </actions>
     </service>
 
+    <!-- ===================================================================== -->
+    <!-- SAVE SCREEN XML (With Entity Verification & Auto-Stubbing)           -->
+    <!-- ===================================================================== -->
     <service verb="save" noun="ScreenXml" type="inline">
         <description>
-            Writes standard Moqui XML directly or compiles the Meta-JSON blueprint layout tree back into XML,
-            validates against xml-screen-3.xsd, and writes it cleanly formatted to disk.
+            Compiles layoutTree AST (if provided), sanitizes tags, validates syntax with Xerces,
+            verifies that all referenced entities exist in Moqui/Mantle UDM, auto-stubs any declared
+            subscreens missing from disk, and writes cleanly formatted XML.
         </description>
         <in-parameters>
             <parameter name="artifactUri" type="String" required="true"/>
             <parameter name="xmlText" type="String" required="false" allow-html="any"/>
             <parameter name="metaJsonBuffer" type="String" required="false"/>
+            <parameter name="autoCorrect" type="Boolean" default="true"/>
+            <parameter name="autoStubSubscreens" type="Boolean" default="true"/>
+            <parameter name="verifyEntities" type="Boolean" default="true"/>
         </in-parameters>
         <out-parameters>
             <parameter name="status" type="String"/>
             <parameter name="savedFilePath" type="String"/>
+            <parameter name="stubbedScreens" type="List"/>
+            <parameter name="errorList" type="List"/>
         </out-parameters>
         <actions>
             <script><![CDATA[
@@ -710,9 +818,14 @@ ${widgetsSb.toString()}    </widgets>
                 import groovy.xml.XmlUtil
                 import groovy.xml.XmlParser
                 import java.io.File
+                import java.util.regex.Matcher
+                import java.util.regex.Pattern
                 import org.moqui.resource.ResourceReference
 
-                String effectiveUri = artifactUri ? artifactUri.trim() : ""
+                context.errorList = []
+                context.stubbedScreens = []
+
+                String effectiveUri = artifactUri ? artifactUri.trim().replace('\\', '/') : ""
                 if (effectiveUri.contains("runtime/component/")) {
                     effectiveUri = "component://" + effectiveUri.substring(effectiveUri.indexOf("runtime/component/") + "runtime/component/".length())
                 }
@@ -723,24 +836,11 @@ ${widgetsSb.toString()}    </widgets>
                     return
                 }
 
-                String relPath = effectiveUri.replace("component://", "")
-                File physicalFile = new File("runtime/component/" + relPath)
-                if (!physicalFile.exists()) {
-                    physicalFile.getParentFile().mkdirs()
-                }
-
-                ResourceReference rr = ec.resource.getLocationReference(effectiveUri)
-                if (rr == null || !rr.supportsWrite()) {
-                    ec.logger.error("❌ Cannot write XML file: ResourceLocation ${effectiveUri} is not writable.")
-                    context.status = "NOT_WRITABLE"
-                    return
-                }
-
                 String rawXml = xmlText ? xmlText.trim() : ""
 
-                // If raw XML was not supplied, compile from metaJsonBuffer
+                // 1. If raw XML was not supplied, compile from metaJsonBuffer AST
                 if (!rawXml && metaJsonBuffer) {
-                    Map layoutTree
+                    Map layoutTree = null
                     if (metaJsonBuffer instanceof Map) {
                         layoutTree = (Map) metaJsonBuffer
                     } else if (metaJsonBuffer instanceof CharSequence && metaJsonBuffer.toString().trim().startsWith('{')) {
@@ -755,30 +855,163 @@ ${widgetsSb.toString()}    </widgets>
                     }
                 }
 
-                if (rawXml && rawXml.trim().length() > 0) {
-                    String prettyXml = rawXml
-                    try {
-                        def parsedXml = new groovy.xml.XmlParser(false, false).parseText(rawXml)
-                        prettyXml = XmlUtil.serialize(parsedXml)
-                    } catch (Exception formatEx) {
-                        ec.logger.warn("⚠️ Could not pretty-print XML, writing raw output instead: ${formatEx.message}")
-                    }
-
-                    rr.putText(prettyXml)
-                    ec.logger.info("💾 [save#ScreenXml] Successfully written validated XML to file: ${rr.getUrl()}")
-
-                    // Invalidate caches so runtime picks it up immediately
-                    try {
-                        ec.resource.clearAllCaches()
-                        ec.screen.clearScreenCache(effectiveUri)
-                    } catch (Exception ignored) {}
-
-                    context.status = "SUCCESS"
-                    context.savedFilePath = rr.getUrl()
-                } else {
+                if (!rawXml || rawXml.trim().length() == 0) {
                     ec.logger.error("❌ XML content is empty. Save aborted to prevent file corruption.")
                     context.status = "COMPILATION_ERROR"
+                    return
                 }
+
+                String cleanedXml = rawXml
+
+                // 2. Auto-Correction & Sanitization
+                if (autoCorrect) {
+                    // Sanitize <container-row> and <container-col>
+                    if (cleanedXml.contains("<container-row") || cleanedXml.contains("<container-col")) {
+                        cleanedXml = cleanedXml.replaceAll(/<container-row\b[^>]*>/, '<container style="row q-col-gutter-md">')
+                        cleanedXml = cleanedXml.replaceAll(/<\/container-row>/, '</container>')
+                        cleanedXml = cleanedXml.replaceAll(/<container-col\b[^>]*md="(\d+)"[^>]*>/, '<container style="col-12 col-md-$1">')
+                        cleanedXml = cleanedXml.replaceAll(/<container-col\b[^>]*>/, '<container style="col-12 col-md">')
+                        cleanedXml = cleanedXml.replaceAll(/<\/container-col>/, '</container>')
+                    }
+
+                    // Sanitize deprecated <subscreens-tabs>
+                    if (cleanedXml.contains("<subscreens-tabs")) {
+                        cleanedXml = cleanedXml.replaceAll(/<subscreens-tabs\b([^>]*)\/>/, '<subscreens-menu$1 type="tab"/>')
+                    }
+
+                    // Sanitize invalid field containers <container name="display"/>
+                    if (cleanedXml.contains('<container name="display"/>') || cleanedXml.contains('<container name="display">')) {
+                        cleanedXml = cleanedXml.replaceAll(/<container name="display"\s*\/?>/, '<display/>')
+                        cleanedXml = cleanedXml.replaceAll(/<\/container>/, '')
+                    }
+
+                    // Ensure <subscreens> has default-item declared
+                    if (cleanedXml.contains("<subscreens>") || (cleanedXml.contains("<subscreens ") && !cleanedXml.contains("default-item="))) {
+                        Matcher itemMatcher = (cleanedXml =~ /<subscreens-item\s+[^>]*name="([^"]+)"/)
+                        if (itemMatcher.find()) {
+                            String firstItem = itemMatcher.group(1)
+                            cleanedXml = cleanedXml.replaceFirst(/<subscreens(\s*)/, '<subscreens default-item="' + firstItem + '"$1')
+                        }
+                    }
+                }
+
+                // 3. XML Parse Validation (Xerces check)
+                try {
+                    javax.xml.parsers.DocumentBuilderFactory dbf = javax.xml.parsers.DocumentBuilderFactory.newInstance()
+                    dbf.setNamespaceAware(true)
+                    javax.xml.parsers.DocumentBuilder db = dbf.newDocumentBuilder()
+                    db.parse(new org.xml.sax.InputSource(new java.io.StringReader(cleanedXml)))
+                } catch (Exception parseEx) {
+                    ec.logger.error("❌ XML Syntax/Schema Parse Error in ${effectiveUri}: ${parseEx.message}")
+                    context.errorList.add("XML Syntax/Schema Parse Error: " + parseEx.message)
+                    context.status = "XML_PARSE_ERROR"
+                    return
+                }
+
+                // 4. Entity Verification (Ground-truth check against Moqui entity facade)
+                if (verifyEntities) {
+                    Set<String> verifiedEntities = new HashSet<>()
+                    Matcher entityMatcher = (cleanedXml =~ /(?:entity-name|entity)="([a-zA-Z0-9_\.]+)"/)
+                    while (entityMatcher.find()) {
+                        String entName = entityMatcher.group(1)
+                        if (!verifiedEntities.contains(entName)) {
+                            verifiedEntities.add(entName)
+                            try {
+                                if (!ec.entity.isEntityDefined(entName)) {
+                                    context.errorList.add("Entity definition not found for [${entName}].")
+                                }
+                            } catch (Exception entEx) {
+                                context.errorList.add("Entity [${entName}] lookup error: ${entEx.message}")
+                            }
+                        }
+                    }
+
+                    if (context.errorList) {
+                        ec.logger.error("❌ Entity verification failed for ${effectiveUri}: ${context.errorList}")
+                        context.status = "ENTITY_NOT_FOUND"
+                        
+                        // Push errors to Moqui's message facade so the REST layer returns HTTP 400 with the error text
+                        context.errorList.each { String errMsg ->
+                            ec.message.addError(errMsg)
+                        }
+                        return
+                    }
+                }
+
+                // 5. Auto-Stub Missing Subscreens
+                if (autoStubSubscreens) {
+                    Matcher subItemMatcher = (cleanedXml =~ /<subscreens-item\s+[^>]*location="([^"]+)"(?:\s+[^>]*menu-title="([^"]+)")?/)
+                    while (subItemMatcher.find()) {
+                        String subLoc = subItemMatcher.group(1)
+                        String subTitle = subItemMatcher.group(2) ?: ""
+
+                        if (!subTitle) {
+                            Matcher nameMatcher = (subItemMatcher.group(0) =~ /name="([^"]+)"/)
+                            if (nameMatcher.find()) subTitle = nameMatcher.group(1)
+                        }
+
+                        if (subLoc && subLoc.startsWith("component://")) {
+                            ResourceReference subRr = ec.resource.getLocationReference(subLoc)
+                            if (subRr == null || !subRr.exists) {
+                                String subRelPath = subLoc.replace("component://", "")
+                                File subPhysical = new File("runtime/component/" + subRelPath)
+                                subPhysical.getParentFile().mkdirs()
+
+                                String stubXml = """<?xml version="1.0" encoding="UTF-8"?>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="true">
+    <widgets>
+        <container style="q-pa-md">
+            <container style="q-card q-pa-md bg-white rounded-borders shadow-1">
+                <label type="h5" text="${subTitle ?: 'Module Placeholder'}" style="text-grey-9 q-mb-sm"/>
+                <label type="p" text="This subscreen is in DRAFT status. Use AGI-IDE to plan and build this screen." style="text-grey-7"/>
+            </container>
+        </container>
+    </widgets>
+</screen>"""
+                                subPhysical.text = stubXml
+                                context.stubbedScreens.add(subLoc)
+                                ec.logger.info("🌱 [save#ScreenXml] Auto-stubbed missing subscreen: ${subLoc}")
+                            }
+                        }
+                    }
+                }
+
+                // 6. Ensure parent directories exist for main artifact
+                String relPath = effectiveUri.replace("component://", "")
+                File physicalFile = new File("runtime/component/" + relPath)
+                if (!physicalFile.exists()) {
+                    physicalFile.getParentFile().mkdirs()
+                }
+
+                ResourceReference rr = ec.resource.getLocationReference(effectiveUri)
+                if (rr == null || !rr.supportsWrite()) {
+                    ec.logger.error("❌ Cannot write XML file: ResourceLocation ${effectiveUri} is not writable.")
+                    context.status = "NOT_WRITABLE"
+                    return
+                }
+
+                // 7. Pretty-print and write file
+                String prettyXml = cleanedXml
+                try {
+                    def parsedXml = new groovy.xml.XmlParser(false, false).parseText(cleanedXml)
+                    prettyXml = XmlUtil.serialize(parsedXml)
+                } catch (Exception formatEx) {
+                    ec.logger.warn("⚠️ Could not pretty-print XML, writing sanitized output directly: ${formatEx.message}")
+                }
+
+                rr.putText(prettyXml)
+                ec.logger.info("💾 [save#ScreenXml] Successfully written validated XML to file: ${rr.getUrl()}")
+
+                // 8. Clear Moqui resource and screen caches
+                try {
+                    ec.resource.clearAllCaches()
+                    ec.screen.clearScreenCache(true)
+                } catch (Exception ignored) {}
+
+                context.status = "SUCCESS"
+                context.savedFilePath = rr.getUrl()
             ]]></script>
         </actions>
     </service>
@@ -1124,7 +1357,7 @@ ${widgetsSb.toString()}    </widgets>
     </service>
 
     <!-- ===================================================================== -->
-    <!-- CLEAR WORKSPACE BUFFER                                                -->
+    <!-- CLEAR WORKSPACE BUFFER (With Forensic Logging & Normalization)        -->
     <!-- ===================================================================== -->
     <service verb="clear" noun="WorkspaceBuffer" type="inline">
         <description>Deletes the in-memory/DB workspace buffer for an artifact or all artifacts for the current user.</description>
@@ -1142,16 +1375,29 @@ ${widgetsSb.toString()}    </widgets>
                 String activeUserId = userId ?: ec.user.getUserId() ?: "system_ide_user"
                 int count = 0
 
+                String rawUri = artifactUri ? artifactUri.trim().replace('\\', '/') : ""
+                String effectiveUri = rawUri
+                if (effectiveUri.contains("runtime/component/")) {
+                    effectiveUri = "component://" + effectiveUri.substring(effectiveUri.indexOf("runtime/component/") + "runtime/component/".length())
+                }
+
+                ec.logger.warn("🧹 [FORENSIC clear#WorkspaceBuffer] REQUEST: rawUri=[${rawUri}], effectiveUri=[${effectiveUri}], clearAll=[${clearAll}], user=[${activeUserId}]")
+
                 if (clearAll) {
                     count = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
                         .condition("userId", activeUserId)
                         .deleteAll()
-                    ec.logger.info("🧹 [clear#WorkspaceBuffer] Cleared all (${count}) buffers for user: ${activeUserId}")
-                } else if (artifactUri) {
+                    ec.logger.warn("🧹 [FORENSIC clear#WorkspaceBuffer] Cleared all (${count}) buffers for user: ${activeUserId}")
+                } else if (effectiveUri) {
+                    def cond = ec.entity.conditionFactory.makeCondition([
+                        ec.entity.conditionFactory.makeCondition("artifactUri", "equals", effectiveUri),
+                        ec.entity.conditionFactory.makeCondition("artifactUri", "equals", artifactUri)
+                    ], org.moqui.entity.EntityCondition.JoinOperator.OR)
+
                     count = ec.entity.find("org.moqui.ai.WorkspaceBuffer")
-                        .condition("artifactUri", artifactUri)
+                        .condition(cond)
                         .deleteAll()
-                    ec.logger.info("🧹 [clear#WorkspaceBuffer] Deleted buffer record for: ${artifactUri}")
+                    ec.logger.warn("🧹 [FORENSIC clear#WorkspaceBuffer] Deleted ${count} buffer record(s) matching: ${effectiveUri} / ${artifactUri}")
                 }
 
                 context.status = "SUCCESS"

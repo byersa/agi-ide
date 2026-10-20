@@ -261,4 +261,13 @@
         </method>
     </resource>
 
+    <resource name="findEntities">
+        <method type="get">
+            <service name="org.moqui.ai.mcp.McpArtifactServices.find#Entities"/>
+        </method>
+        <method type="post">
+            <service name="org.moqui.ai.mcp.McpArtifactServices.find#Entities"/>
+        </method>
+    </resource>
+
 </resource>
