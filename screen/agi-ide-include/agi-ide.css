@@ -1,3 +1,7 @@
+/* ========================================================================== */
+/* AGI-IDE CORE STYLES & GLOBAL CONTRAST ENFORCEMENT                          */
+/* ========================================================================== */
+
 .selected-highlight {
     outline: 2px solid #3b82f6 !important;
     box-shadow: 0 0 10px rgba(59, 130, 246, 0.6) !important;
@@ -67,21 +71,68 @@
     padding: 8px;
 }
 
-/* Enforce dark text on inputs within menus/dropdowns */
+/* ========================================================================== */
+/* QUASAR PORTAL & DROPDOWN HIGH-CONTRAST OVERRIDES                           */
+/* ========================================================================== */
+
+/* 1. Global Quasar popup menus, dropdowns, and dialogs */
+.q-menu,
+.q-dialog__inner>.q-card {
+    background-color: #0f172a !important;
+    /* slate-900 */
+    color: #f8fafc !important;
+    /* slate-50 */
+    border: 1px solid #334155 !important;
+    /* slate-700 */
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.75) !important;
+}
+
+/* 2. Menu Items & List Options */
+.q-menu .q-item {
+    color: #e2e8f0 !important;
+    /* slate-200 */
+}
+
+.q-menu .q-item:hover,
+.q-menu .q-item.q-hoverable:hover>.q-focus-helper {
+    background-color: #1e293b !important;
+    /* slate-800 */
+    color: #ffffff !important;
+}
+
+/* 3. Text inputs, labels, and dropdown inputs in menus/dialogs */
 .q-menu .q-field__native,
 .q-item .q-field__native,
 .q-menu .q-field__input,
 .q-item .q-field__input {
-    color: rgba(0, 0, 0, 0.87) !important;
+    color: #f8fafc !important;
+    /* crisp white text */
 }
 
-/* Ensure label color is visible when not focused */
 .q-menu .q-field__label,
 .q-item .q-field__label {
-    color: rgba(0, 0, 0, 0.6) !important;
+    color: #94a3b8 !important;
+    /* slate-400 */
 }
 
-/* Canvas Viewport Base Layout */
+.q-menu .text-caption,
+.q-menu .text-overline {
+    color: #94a3b8 !important;
+    /* slate-400 */
+}
+
+/* 4. Active button state overrides (guarantees readable contrast) */
+.q-btn.bg-amber-500,
+.q-btn.bg-amber-4 {
+    background-color: #f59e0b !important;
+    color: #000000 !important;
+    font-weight: 700 !important;
+}
+
+/* ========================================================================== */
+/* CANVAS VIEWPORT BASE LAYOUT                                                */
+/* ========================================================================== */
+
 #canvas-elements-viewport div[name="container-box"],
 #canvas-elements-viewport div[name="box-body"],
 #canvas-elements-viewport div[name="form-single"] {
@@ -106,10 +157,6 @@
     background: #f8fafc;
 }
 
-.pulse-highlight {
-    animation: agiPulse 1s ease-in-out;
-}
-
 @keyframes agiPulse {
     0% {
         background-color: rgba(25, 118, 210, 0.25);
@@ -120,18 +167,13 @@
     }
 }
 
-/* ========================================================================= */
-/* PRECISE NODE SELECTION & HIGHLIGHTING (PREVENTS CASCADING)               */
-/* ========================================================================= */
-
-/* Remove any global wildcards that style all fields simultaneously */
+/* Precise node selection & highlighting */
 #canvas-elements-viewport .selected-highlight {
     outline: none !important;
     box-shadow: none !important;
     background-color: transparent !important;
 }
 
-/* Apply selection ONLY directly to the target node */
 #canvas-elements-viewport .agi-canvas-selected-node {
     outline: 2px solid #1976D2 !important;
     outline-offset: 1px !important;
@@ -140,14 +182,12 @@
     transition: outline 0.1s ease-in-out;
 }
 
-/* Ensure inner children do not inherit the selection border */
 #canvas-elements-viewport .agi-canvas-selected-node div[name="field"] {
     outline: none;
     box-shadow: none;
     background-color: #f8fafc;
 }
 
-/* If a specific field IS the selected node, highlight ONLY that field */
 #canvas-elements-viewport div[name="field"].agi-canvas-selected-node {
     outline: 2px solid #1976D2 !important;
     outline-offset: 1px !important;
@@ -155,7 +195,6 @@
     background-color: #dbeafe !important;
 }
 
-/* Action Badges: only show on hover of the immediate item or if that exact item is selected */
 .agi-action-badge {
     opacity: 0;
     pointer-events: auto;
@@ -167,9 +206,9 @@
     opacity: 1 !important;
 }
 
-/* ========================================================================= */
-/* CODEMIRROR HOST & LINE WRAPPING ENFORCEMENT                               */
-/* ========================================================================= */
+/* ========================================================================== */
+/* CODEMIRROR HOST & LINE WRAPPING ENFORCEMENT                                */
+/* ========================================================================== */
 
 .screen-editor-container .CodeMirror {
     height: 100% !important;
@@ -223,7 +262,7 @@
 /* ========================================================================== */
 /* AGI THEME CONTRACT: FORCE DARK HEADER CONTRAST                             */
 /* ========================================================================== */
-/* Guarantee header background and text contrast across all agi-ide screens */
+
 .q-header,
 header.q-header,
 .m-screen-header,
@@ -241,7 +280,6 @@ header.q-header,
     color: #38bdf8 !important;
 }
 
-/* Ensure links inside header are always legible */
 .q-header a,
 .q-header .m-link,
 .q-header .q-btn {

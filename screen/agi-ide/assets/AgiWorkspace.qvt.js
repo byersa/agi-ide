@@ -136,6 +136,10 @@
             }
         },
         mounted() {
+            if (this.$q && this.$q.dark) {
+                this.$q.dark.set(true);
+            }
+
             window.openProductionPreview = () => this.openProductionView();
             const vm = this;
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
@@ -163,11 +167,12 @@
                     vm.localScreenPath = targetUri;
                     vm.isDirty = false;
 
-                    // Always hydrate the true state from the server/disk
                     vm.hydrateWorkspaceBuffer();
 
-                    if (!vm.activeEditors.includes('AgiScreenEditor')) {
+                    if (!vm.activeEditors.includes('AgiScreenEditor') && !targetUri.endsWith('.md')) {
                         vm.activeEditors.push('AgiScreenEditor');
+                    } else if (targetUri.endsWith('.md') && !vm.activeEditors.includes('AgiComponentEditor')) {
+                        vm.activeEditors.push('AgiComponentEditor');
                     }
                     return;
                 }
@@ -233,50 +238,57 @@
                 <!-- 1. FULL WIDTH, SINGLE-LINE HEADER (FIXED 36px) -->
                 <div 
                     id="agi-workspace-header" 
-                    class="row items-center justify-between q-px-sm bg-black border-bottom-dark" 
-                    style="height: 36px; min-height: 36px; max-height: 36px; flex: 0 0 36px; border-bottom: 1px solid #1e293b; z-index: 40;"
+                    class="row items-center justify-between q-px-sm bg-slate-950 border-bottom-dark text-white" 
+                    style="height: 36px; min-height: 36px; max-height: 36px; flex: 0 0 36px; border-bottom: 1px solid #334155; z-index: 40;"
                 >
                     <!-- Left: Development Label + Domain Dropdown + Artifacts Button -->
                     <div class="row items-center q-gutter-x-sm no-wrap">
-                        <span class="text-caption text-weight-bolder text-cyan-3 letter-spacing-1">
+                        <span class="text-caption text-weight-bolder text-cyan-4 letter-spacing-1">
                             DEVELOPMENT
                         </span>
 
-                        <q-separator vertical dark class="q-mx-xs" />
+                        <q-separator vertical dark class="q-mx-xs bg-slate-700" />
 
-                        <!-- Domain Dropdown (e.g., nursinghome) -->
+                        <!-- Domain Dropdown (High Contrast Fix + Instructions Hook) -->
                         <q-btn-dropdown 
                             flat dense no-caps 
-                            color="deep-purple-3" 
-                            class="q-px-xs rounded-borders text-weight-bold"
-                            style="border: 1px solid rgba(167, 139, 250, 0.3); font-size: 11px;"
+                            menu-content-class="bg-slate-900 text-slate-100 shadow-8"
+                            class="q-px-sm rounded-borders text-weight-bold bg-slate-900 text-purple-2"
+                            style="border: 1px solid #64748b; font-size: 11px;"
                             :label="targetComponentName"
                         >
-                            <q-list dense class="bg-slate-900 text-white font-mono" style="min-width: 140px; border: 1px solid #334155;">
-                                <q-item clickable v-close-popup @click="handleDomainAction('new')">
+                            <q-list dense dark class="bg-slate-900 text-slate-100 font-mono q-py-xs" style="min-width: 170px; border: 1px solid #475569;">
+                                <q-item clickable v-close-popup class="hover-bg-slate-800 text-slate-200" @click="handleDomainAction('instructions')">
                                     <q-item-section avatar style="min-width: 24px;">
-                                        <q-icon name="add" size="xs" color="cyan-3" />
+                                        <q-icon name="menu_book" size="xs" color="cyan-3" />
                                     </q-item-section>
-                                    <q-item-section class="text-caption">New</q-item-section>
+                                    <q-item-section class="text-caption text-weight-medium">Instructions</q-item-section>
                                 </q-item>
-                                <q-item clickable v-close-popup @click="handleDomainAction('save')">
+                                <q-separator dark class="bg-slate-700 q-my-xs" />
+                                <q-item clickable v-close-popup class="hover-bg-slate-800 text-slate-200" @click="handleDomainAction('new')">
                                     <q-item-section avatar style="min-width: 24px;">
-                                        <q-icon name="save" size="xs" color="teal-3" />
+                                        <q-icon name="add" size="xs" color="cyan-4" />
                                     </q-item-section>
-                                    <q-item-section class="text-caption">Save</q-item-section>
+                                    <q-item-section class="text-caption text-weight-medium">New Domain</q-item-section>
                                 </q-item>
-                                <q-item clickable v-close-popup @click="handleDomainAction('rename')">
+                                <q-item clickable v-close-popup class="hover-bg-slate-800 text-slate-200" @click="handleDomainAction('save')">
                                     <q-item-section avatar style="min-width: 24px;">
-                                        <q-icon name="edit" size="xs" color="amber-3" />
+                                        <q-icon name="save" size="xs" color="teal-4" />
                                     </q-item-section>
-                                    <q-item-section class="text-caption">Rename</q-item-section>
+                                    <q-item-section class="text-caption text-weight-medium">Save</q-item-section>
                                 </q-item>
-                                <q-separator dark />
-                                <q-item clickable v-close-popup @click="handleDomainAction('delete')">
+                                <q-item clickable v-close-popup class="hover-bg-slate-800 text-slate-200" @click="handleDomainAction('rename')">
+                                    <q-item-section avatar style="min-width: 24px;">
+                                        <q-icon name="edit" size="xs" color="amber-4" />
+                                    </q-item-section>
+                                    <q-item-section class="text-caption text-weight-medium">Rename</q-item-section>
+                                </q-item>
+                                <q-separator dark class="bg-slate-700 q-my-xs" />
+                                <q-item clickable v-close-popup class="hover-bg-slate-800 text-rose-3" @click="handleDomainAction('delete')">
                                     <q-item-section avatar style="min-width: 24px;">
                                         <q-icon name="delete" size="xs" color="rose-4" />
                                     </q-item-section>
-                                    <q-item-section class="text-caption text-rose-3">Delete</q-item-section>
+                                    <q-item-section class="text-caption text-weight-medium text-rose-3">Delete</q-item-section>
                                 </q-item>
                             </q-list>
                         </q-btn-dropdown>
@@ -284,23 +296,21 @@
                         <!-- Artifacts Palette Button -->
                         <q-btn 
                             flat dense no-caps size="xs"
-                            color="cyan-3" 
+                            class="q-px-sm rounded-borders bg-slate-900 text-cyan-3"
+                            style="border: 1px solid #475569; font-size: 11px;"
                             icon="folder_open" 
                             label="Artifacts" 
-                            class="q-px-xs rounded-borders"
-                            style="border: 1px solid rgba(56, 189, 248, 0.3); font-size: 11px;"
                             @click="showArtifactPalette = true"
                         >
                             <q-tooltip>Browse and select component workspace artifacts</q-tooltip>
                         </q-btn>
-                        <!-- Inside #agi-workspace-header template -->
+                        <!-- Production Launch Button -->
                         <q-btn 
                             flat dense no-caps size="xs"
-                            color="positive" 
+                            class="q-px-sm rounded-borders text-weight-bold bg-slate-900 text-green-3"
+                            style="border: 1px solid #15803d; font-size: 11px;"
                             icon="play_arrow" 
                             label="Production" 
-                            class="q-px-xs rounded-borders text-weight-bold"
-                            style="border: 1px solid rgba(74, 222, 128, 0.4); font-size: 11px;"
                             @click="openProductionView"
                         >
                             <q-tooltip>Launch live application screen in dedicated tab</q-tooltip>
@@ -308,10 +318,10 @@
                     </div>
 
                     <!-- Right: Focused Artifact Label -->
-                    <div class="row items-center q-gutter-x-xs text-caption text-slate-400">
+                    <div class="row items-center q-gutter-x-xs text-caption text-slate-300">
                         <q-icon name="code" size="xs" color="cyan-4" />
-                        <span class="text-weight-bold text-slate-300">{{ currentArtifactLabel }}</span>
-                        <q-badge v-if="isDirty" color="amber-10" text-color="black" class="q-ml-xs text-weight-bolder" style="font-size: 8px;">
+                        <span class="text-weight-bold text-slate-100">{{ currentArtifactLabel }}</span>
+                        <q-badge v-if="isDirty" color="amber-10" text-color="black" class="q-ml-xs text-weight-bolder" style="font-size: 9px;">
                             DRAFT
                         </q-badge>
                     </div>
@@ -420,48 +430,63 @@
                     >
                         <!-- Right Pane Header: Reciprocal Sizing Presets & Editor Checkboxes -->
                         <div 
-                            class="row items-center justify-between q-px-sm bg-slate-950" 
-                            style="height: 32px; min-height: 32px; flex: 0 0 32px; border-bottom: 1px solid #1e293b;"
+                            class="row items-center justify-between q-px-sm bg-slate-950 text-white" 
+                            style="height: 32px; min-height: 32px; flex: 0 0 32px; border-bottom: 1px solid #334155;"
                         >
-                            <!-- Left: Reciprocal 5-Point Splitter Buttons (100% down to 0%) -->
-                            <div class="row items-center q-gutter-x-none rounded-borders bg-slate-900" style="border: 1px solid #334155;">
-                                <q-btn 
+                            <!-- Left: Reciprocal 5-Point Splitter Buttons (High Contrast Enforced) -->
+                            <div class="row items-center q-gutter-x-none rounded-borders bg-slate-900" style="border: 1px solid #475569; overflow: hidden;">
+                                <button 
                                     v-for="preset in [100, 65, 50, 35, 0]" 
                                     :key="preset"
-                                    flat dense size="xs"
-                                    :label="preset + '%'"
-                                    :color="editorWidthPercent === preset ? 'amber-3' : 'slate-500'"
-                                    :class="editorWidthPercent === preset ? 'bg-slate-800 text-weight-bolder' : ''"
-                                    class="q-px-xs"
+                                    type="button"
+                                    class="q-btn q-btn-item non-selectable no-outline q-btn--flat q-btn--rectangle q-btn--dense"
+                                    :style="{
+                                        padding: '2px 8px',
+                                        fontSize: '11px',
+                                        fontFamily: 'monospace',
+                                        fontWeight: editorWidthPercent === preset ? '800' : '500',
+                                        backgroundColor: editorWidthPercent === preset ? '#f59e0b' : '#0f172a',
+                                        color: editorWidthPercent === preset ? '#000000 !important' : '#cbd5e1 !important',
+                                        borderRight: '1px solid #334155',
+                                        borderTop: 'none',
+                                        borderBottom: 'none',
+                                        borderLeft: 'none',
+                                        cursor: 'pointer',
+                                        lineHeight: '18px'
+                                    }"
                                     @click="setEditorWidth(preset)"
                                 >
+                                    <span class="q-btn__content text-center col items-center q-anchor--skip justify-center row" :style="{ color: editorWidthPercent === preset ? '#000000 !important' : '#cbd5e1 !important' }">
+                                        {{ preset }}%
+                                    </span>
                                     <q-tooltip>Set Right Pane width to {{ preset }}% (Left to {{ 100 - preset }}%)</q-tooltip>
-                                </q-btn>
+                                </button>
                             </div>
 
                             <!-- Center: Current Artifact Path -->
-                            <div class="text-caption text-slate-300 font-mono ellipsis q-px-sm" style="max-width: 45%;">
+                            <div class="text-caption text-slate-200 font-mono ellipsis q-px-sm text-weight-medium" style="max-width: 45%;">
                                 {{ localScreenPath || 'No Artifact Focused' }}
                             </div>
 
-                            <!-- Right: Multi-Editor Selection Dropdown Menu -->
+                            <!-- Right: Multi-Editor Selection Dropdown Menu (High Contrast Enforced) -->
                             <q-btn-dropdown 
                                 flat dense no-caps size="xs" 
-                                color="cyan-3" 
+                                menu-content-class="bg-slate-900 text-slate-100 shadow-8"
+                                class="q-px-sm rounded-borders bg-slate-900 text-cyan-3"
+                                style="border: 1px solid #475569; font-size: 11px;"
                                 icon="tune" 
                                 :label="'Editors (' + activeEditorCount + ')'"
-                                class="q-px-xs rounded-borders"
-                                style="border: 1px solid rgba(56, 189, 248, 0.3);"
                             >
-                                <q-list dense dark class="bg-slate-900 font-mono text-caption q-pa-xs" style="min-width: 200px; border: 1px solid #334155;">
-                                    <div class="text-overline text-slate-400 q-px-xs" style="font-size: 9px;">ACTIVE EDITORS</div>
+                                <q-list dense dark class="bg-slate-900 font-mono text-caption q-pa-xs" style="min-width: 220px; border: 1px solid #475569;">
+                                    <div class="text-overline text-slate-400 q-px-sm q-pt-xs" style="font-size: 9px; letter-spacing: 0.5px;">ACTIVE EDITORS</div>
+                                    <q-separator dark class="bg-slate-700 q-my-xs" />
                                     <q-item 
                                         v-for="ed in availableEditors" 
                                         :key="ed.id"
                                         tag="label" 
                                         dense 
                                         clickable
-                                        class="rounded-borders q-my-none"
+                                        class="rounded-borders q-my-none text-slate-200 hover:bg-slate-800"
                                     >
                                         <q-item-section side>
                                             <q-checkbox 
@@ -476,7 +501,7 @@
                                             <q-icon :name="ed.icon" size="14px" :color="ed.color" />
                                         </q-item-section>
                                         <q-item-section>
-                                            <span :class="activeEditors.includes(ed.id) ? 'text-white text-weight-bold' : 'text-slate-400'">
+                                            <span :class="activeEditors.includes(ed.id) ? 'text-white text-weight-bolder' : 'text-slate-300'">
                                                 {{ ed.label }}
                                             </span>
                                         </q-item-section>
@@ -592,8 +617,6 @@
                     this.localScreenPath = this.normalizeArtifactUri(item.targetArtifactUri);
                 }
 
-                // If this is the initial load on mount, KEEP the drawer open so the user can interact with it.
-                // Only collapse it if user selected an item while the drawer was already actively displayed.
                 if (!isInitialSelection && wasAlreadyOpen) {
                     this.showDiscussionDrawer = false;
                 }
@@ -646,7 +669,13 @@
             },
 
             handleDomainAction(action) {
-                if (action === 'new') {
+                if (action === 'instructions') {
+                    const instructionsPath = `component://${this.targetComponentName}/mcp/instructions/component.md`;
+                    this.executeArtifactSwitch({ value: instructionsPath });
+                    if (!this.activeEditors.includes('AgiComponentEditor') && !this.activeEditors.includes('AgiScreenEditor')) {
+                        this.activeEditors.push('AgiScreenEditor');
+                    }
+                } else if (action === 'new') {
                     if (this.contextBus) this.contextBus.postMessage({ event: 'open-new-component-wizard' });
                 } else if (action === 'save') {
                     this.handleChildEditorSave();
@@ -875,14 +904,12 @@
                     if (savePayload.layoutTree) activeBlueprint = savePayload.layoutTree;
                 }
 
-                // If no explicit payload passed, check Pinia store or existing buffer
                 if (!activeBlueprint && !rawXml) {
                     const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
                     activeBlueprint = ideStore ? ideStore.getActiveBlueprint : this.activeWorkspaceBuffer.metaJsonBuffer;
                 }
 
-                // If we have raw XML (e.g., from AgiScreenEditor), parse it to tree first to keep AST in sync
-                if (rawXml && rawXml.trim()) {
+                if (rawXml && rawXml.trim() && !targetUri.endsWith('.md')) {
                     try {
                         const parseResp = await axios.post('/rest/s1/agi-ide/parseXmlToTree', {
                             artifactUri: targetUri,
@@ -911,12 +938,25 @@
                         }, { headers });
                     }
 
-                    // Pass both xmlText and metaJsonBuffer so save#ScreenXml can write directly
                     const fileSaveResponse = await axios.post('/rest/s1/agi-ide/saveScreenXml', {
                         artifactUri: targetUri,
                         xmlText: rawXml || null,
-                        metaJsonBuffer: jsonStringPayload
+                        metaJsonBuffer: jsonStringPayload,
+                        verifyEntities: !targetUri.endsWith('.md')
                     }, { headers });
+
+                    if (fileSaveResponse.data?.status === 'ENTITY_NOT_FOUND') {
+                        const errors = fileSaveResponse.data.errorList || ['Unknown entity validation failure'];
+                        this.$q?.notify({
+                            type: 'negative',
+                            icon: 'error_outline',
+                            message: `Entity Verification Failed: ${errors.join(', ')}`,
+                            caption: 'Save aborted to prevent runtime 500 errors',
+                            timeout: 7000,
+                            actions: [{ label: 'Dismiss', color: 'white' }]
+                        });
+                        return;
+                    }
 
                     if (fileSaveResponse.data?.status === 'SUCCESS' || fileSaveResponse.status === 200) {
                         this.isDirty = false;
@@ -934,9 +974,22 @@
                         }
                     }
                 } catch (err) {
+                    let displayMsg = 'Failed to write workspace modifications to disk.';
+                    if (err.response?.data?.errors) {
+                        displayMsg = err.response.data.errors;
+                    } else if (err.response?.data?.errorList) {
+                        displayMsg = err.response.data.errorList.join(', ');
+                    } else if (err.message) {
+                        displayMsg = err.message;
+                    }
+
                     this.$q?.notify({
                         type: 'negative',
-                        message: err.response?.data?.errors || err.message || 'Failed to write workspace modifications to disk.'
+                        icon: 'report_problem',
+                        message: 'Save Aborted: Validation Error',
+                        caption: displayMsg,
+                        timeout: 8000,
+                        actions: [{ label: 'Dismiss', color: 'white' }]
                     });
                 }
             },
@@ -1012,7 +1065,6 @@
                     return 'component://' + uri.substring(markerIdx + compMarker.length);
                 }
 
-                // If it's a relative path like "screen/nursinghome.xml"
                 if (!uri.startsWith('/')) {
                     return `component://${this.targetComponentName}/${uri}`;
                 }
@@ -1020,7 +1072,6 @@
                 return uri;
             },
             openProductionView() {
-                // 1. Root route points directly to /nursinghome rather than /apps/nursinghome
                 let targetUrl = `/${this.targetComponentName}`;
 
                 if (this.localScreenPath && this.localScreenPath.startsWith(`component://${this.targetComponentName}/screen/`)) {
@@ -1028,13 +1079,11 @@
                         .replace(`component://${this.targetComponentName}/screen/`, '')
                         .replace(/\.xml$/, '');
 
-                    // Exclude root application screens from appending duplicate paths (e.g., nursinghome/nursinghome)
                     if (subPath !== this.targetComponentName && !subPath.endsWith('/' + this.targetComponentName)) {
                         targetUrl = `/${this.targetComponentName}/${subPath}`;
                     }
                 }
 
-                // Reuse or open the dedicated production tab
                 window.open(targetUrl, 'moqui-production-preview');
             },
         },

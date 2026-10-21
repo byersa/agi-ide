@@ -92,21 +92,131 @@
         </actions>
     </service>
 
-    <service verb="create" noun="NewComponentScaffold" transaction="force-new" authenticate="false" >
-        <description>Scaffolds a new standard Moqui component directory structure alongside a mirrored blueprint ledger skeleton.</description>
+    <service verb="create" noun="NewComponentScaffold" transaction="force-new" authenticate="false">
+        <description>Scaffolds a new standard Moqui component directory structure alongside MCP instructions and ledgers.</description>
         <in-parameters>
             <parameter name="componentName" required="true" type="String"/>
+            <parameter name="title" type="String"/>
         </in-parameters>
         <out-parameters>
             <parameter name="success" type="Boolean"/>
             <parameter name="message" type="String"/>
+            <parameter name="createdPaths" type="List"/>
         </out-parameters>
         <actions>
             <script><![CDATA[
-                context.putAll(org.moqui.ide.ScreenEditorServices.createNewComponentScaffold(componentName, ec))
+                import java.io.File
+
+                String cleanComp = componentName.trim().replaceAll("[^a-zA-Z0-9_-]", "")
+                if (!cleanComp) {
+                    context.success = false
+                    context.message = "Invalid component name specified."
+                    return
+                }
+
+                File compBase = new File("runtime/component/${cleanComp}")
+                if (compBase.exists()) {
+                    context.success = false
+                    context.message = "Component directory already exists at ${compBase.getPath()}"
+                    return
+                }
+
+                List created = []
+
+                // 1. Standard Moqui Architecture Directories
+                List standardDirs = [
+                    "screen",
+                    "service",
+                    "entity",
+                    "data",
+                    "theme"
+                ]
+
+                // 2. Complete MCP Hierarchy (incorporating instruction layers)
+                List mcpDirs = [
+                    "mcp/instructions/base",
+                    "mcp/instructions/rules",
+                    "mcp/intents",
+                    "mcp/manifests",
+                    "mcp/resources"
+                ]
+
+                (standardDirs + mcpDirs).each { relPath ->
+                    File d = new File(compBase, relPath)
+                    if (d.mkdirs()) created.add(d.getPath())
+                }
+
+                // 3. Seed domain-instructions.md for Agent Prompt Injection
+                File domainDoc = new File(compBase, "mcp/instructions/domain-instructions.md")
+                domainDoc.text = """# Domain Directives: ${cleanComp.toUpperCase()}
+
+## 1. Architectural & Domain Context
+- Target Component: `${cleanComp}`
+- System Role: Domain services, data models, and screen interfaces for ${title ?: cleanComp}.
+
+## 2. Mantle UDM Entity Ground Rules
+- Reuse First: Always attempt to extend Mantle UDM entities before declaring custom tables.
+- Compliance: Any field storing PHI or medical data MUST have `encrypt="true"`.
+- Auditing: Any sensitive entity MUST have `enable-audit-log="true"`.
+
+## 3. Screen Conventions
+- Declare screens strictly following `xml-screen-3.xsd` sequence:
+  `parameter*`, `transition*`, `subscreens?`, `actions?`, `widgets`.
+- Favor declarative XML and Quasar 2 utility classes over imperative code.
+"""
+                created.add(domainDoc.getPath())
+
+                // 4. Seed Root Application Screen
+                File rootScreen = new File(compBase, "screen/${cleanComp}.xml")
+                rootScreen.text = """<?xml version="1.0" encoding="UTF-8"?>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="true">
+    <transition name="home">
+        <default-response url="."/>
+    </transition>
+    <actions>
+        <set field="pageTitle" value="${title ?: cleanComp.capitalize()} Dashboard"/>
+    </actions>
+    <widgets>
+        <container style="q-pa-md font-mono">
+            <container style="q-card q-pa-lg bg-slate-900 text-white rounded-borders shadow-2">
+                <label type="h5" text="\${pageTitle}" style="text-cyan-3 q-mb-sm text-weight-bold"/>
+                <label type="p" text="Welcome to the ${cleanComp} domain application." style="text-slate-300"/>
+            </container>
+        </container>
+    </widgets>
+</screen>
+"""
+                created.add(rootScreen.getPath())
+
+                // 5. Seed Default Theme JSON
+                File themeFile = new File(compBase, "theme/default.theme.json")
+                themeFile.text = """{
+  "themeName": "${cleanComp}-dark",
+  "palette": {
+    "primary": "#0284c7",
+    "secondary": "#7c3aed",
+    "accent": "#f59e0b",
+    "dark": "#0f172a",
+    "background": "#020617"
+  }
+}
+"""
+                created.add(themeFile.getPath())
+
+                // Clear caches so Moqui discovers the new component path immediately
+                try {
+                    ec.resource.clearAllCaches()
+                    ec.screen.clearScreenCache(true)
+                } catch (Exception ignore) {}
+
+                context.success = true
+                context.message = "Successfully scaffolded ${cleanComp} with full MCP instructions and Moqui directory structure."
+                context.createdPaths = created
+                ec.logger.info("📦 [create#NewComponentScaffold] ${context.message}")
             ]]></script>
         </actions>
     </service>
-
 
 </services>
