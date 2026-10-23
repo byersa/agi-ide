@@ -85,7 +85,7 @@
                 inputDirective: '',
                 inputTargetArtifact: '',
                 inputMantleInvariants: true,
-                rootStance: 'plan',
+                rootStance: 'discuss',
 
                 customArchetype: '',
                 customEntitiesText: '',
@@ -102,15 +102,27 @@
                 return this.selectedStage.statusId === 'PlsDraft' || !this.selectedStage.egressPayloadId;
             },
             currentActionType() {
-                if (!this.selectedStage) return this.rootStance || 'plan';
+                if (!this.selectedStage) return this.rootStance || 'discuss';
                 return (this.selectedStage.actionType || 'discuss').toLowerCase();
             },
             displayTargetArtifactUri() {
-                if (!this.selectedStage) return this.inputTargetArtifact || '';
-                return this.selectedStage.targetArtifactUri
-                    || this.resolvedEgressPayload?.targetArtifactUri
-                    || this.resolvedEgressPayload?.createdArtifactUri
-                    || '';
+                // 1. Explicitly bound on the stage record
+                if (this.selectedStage?.targetArtifactUri) {
+                    return this.selectedStage.targetArtifactUri;
+                }
+                // 2. Proposed by LLM Egress Payload
+                if (this.resolvedEgressPayload?.targetArtifactUri) {
+                    return this.resolvedEgressPayload.targetArtifactUri;
+                }
+                if (this.resolvedEgressPayload?.createdArtifactUri) {
+                    return this.resolvedEgressPayload.createdArtifactUri;
+                }
+                // 3. User input in [IN] prompt box
+                if (this.inputTargetArtifact && this.inputTargetArtifact.trim()) {
+                    return this.inputTargetArtifact.trim();
+                }
+                // 4. Fallback: Component Scope (Abstract)
+                return '';
             },
             themeStyle() {
                 const type = this.currentActionType;
@@ -145,7 +157,6 @@
             resolvedIngressPayload() {
                 if (!this.selectedStage) return null;
 
-                // 🛡️ Unconditionally touch reactive properties so Vue always tracks updates
                 const _v = this.payloadVersion;
                 const cache = this.payloadCache;
 
@@ -426,6 +437,51 @@
                 return prompt;
             },
 
+            synthesizePlanDirective(payload) {
+                if (!payload) return 'Formulate the canonical Moqui architecture plan based on discussion consensus.';
+                const clean = this.cleanseContract(payload);
+                const targetArtifact = clean.targetArtifactUri || clean.createdArtifactUri || this.displayTargetArtifactUri || '';
+                const isScreen = targetArtifact.endsWith('.xml');
+                const isService = targetArtifact.endsWith('.groovy') || targetArtifact.includes('/service/');
+
+                let prompt = `Formulate the canonical Moqui architecture plan`;
+                if (targetArtifact) prompt += ` for: ${targetArtifact}`;
+                prompt += `\n\n`;
+
+                prompt += `Objectives & Scope Requirements:\n`;
+
+                // 1. Ingest proposed modules/sub-elements if present
+                if (Array.isArray(clean.proposedModules) && clean.proposedModules.length > 0) {
+                    prompt += `- Decompose and specify the following modules:\n`;
+                    clean.proposedModules.forEach(m => {
+                        prompt += `  * ${m.title || m.key}: ${m.description || ''} (Suggested Archetype: ${m.suggestedArchetype || 'standard'})\n`;
+                    });
+                }
+
+                // 2. Ingest architectural considerations / invariants
+                if (Array.isArray(clean.architecturalConsiderations) && clean.architecturalConsiderations.length > 0) {
+                    prompt += `- Enforce the following architectural constraints and invariants:\n`;
+                    clean.architecturalConsiderations.forEach(c => {
+                        prompt += `  * ${c}\n`;
+                    });
+                }
+
+                // 3. Technical contract deliverables based on artifact type
+                prompt += `\nDeliverables:\n`;
+                if (isScreen) {
+                    prompt += `- Recommended layout archetype and container structure.\n`;
+                    prompt += `- Primary UDM entity bindings, transitions, and field definitions.\n`;
+                    prompt += `- Security, permission, and audit-log invariants.\n`;
+                } else if (isService) {
+                    prompt += `- Service parameter definitions (in/out parameters with types).\n`;
+                    prompt += `- Mantle UDM entity CRUD and transaction boundaries.\n`;
+                } else {
+                    prompt += `- Detailed specification and formulation steps to guide implementation.\n`;
+                }
+
+                return prompt;
+            },
+
             unwrapPayload(obj) {
                 if (!obj || typeof obj !== 'object') return null;
                 let current = Object.assign({}, obj);
@@ -433,7 +489,6 @@
                 if (current.payloadDetails) current = Object.assign({}, current, current.payloadDetails);
                 if (current.payload && typeof current.payload === 'object') current = Object.assign({}, current, current.payload);
 
-                // 🎯 Parse stringified `message` (where DISCUSS payload data lives)
                 if (typeof current.message === 'string') {
                     const parsedMessage = this.tryParseJson(current.message) || this.extractJsonFromText(current.message);
                     if (parsedMessage && typeof parsedMessage === 'object') {
@@ -441,7 +496,6 @@
                     }
                 }
 
-                // Parse stringified `architectureSummary`
                 if (current.architectureSummary) {
                     if (typeof current.architectureSummary === 'object') {
                         current = Object.assign({}, current, current.architectureSummary);
@@ -551,7 +605,6 @@
                     }
 
                     if (this.isValidPayload(parsed)) {
-                        // 🛡️ Replace object reference and bump version counter to guarantee Vue triggers computed properties
                         this.payloadCache = Object.assign({}, this.payloadCache, { [String(payloadId)]: parsed });
                         this.payloadVersion++;
                     }
@@ -567,7 +620,6 @@
             async fetchParentPayloadByStepId(parentStepId) {
                 if (!parentStepId) return;
 
-                // 1. First check if AgiPipelineCanvas already has this step's nodes in memory
                 if (window.__agiCurrentPipelineGraph?.nodes) {
                     const node = window.__agiCurrentPipelineGraph.nodes.find(n =>
                         String(n.id || n.stepId || n.pipelineStepId) === String(parentStepId)
@@ -581,7 +633,6 @@
                     }
                 }
 
-                // 2. Fallback: Query the graph GET endpoint (which is valid and allowed)
                 if (this.discussionId) {
                     try {
                         const resp = await axios.get('/rest/s1/agi-ai/pipeline/graph', {
@@ -634,7 +685,11 @@
             triggerOpenArtifact(uri) {
                 const targetUri = uri || this.displayTargetArtifactUri;
                 if (!targetUri) {
-                    this.$q?.notify({ type: 'warning', message: 'No target artifact URI specified.' });
+                    this.$q?.notify({
+                        type: 'info',
+                        message: 'This stage operates at component scope. No specific file artifact has been targeted yet.',
+                        icon: 'info'
+                    });
                     return;
                 }
 
@@ -644,7 +699,8 @@
                 this.$emit('open-artifact', {
                     artifactUri: targetUri,
                     rawXmlContent: this.resolvedRawXml || null,
-                    astTree: astTree
+                    astTree: astTree,
+                    isVirtual: !this.selectedStage?.isPersistedOnDisk
                 });
             },
 
@@ -699,9 +755,15 @@
                 }
 
                 this.isDispatching = true;
-                const activeStance = this.selectedStage ? this.currentActionType : (this.rootStance || 'plan');
-                const currentStepId = this.selectedStage?.pipelineStepId || this.selectedStage?.stageId;
-                const parentId = currentStepId || this.selectedParentStage?.pipelineStepId || null;
+                const activeStance = this.selectedStage ? this.currentActionType : (this.rootStance || 'discuss');
+                const currentStepId = this.selectedStage?.pipelineStepId || this.selectedStage?.stageId || null;
+
+                // 🎯 KEY FIX: If selectedStage exists and is in draft state, fulfill IT directly.
+                // Only pass parentStepId if we are intentionally branching from a finished stage.
+                const isFulfillingDraft = !!(this.selectedStage && (this.selectedStage.statusId === 'PlsDraft' || !this.selectedStage.egressPayloadId));
+
+                const targetStepId = isFulfillingDraft ? currentStepId : null;
+                const parentId = isFulfillingDraft ? (this.selectedStage?.parentStepId || null) : currentStepId;
 
                 let effectiveIngressId = this.selectedStage?.ingressPayloadId || null;
                 let payloadOverrideJson = null;
@@ -724,8 +786,8 @@
                 try {
                     const dispatchPayload = {
                         discussionId: this.discussionId,
-                        pipelineStepId: null,
-                        parentStepId: currentStepId,
+                        pipelineStepId: targetStepId, // 🎯 Passes #100567 when in draft!
+                        parentStepId: parentId,       // Preserves parent step linkage
                         stanceEnumId: activeStance,
                         directivePrompt: this.inputDirective,
                         ingressPayloadId: effectiveIngressId,
@@ -742,9 +804,11 @@
                     });
 
                     this.isDispatching = false;
+                    const committedStepId = dispatchResp.data?.pipelineStepId || targetStepId;
+
                     this.$q.notify({
                         type: 'positive',
-                        message: `Step #${dispatchResp.data?.pipelineStepId} committed cleanly.`,
+                        message: `Step #${committedStepId} committed cleanly.`,
                         icon: 'bolt'
                     });
 
@@ -752,7 +816,7 @@
 
                     this.$emit('stage-dispatched', {
                         discussionId: this.discussionId,
-                        pipelineStepId: dispatchResp.data?.pipelineStepId,
+                        pipelineStepId: committedStepId,
                         egressPayloadId: dispatchResp.data?.egressPayloadId,
                         completionText: dispatchResp.data?.completionText
                     });
@@ -879,7 +943,8 @@
                     this.rootStance = stance;
                 }
             },
-            async branchSuccessorStep({ sourceStepId, targetStance }) {
+
+            async branchSuccessorStep({ sourceStepId, targetStance, customDirective }) {
                 const parentId = sourceStepId || this.stepId;
                 if (!parentId) return;
 
@@ -892,13 +957,15 @@
                     const cleanContract = this.cleanseContract(this.resolvedEgressPayload);
                     const cleanContractJson = JSON.stringify(cleanContract, null, 2);
 
-                    let synthesizedPrompt = '';
-                    if (stance === 'build') {
-                        synthesizedPrompt = this.synthesizeBuildDirective(this.resolvedEgressPayload);
-                    } else if (stance === 'plan') {
-                        synthesizedPrompt = `Formulate canonical Moqui architecture plan based on Step #${parentId} specification.`;
-                    } else {
-                        synthesizedPrompt = `Refine requirements and continue discussion based on Step #${parentId} outputs.`;
+                    let synthesizedPrompt = customDirective || '';
+                    if (!synthesizedPrompt) {
+                        if (stance === 'build') {
+                            synthesizedPrompt = this.synthesizeBuildDirective(this.resolvedEgressPayload);
+                        } else if (stance === 'plan') {
+                            synthesizedPrompt = this.synthesizePlanDirective(this.resolvedEgressPayload);
+                        } else {
+                            synthesizedPrompt = `Refine requirements and continue discussion based on Step #${parentId} outputs.`;
+                        }
                     }
 
                     const resp = await axios.post('/rest/s1/agi-ai/pipeline/step/fork', {
@@ -930,6 +997,18 @@
                     });
                 }
             },
+
+            handleAdvanceFromDiscussion(eventData) {
+                const payload = eventData?.sourcePayload || this.resolvedEgressPayload;
+                const synthesizedPrompt = this.synthesizePlanDirective(payload);
+
+                this.branchSuccessorStep({
+                    sourceStepId: this.stepId,
+                    targetStance: 'plan',
+                    customDirective: synthesizedPrompt
+                });
+            },
+
             async orchestrateModule({ sourceStepId, subplans }) {
                 if (!sourceStepId || !subplans || subplans.length === 0) return;
 
@@ -949,7 +1028,6 @@
                         icon: 'bolt'
                     });
 
-                    // Trigger graph refresh
                     this.$emit('stage-dispatched', {
                         discussionId: this.discussionId,
                         pipelineStepId: resp.data?.spawnedStepIds?.[0]
@@ -962,6 +1040,7 @@
                     });
                 }
             },
+
             async handleUpdateTargetArtifact({ pipelineStepId, targetArtifactUri }) {
                 if (!pipelineStepId || !targetArtifactUri) return;
 
@@ -973,7 +1052,6 @@
                         headers: { 'moquiSessionToken': this.resolveCsrf() }
                     });
 
-                    // Update local step state
                     if (this.selectedStage) {
                         this.selectedStage.targetArtifactUri = targetArtifactUri;
                     }
@@ -985,7 +1063,6 @@
                         icon: 'check'
                     });
 
-                    // Notify parent workspace so localScreenPath aligns if desired
                     this.$emit('open-artifact', { artifactUri: targetArtifactUri });
 
                 } catch (e) {
@@ -994,6 +1071,47 @@
                         message: 'Failed to update artifact: ' + (e.response?.data?.errors || e.message)
                     });
                 }
+            },
+            handlePromoteToDiscussion(stepId) {
+                const targetId = stepId || this.stepId;
+                if (!targetId) return;
+
+                this.$q.dialog({
+                    title: 'Extract Step to New Discussion',
+                    message: `Create a standalone AgiDiscussion from Step #${targetId}? It will be removed from pipeline #${this.discussionId} and form its own pipeline initiative.`,
+                    prompt: {
+                        model: '',
+                        type: 'text',
+                        label: 'New Discussion Title (optional)'
+                    },
+                    cancel: true,
+                    persistent: true,
+                    dark: true
+                }).onOk(async (name) => {
+                    try {
+                        const resp = await axios.post('/rest/s1/agi-ai/pipeline/step/promote', {
+                            pipelineStepId: targetId,
+                            discussionName: name || null,
+                            includeBranch: true
+                        }, { headers: { 'moquiSessionToken': this.resolveCsrf() } });
+
+                        this.$q.notify({
+                            type: 'positive',
+                            message: `Extracted to Discussion #${resp.data?.newDiscussionId}`,
+                            icon: 'drive_file_move'
+                        });
+
+                        // Switch workspace view to the new discussion or reload current graph
+                        this.$emit('stage-dispatched', {
+                            discussionId: resp.data?.newDiscussionId || this.discussionId
+                        });
+                    } catch (e) {
+                        this.$q.notify({
+                            type: 'negative',
+                            message: 'Extraction failed: ' + (e.response?.data?.errors || e.message)
+                        });
+                    }
+                });
             },
         },
         template: `
@@ -1023,6 +1141,7 @@
                     @locate-canvas="locateStageOnCanvas"
                     @open-artifact="triggerOpenArtifact"
                     @update-target-artifact="handleUpdateTargetArtifact"
+                    @promote-step="handlePromoteToDiscussion"
                 />
 
                 <!-- 2. SINGLE FULL-WIDTH INSPECTOR VIEWPORT -->
@@ -1072,7 +1191,7 @@
                                         class="font-mono text-caption"
                                         input-class="font-mono text-slate-100"
                                         style="background-color: #020617; border-radius: 4px;"
-                                        placeholder="Enter initial directive (e.g. 'Formulate the high-level architecture plan for Clinical Dashboard')..."
+                                        placeholder="Enter initial directive (e.g. 'Discuss the core operational requirements for the nursing home component')..."
                                     />
                                 </div>
 
@@ -1152,6 +1271,7 @@
                                     <q-tooltip>Load this generated XML buffer directly into Screen XML Editor</q-tooltip>
                                 </q-btn>
 
+                                <!-- TABS WITH CONTEXTUAL TOOLTIPS -->
                                 <div class="row items-center q-gutter-x-none rounded-borders" style="background-color: #020617; border: 1px solid #334155; padding: 2px;">
                                     <button 
                                         type="button"
@@ -1168,6 +1288,7 @@
                                         @click="activeOutputTab = 'structured'"
                                     >
                                         {{ payloadKind === 'DISCUSSION' ? 'Overview & Pillars' : (payloadKind === 'PLAN' ? 'Moqui Spec' : 'Artifact Preview') }}
+                                        <q-tooltip>Human-readable synthesized domain analysis and proposed modules</q-tooltip>
                                     </button>
 
                                     <button 
@@ -1188,6 +1309,7 @@
                                         @click="activeOutputTab = 'json'"
                                     >
                                         Contract JSON
+                                        <q-tooltip>Machine-validated spec contract passed to successor pipeline steps</q-tooltip>
                                     </button>
 
                                     <button 
@@ -1205,6 +1327,7 @@
                                         @click="activeOutputTab = 'raw'"
                                     >
                                         Raw / Diagnostics
+                                        <q-tooltip>Raw LLM completion string and execution diagnostic logs</q-tooltip>
                                     </button>
                                 </div>
 
@@ -1232,14 +1355,20 @@
                                 <!-- 1. POLYMORPHIC STRUCTURED VIEW -->
                                 <div v-else-if="activeOutputTab === 'structured' && resolvedEgressPayload" class="column q-gutter-y-md">
                                     
-                                    <!-- A. DISCUSS / 5-PILLARS VIEW (DELEGATED TO CHILD) -->
+                                    <!-- A. DISCUSS / 5-PILLARS VIEW (DYNAMIC ADVANCE LISTENER WIRED) -->
                                     <template v-if="payloadKind === 'DISCUSSION'">
-                                        <agi-discussion-viewer :payload="resolvedEgressPayload" />
+                                        <agi-discussion-viewer 
+                                            :payload="resolvedEgressPayload" 
+                                            @advance-to-plan="handleAdvanceFromDiscussion"
+                                        />
                                     </template>
 
-                                    <!-- B. PLAN / SPEC VIEW (DELEGATED TO CHILD) -->
+                                    <!-- B. PLAN / SPEC VIEW -->
                                     <template v-else-if="payloadKind === 'PLAN'">
-                                        <agi-plan-spec-viewer :payload="resolvedEgressPayload" />
+                                        <agi-plan-spec-viewer 
+                                            :payload="resolvedEgressPayload" 
+                                            @advance-to-build="advanceToBuild"
+    />
                                     </template>
 
                                     <!-- C. BUILD / XML SPEC VIEW -->

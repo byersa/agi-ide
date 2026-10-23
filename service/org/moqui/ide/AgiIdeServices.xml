@@ -865,6 +865,13 @@ ${widgetsSb.toString()}    </widgets>
 
                 // 2. Auto-Correction & Sanitization
                 if (autoCorrect) {
+
+                    // Auto-hoist <default-response> and <conditional-response> mistakenly placed inside <actions>
+                    cleanedXml = cleanedXml.replaceAll(/(?s)(<transition\b[^>]*>.*?<actions\b[^>]*>)(.*?)(<(?:default|conditional)-response\b[^>]*\/>)(.*?)(<\/actions>)(.*?)(<\/transition>)/) {
+                        all, tOpen, actPre, respTag, actPost, actClose, tPost, tClose ->
+                        "${tOpen}${actPre}${actPost}${actClose}\n    ${respTag}${tPost}${tClose}"
+                    }
+
                     // Sanitize <container-row> and <container-col>
                     if (cleanedXml.contains("<container-row") || cleanedXml.contains("<container-col")) {
                         cleanedXml = cleanedXml.replaceAll(/<container-row\b[^>]*>/, '<container style="row q-col-gutter-md">')

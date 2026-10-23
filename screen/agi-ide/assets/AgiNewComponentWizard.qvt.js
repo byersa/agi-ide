@@ -78,6 +78,18 @@
                 contextBus: null
             };
         },
+        props: {
+            open: { type: Boolean, default: false }
+        },
+        watch: {
+            open: {
+                immediate: true,
+                handler(val) { this.isOpen = !!val; }
+            },
+            isOpen(val) {
+                if (!val) this.$emit('close');
+            }
+        },
         mounted() {
             var vm = this;
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');

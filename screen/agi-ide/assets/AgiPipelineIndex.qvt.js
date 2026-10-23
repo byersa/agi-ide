@@ -1,7 +1,7 @@
 (function () {
     const AgiPipelineIndex = {
         name: 'AgiPipelineIndex',
-        emits: ['pipeline-selected', 'new-pipeline-created'],
+        emits: ['pipeline-selected', 'new-pipeline-created', 'pipeline-deleted', 'pipeline-renamed'],
         props: {
             activeDiscussionId: { type: String, default: '' },
             targetComponent: { type: String, default: 'nursinghome' }
@@ -12,7 +12,9 @@
                 loading: false,
                 searchFilter: '',
                 statusFilter: 'all', // 'all' | 'active' | 'promoted' | 'archived'
-                isExpanded: true
+                isExpanded: true,
+                deletingId: null,
+                renamingId: null
             };
         },
         computed: {
@@ -83,6 +85,43 @@
                 this.$emit('pipeline-selected', item);
             },
 
+            async savePipelineTitle(item, newTitle) {
+                const discId = String(item.discussionId);
+                const cleanTitle = (newTitle || '').trim();
+                if (!cleanTitle || cleanTitle === item.name) return;
+
+                this.renamingId = discId;
+                try {
+                    const resp = await axios.post('/rest/s1/agi-ai/discussions/title', {
+                        discussionId: discId,
+                        name: cleanTitle
+                    }, { headers: { 'moquiSessionToken': this.resolveCsrf() } });
+
+                    const updatedName = resp.data?.name || cleanTitle;
+                    item.name = updatedName;
+                    if (resp.data?.shortName) item.shortName = resp.data.shortName;
+
+                    this.$q.notify({
+                        type: 'positive',
+                        message: `Renamed pipeline #${discId} to "${updatedName}"`,
+                        icon: 'check',
+                        timeout: 1500
+                    });
+
+                    this.$emit('pipeline-renamed', {
+                        discussionId: discId,
+                        name: updatedName
+                    });
+                } catch (err) {
+                    this.$q.notify({
+                        type: 'negative',
+                        message: 'Failed to update title: ' + (err.response?.data?.errors || err.message)
+                    });
+                } finally {
+                    this.renamingId = null;
+                }
+            },
+
             promptCreatePipeline() {
                 this.$q.dialog({
                     title: 'New Pipeline Initiative',
@@ -112,6 +151,56 @@
                 });
             },
 
+            promptDeletePipeline(item) {
+                const discId = String(item.discussionId);
+                const title = item.name || `Pipeline #${discId}`;
+
+                this.$q.dialog({
+                    title: 'Delete Pipeline',
+                    message: `Are you sure you want to permanently delete "${title}" (#${discId}) and all of its stages?`,
+                    cancel: true,
+                    persistent: true,
+                    ok: {
+                        label: 'Delete',
+                        color: 'negative',
+                        flat: false
+                    }
+                }).onOk(async () => {
+                    this.deletingId = discId;
+                    try {
+                        await axios.delete(`/rest/s1/agi-ai/discussions/${discId}`, {
+                            headers: { 'moquiSessionToken': this.resolveCsrf() }
+                        });
+
+                        this.$q.notify({
+                            type: 'positive',
+                            message: `Pipeline #${discId} deleted.`,
+                            icon: 'delete'
+                        });
+
+                        const wasActive = String(this.activeDiscussionId) === discId;
+                        await this.fetchInitiatives();
+
+                        if (wasActive) {
+                            if (this.initiatives.length > 0) {
+                                this.selectPipeline(this.initiatives[0]);
+                            } else {
+                                this.$emit('pipeline-selected', null);
+                            }
+                        }
+
+                        this.$emit('pipeline-deleted', { discussionId: discId });
+                    } catch (err) {
+                        this.$q.notify({
+                            type: 'negative',
+                            message: 'Failed to delete pipeline: ' + (err.response?.data?.errors || err.message)
+                        });
+                    } finally {
+                        this.deletingId = null;
+                    }
+                });
+            },
+
             getStageBadgeColor(stage) {
                 if (stage === 'build') return 'amber-9';
                 if (stage === 'plan') return 'deep-purple-7';
@@ -128,8 +217,32 @@
                         <q-icon name="view_timeline" color="cyan-3" size="xs" />
                         <span class="text-caption text-weight-bolder text-cyan-2">PIPELINE INITIATIVES</span>
                         
-                        <q-badge v-if="selectedInitiative" color="slate-800" text-color="amber-3" class="text-caption font-mono" style="border: 1px solid #0284c7;">
-                            ACTIVE: #{{ selectedInitiative.discussionId }} {{ selectedInitiative.name }}
+                        <q-badge v-if="selectedInitiative" color="slate-800" text-color="amber-3" class="text-caption font-mono row items-center" style="border: 1px solid #0284c7;" @click.stop>
+                            <span>ACTIVE: #{{ selectedInitiative.discussionId }} {{ selectedInitiative.name }}</span>
+                            <q-icon name="edit" size="10px" class="q-ml-xs text-cyan-3 cursor-pointer" />
+                            <q-tooltip class="bg-slate-900 text-cyan-2 font-mono">Click to rename active pipeline</q-tooltip>
+                            
+                            <q-popup-edit 
+                                :model-value="selectedInitiative.name" 
+                                v-slot="scope" 
+                                buttons 
+                                label-set="Save" 
+                                label-cancel="Cancel"
+                                color="cyan-4"
+                                dark
+                                @save="(val) => savePipelineTitle(selectedInitiative, val)"
+                            >
+                                <q-input 
+                                    v-model="scope.value" 
+                                    dense 
+                                    autofocus 
+                                    dark 
+                                    outlined 
+                                    class="font-mono text-caption"
+                                    label="Pipeline Name"
+                                    @keyup.enter="scope.set"
+                                />
+                            </q-popup-edit>
                         </q-badge>
                     </div>
 
@@ -214,9 +327,35 @@
 
                                 <q-item-section>
                                     <div class="row items-center q-gutter-x-xs">
-                                        <span class="text-caption font-mono text-weight-bold" :class="String(activeDiscussionId) === String(item.discussionId) ? 'text-cyan-2' : 'text-slate-300'">
-                                            #{{ item.discussionId }} {{ item.name }}
-                                        </span>
+                                        <!-- In-place title edit container -->
+                                        <div class="row items-center cursor-pointer text-caption font-mono text-weight-bold" :class="String(activeDiscussionId) === String(item.discussionId) ? 'text-cyan-2' : 'text-slate-300'" @click.stop>
+                                            <span>#{{ item.discussionId }} {{ item.name }}</span>
+                                            <q-icon name="edit" size="10px" class="q-ml-xs text-slate-500 hover:text-cyan-3" />
+                                            <q-tooltip class="bg-slate-900 text-cyan-2 font-mono">Click to rename pipeline #{{ item.discussionId }}</q-tooltip>
+                                            
+                                            <q-popup-edit 
+                                                :model-value="item.name" 
+                                                v-slot="scope" 
+                                                buttons 
+                                                label-set="Save" 
+                                                label-cancel="Cancel"
+                                                color="cyan-4"
+                                                dark
+                                                @save="(val) => savePipelineTitle(item, val)"
+                                            >
+                                                <q-input 
+                                                    v-model="scope.value" 
+                                                    dense 
+                                                    autofocus 
+                                                    dark 
+                                                    outlined 
+                                                    class="font-mono text-caption"
+                                                    label="Pipeline Name"
+                                                    @keyup.enter="scope.set"
+                                                />
+                                            </q-popup-edit>
+                                        </div>
+
                                         <!-- NULL-SAFE BADGE RENDER -->
                                         <q-badge :color="getStageBadgeColor(item.terminalStage || 'discuss')" text-color="white" class="font-mono text-caption" style="font-size: 8px;">
                                             {{ (item.terminalStage || 'discuss').toUpperCase() }}
@@ -230,9 +369,24 @@
                                     </div>
                                 </q-item-section>
 
-                                <q-item-section side class="text-right font-mono" style="font-size: 9px; color: #64748b;">
-                                    <div>{{ item.messageCount }} stages</div>
-                                    <div v-if="item.lastActivityDate">{{ item.lastActivityDate.substring(0, 10) }}</div>
+                                <!-- Right Side: Metrics & Delete Action -->
+                                <q-item-section side class="font-mono" style="font-size: 9px;">
+                                    <div class="row items-center q-gutter-x-sm">
+                                        <div class="text-right" style="color: #64748b;">
+                                            <div>{{ item.messageCount || 0 }} stages</div>
+                                            <div v-if="item.lastActivityDate">{{ item.lastActivityDate.substring(0, 10) }}</div>
+                                        </div>
+                                        <q-btn
+                                            flat round dense
+                                            icon="delete_outline"
+                                            size="xs"
+                                            color="rose-4"
+                                            :loading="deletingId === String(item.discussionId)"
+                                            @click.stop="promptDeletePipeline(item)"
+                                        >
+                                            <q-tooltip>Delete pipeline #{{ item.discussionId }}</q-tooltip>
+                                        </q-btn>
+                                    </div>
                                 </q-item-section>
                             </q-item>
                         </q-list>

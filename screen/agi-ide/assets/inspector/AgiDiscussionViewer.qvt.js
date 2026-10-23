@@ -4,7 +4,7 @@
         props: {
             payload: { type: Object, default: () => ({}) }
         },
-        emits: ['module-action'],
+        emits: ['module-action', 'advance-to-plan'],
         computed: {
             // Normalize payload whether fields sit at root or inside architectureSummary/planDetails
             d() {
@@ -36,8 +36,27 @@
                     replyMessage: base.replyMessage || base.message || '',
                     proposedModules: Array.isArray(base.proposedModules) ? base.proposedModules : [],
                     clarifyingQuestions: Array.isArray(base.clarifyingQuestions) ? base.clarifyingQuestions : [],
-                    architecturalConsiderations: Array.isArray(base.architecturalConsiderations) ? base.architecturalConsiderations : []
+                    architecturalConsiderations: Array.isArray(base.architecturalConsiderations) ? base.architecturalConsiderations : [],
+                    targetArtifactUri: base.targetArtifactUri || base.createdArtifactUri || ''
                 };
+            },
+            dynamicTargetArtifact() {
+                return this.d.targetArtifactUri || 'Active Workspace Scope';
+            },
+            dynamicPlanButtonLabel() {
+                const art = (this.d.targetArtifactUri || '').toLowerCase();
+                if (art.endsWith('.xml')) {
+                    return this.d.proposedModules.length > 0
+                        ? 'Advance to Plan: Screen & Navigation'
+                        : 'Advance to Plan: Screen Architecture';
+                }
+                if (art.endsWith('.groovy') || art.includes('/service/')) {
+                    return 'Advance to Plan: Service Logic';
+                }
+                if (art.includes('/entity/')) {
+                    return 'Advance to Plan: Data Model & Entities';
+                }
+                return 'Advance to Plan: Formulate Specification';
             }
         },
         methods: {
@@ -48,6 +67,13 @@
                     return converter.makeHtml(text);
                 }
                 return text.replace(/\n/g, '<br/>');
+            },
+            handleAdvanceToPlan() {
+                this.$emit('advance-to-plan', {
+                    sourcePayload: this.payload,
+                    normalized: this.d,
+                    targetArtifactUri: this.d.targetArtifactUri
+                });
             }
         },
         template: `
@@ -74,19 +100,21 @@
                     <div class="markdown-body font-mono text-caption text-slate-200" style="line-height: 1.6;" v-html="formatMarkdown(d.replyMessage)"></div>
                 </div>
 
-                <!-- 3. PROPOSED MODULES (THE 5 PILLARS) -->
+                <!-- 3. PROPOSED MODULES (DYNAMIC SCOPE BREAKDOWN) -->
                 <div v-if="d.proposedModules.length > 0" class="column q-gutter-y-sm">
                     <div class="row items-center justify-between">
                         <span class="text-caption font-bold text-cyan-3" style="font-size: 12px;">
                             PROPOSED CORE PILLARS &amp; ARCHITECTURAL MODULES ({{ d.proposedModules.length }})
                         </span>
-                        <span class="text-caption font-mono text-slate-400" style="font-size: 10px;">Target: component://nursinghome/screen/nursinghome/...</span>
+                        <span class="text-caption font-mono text-slate-400 ellipsis" style="font-size: 10px; max-width: 50%;">
+                            Target: {{ dynamicTargetArtifact }}
+                        </span>
                     </div>
 
                     <div class="column q-gutter-y-xs">
                         <div 
                             v-for="(mod, mIdx) in d.proposedModules" 
-                            :key="mod.key" 
+                            :key="mod.key || mIdx" 
                             class="q-pa-md rounded-borders column q-gutter-y-xs" 
                             style="background-color: #0f172a; border: 1px solid #334155;"
                         >
@@ -96,11 +124,11 @@
                                         {{ mIdx + 1 }}
                                     </div>
                                     <span class="text-weight-bold text-white font-mono" style="font-size: 12px;">{{ mod.title }}</span>
-                                    <q-badge color="slate-900" text-color="cyan-3" class="font-mono text-caption" style="border: 1px solid #0284c7;">
+                                    <q-badge v-if="mod.key" color="slate-900" text-color="cyan-3" class="font-mono text-caption" style="border: 1px solid #0284c7;">
                                         {{ mod.key }}
                                     </q-badge>
                                 </div>
-                                <span class="text-caption font-mono text-amber-3 text-weight-bold" style="font-size: 11px;">
+                                <span v-if="mod.suggestedArchetype" class="text-caption font-mono text-amber-3 text-weight-bold" style="font-size: 11px;">
                                     Archetype: {{ mod.suggestedArchetype }}
                                 </span>
                             </div>
@@ -137,6 +165,40 @@
                             <span>{{ c }}</span>
                         </div>
                     </div>
+                </div>
+
+                <!-- 6. DYNAMIC STANCE TRANSITION CALLOUT (DISCUSS -> PLAN) -->
+                <div 
+                    class="row items-center justify-between q-pa-md q-mt-sm rounded-borders" 
+                    style="background-color: #0d1117; border: 1px solid #7c3aed;"
+                >
+                    <div class="col-grow q-mr-md">
+                        <div class="row items-center q-gutter-x-xs q-mb-xs">
+                            <q-badge color="deep-purple-8" text-color="white" class="font-mono text-caption" style="font-size: 9px;">
+                                {{ d.scopeMaturity }}
+                            </q-badge>
+                            <span class="text-caption font-mono text-slate-300 ellipsis" style="font-size: 11px;">
+                                Scope Target: <strong class="text-purple-2">{{ dynamicTargetArtifact }}</strong>
+                            </span>
+                        </div>
+                        <div class="text-caption text-slate-400 font-mono" style="font-size: 10px; line-height: 1.4;">
+                            Promote agreed architectural invariants and module requirements into canonical Moqui specification planning.
+                        </div>
+                    </div>
+
+                    <q-btn 
+                        color="deep-purple-7" 
+                        text-color="white"
+                        icon="architecture" 
+                        :label="dynamicPlanButtonLabel" 
+                        no-caps 
+                        dense
+                        class="text-weight-bold font-mono q-px-md q-py-xs"
+                        style="height: 32px; font-size: 11px;"
+                        @click="handleAdvanceToPlan"
+                    >
+                        <q-tooltip>Fork successor step with stance PLAN and synthesized contract ingress</q-tooltip>
+                    </q-btn>
                 </div>
 
             </div>

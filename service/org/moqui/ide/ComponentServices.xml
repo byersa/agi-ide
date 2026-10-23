@@ -5,7 +5,7 @@
     <service verb="create" noun="Component" type="inline">
         <description>
             Scaffolds a new Moqui component directory structure on disk, generates component.xml,
-            and auto-registers the primary screen artifact into AgiArtifact.
+            and auto-registers or updates the primary screen artifact in AgiArtifact.
         </description>
         <in-parameters>
             <parameter name="componentName" type="String" required="true"/>
@@ -38,11 +38,13 @@
                 File serviceDir = new File(baseDir, "service/" + compName.replace('-', '/'))
                 File screenDir = new File(baseDir, "screen")
                 File dataDir = new File(baseDir, "data")
+                File mcpDir = new File(baseDir, "mcp/instructions")
 
                 entityDir.mkdirs()
                 serviceDir.mkdirs()
                 screenDir.mkdirs()
                 dataDir.mkdirs()
+                mcpDir.mkdirs()
 
                 // 3. Generate component.xml based on Preset
                 String componentXmlContent = ""
@@ -75,6 +77,21 @@
 
                 new File(baseDir, "component.xml").text = componentXmlContent
 
+                // 3b. Generate MoquiConf.xml to mount root screen into webroot
+                String menuTitle = description ?: compName.capitalize()
+                String moquiConfContent = """<?xml version="1.0" encoding="UTF-8"?>
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <screen-facade>
+        <screen location="component://webroot/screen/webroot.xml">
+            <subscreens-item name="${compName}" menu-title="${menuTitle}"
+                             location="component://${compName}/screen/${compName}.xml"/>
+        </screen>
+    </screen-facade>
+</moqui-conf>
+"""
+                new File(baseDir, "MoquiConf.xml").text = moquiConfContent
+
                 // 4. Generate Root Screen XML Shell directly under screen/ (${compName}.xml)
                 String rootScreenPath = "component://${compName}/screen/${compName}.xml"
                 String rootScreenXml = """<?xml version="1.0" encoding="UTF-8"?>
@@ -93,20 +110,33 @@
                 File rootScreenFile = new File(screenDir, compName + ".xml")
                 rootScreenFile.text = rootScreenXml
 
-                // 5. Auto-Register Primary Artifact into AgiArtifact Table
+                // 5. Idempotent Registration/Update of Primary Artifact in AgiArtifact
                 def enumCheck = ec.entity.find("moqui.basic.Enumeration").condition("enumId", "AatXmlScreen").one()
                 String typeEnumId = enumCheck ? "AatXmlScreen" : null
-                
-                def artifactVal = ec.entity.makeValue("org.moqui.ai.AgiArtifact")
-                artifactVal.set("artifactPath", rootScreenPath)
-                artifactVal.set("artifactTypeEnumId", typeEnumId)
-                artifactVal.set("artifactStatusEnumId", "AasDraft")
-                artifactVal.set("totalIntentCount", 1)
-                artifactVal.set("completedIntentCount", 0)
-                artifactVal.set("completionPercentage", 0.0)
-                artifactVal.setSequencedIdPrimary()
-                artifactVal.create()
-                
+
+                def artifactVal = ec.entity.find("org.moqui.ai.AgiArtifact")
+                    .condition("artifactPath", rootScreenPath)
+                    .one()
+
+                if (!artifactVal) {
+                    artifactVal = ec.entity.makeValue("org.moqui.ai.AgiArtifact")
+                    artifactVal.set("artifactPath", rootScreenPath)
+                    artifactVal.set("artifactTypeEnumId", typeEnumId)
+                    artifactVal.set("artifactStatusEnumId", "AasDraft")
+                    artifactVal.set("totalIntentCount", 1)
+                    artifactVal.set("completedIntentCount", 0)
+                    artifactVal.set("completionPercentage", 0.0)
+                    artifactVal.setSequencedIdPrimary()
+                    artifactVal.create()
+                } else {
+                    artifactVal.set("artifactTypeEnumId", typeEnumId)
+                    artifactVal.set("artifactStatusEnumId", "AasDraft")
+                    artifactVal.set("totalIntentCount", 1)
+                    artifactVal.set("completedIntentCount", 0)
+                    artifactVal.set("completionPercentage", 0.0)
+                    artifactVal.update()
+                }
+
                 // Auto-Seed Description as Root Intent
                 if (description && description.trim()) {
                     ec.service.sync().name("org.moqui.ide.BlueprintServices.create#WorkEffortNode").parameters([
@@ -122,6 +152,250 @@
                 context.rootArtifactPath = rootScreenPath
 
                 ec.logger.info("🚀 [AGI SCAFFOLD] Component '${compName}' successfully initialized on disk at ${runtimeCompPath}")
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- ===================================================================== -->
+    <!-- DROP COMPONENT COMPLETELY (FILESYSTEM & DATABASE PURGE)               -->
+    <!-- ===================================================================== -->
+    <service verb="drop" noun="Component" transaction="force-new" authenticate="false">
+        <description>Completely removes a target component from disk and database.</description>
+        <in-parameters>
+            <parameter name="componentName" required="true" type="String"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="success" type="Boolean"/>
+            <parameter name="message" type="String"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                String comp = componentName?.trim()?.replaceAll("[^a-zA-Z0-9_-]", "")
+                List systemProtected = ['agi-ide', 'agi-ai', 'moqui-usl', 'mantle-usl', 'webroot', 'tools']
+                if (!comp || systemProtected.contains(comp)) {
+                    context.success = false
+                    context.message = "Cannot delete protected system component: '${comp}'."
+                    return
+                }
+
+                ec.logger.warn("⚠️ [drop#Component] Initiating complete purge for component: ${comp}")
+
+                // 1. Resolve Discussion IDs
+                def discs = ec.entity.find("org.moqui.ai.discussion.AgiDiscussion")
+                    .condition("targetComponent", comp)
+                    .list()
+                List discIds = discs*.discussionId ?: []
+
+                // 2. Resolve all Payloads tied either to component or discussion IDs
+                Set<String> payloadIdSet = new HashSet<>()
+                def compPayloads = ec.entity.find("org.moqui.ai.payload.AgiPayload")
+                    .condition("targetComponent", comp)
+                    .list()
+                compPayloads.each { payloadIdSet.add(it.agiPayloadId as String) }
+
+                if (discIds) {
+                    def discPayloads = ec.entity.find("org.moqui.ai.payload.AgiPayload")
+                        .condition("discussionId", "in", discIds)
+                        .list()
+                    discPayloads.each { payloadIdSet.add(it.agiPayloadId as String) }
+                }
+
+                List payloadIds = payloadIdSet.toList()
+                def allTargetPayloads = payloadIds ? ec.entity.find("org.moqui.ai.payload.AgiPayload")
+                    .condition("agiPayloadId", "in", payloadIds)
+                    .list() : []
+
+                // -------------------------------------------------------------
+                // 3. DISSOLVE ALL SELF-REFERENTIAL AND CROSS-ENTITY CONSTRAINTS
+                // -------------------------------------------------------------
+                // A. Nullify self-referential parent links on Payloads
+                allTargetPayloads.each { p ->
+                    if (p.parentPayloadId) {
+                        p.parentPayloadId = null
+                        p.update()
+                    }
+                }
+
+                // B. Nullify references on Pipeline Steps
+                if (discIds) {
+                    def steps = ec.entity.find("org.moqui.ai.pipeline.AgiPipelineStep")
+                        .condition("discussionId", "in", discIds)
+                        .list()
+                    steps.each { s ->
+                        s.parentStepId = null
+                        s.ingressPayloadId = null
+                        s.egressPayloadId = null
+                        s.assistantMessageId = null
+                        s.userMessageId = null
+                        s.update()
+                    }
+                }
+
+                // C. Nullify references on Messages
+                if (discIds) {
+                    def msgs = ec.entity.find("org.moqui.ai.discussion.AgiMessage")
+                        .condition("discussionId", "in", discIds)
+                        .list()
+                    msgs.each { m ->
+                        m.parentMessageId = null
+                        m.stagedPayloadId = null
+                        m.update()
+                    }
+                }
+
+                // -------------------------------------------------------------
+                // 4. PURGE LEAF AND FACET TABLES
+                // -------------------------------------------------------------
+                if (payloadIds) {
+                    ec.entity.find("org.moqui.ai.payload.AgiPayloadFacet")
+                        .condition("agiPayloadId", "in", payloadIds)
+                        .deleteAll()
+                }
+
+                if (discIds) {
+                    def allMsgs = ec.entity.find("org.moqui.ai.discussion.AgiMessage")
+                        .condition("discussionId", "in", discIds)
+                        .list()
+                    List msgIds = allMsgs*.messageId ?: []
+                    if (msgIds) {
+                        ec.entity.find("org.moqui.ai.discussion.AgiMessageContent")
+                            .condition("messageId", "in", msgIds)
+                            .deleteAll()
+                        ec.entity.find("org.moqui.ai.discussion.AgiMessageFacet")
+                            .condition("messageId", "in", msgIds)
+                            .deleteAll()
+                    }
+
+                    ec.entity.find("org.moqui.ai.discussion.AgiDiscussionFacet")
+                        .condition("discussionId", "in", discIds)
+                        .deleteAll()
+                    ec.entity.find("org.moqui.ai.discussion.AgiDiscussionRelationship")
+                        .condition("parentDiscussionId", "in", discIds)
+                        .deleteAll()
+                    ec.entity.find("org.moqui.ai.discussion.AgiDiscussionRelationship")
+                        .condition("childDiscussionId", "in", discIds)
+                        .deleteAll()
+                }
+
+                // -------------------------------------------------------------
+                // 5. PURGE CORE RELATIONAL ENTITIES (Steps -> Payloads -> Messages -> Discussions)
+                // -------------------------------------------------------------
+                if (discIds) {
+                    ec.entity.find("org.moqui.ai.pipeline.AgiPipelineStep")
+                        .condition("discussionId", "in", discIds)
+                        .deleteAll()
+                }
+
+                allTargetPayloads.each { p ->
+                    p.delete()
+                }
+
+                if (discIds) {
+                    def remainingMsgs = ec.entity.find("org.moqui.ai.discussion.AgiMessage")
+                        .condition("discussionId", "in", discIds)
+                        .list()
+                    remainingMsgs.each { rm -> rm.delete() }
+
+                    def remainingDiscs = ec.entity.find("org.moqui.ai.discussion.AgiDiscussion")
+                        .condition("discussionId", "in", discIds)
+                        .list()
+                    remainingDiscs.each { rd -> rd.delete() }
+                }
+
+                // -------------------------------------------------------------
+                // 6. PURGE ARTIFACT JOIN TABLES, WORK EFFORTS, AND ARTIFACTS
+                // -------------------------------------------------------------
+                try {
+                    String compPattern = ("%" + comp + "%").toString()
+
+                    // Find all matching artifacts for this component
+                    def allArtifacts = ec.entity.find("org.moqui.ai.AgiArtifact")
+                        .condition("artifactPath", org.moqui.entity.EntityCondition.ComparisonOperator.LIKE, compPattern)
+                        .list()
+
+                    List artIds = allArtifacts*.agiArtifactId?.findAll { it != null } ?: []
+
+                    if (artIds) {
+                        // A. Purge join entity AgiArtifactWorkEffort FIRST
+                        try {
+                            ec.entity.find("org.moqui.ai.AgiArtifactWorkEffort")
+                                .condition("agiArtifactId", "in", artIds)
+                                .deleteAll()
+                        } catch (Exception ignore) {}
+
+                        // B. Clear/Nullify direct foreign keys on WorkEffort pointing to these artifacts
+                        // (Breaks the foreign key constraint 'workeffortagiartifact')
+                        def linkedWorkEfforts = ec.entity.find("mantle.work.effort.WorkEffort")
+                            .condition("agiArtifactId", "in", artIds)
+                            .list()
+                        linkedWorkEfforts.each { we ->
+                            we.agiArtifactId = null
+                            we.update()
+                        }
+
+                        // C. Delete WorkEfforts associated by sourceReferenceId or component path
+                        allArtifacts.each { art ->
+                            if (art.artifactPath) {
+                                ec.entity.find("mantle.work.effort.WorkEffort")
+                                    .condition("sourceReferenceId", art.artifactPath.toString())
+                                    .deleteAll()
+                            }
+                        }
+
+                        // D. Delete the unlinked WorkEfforts that previously held agiArtifactId
+                        linkedWorkEfforts.each { we ->
+                            try { we.delete() } catch (Exception ignore) {}
+                        }
+
+                        // E. Delete AgiArtifact records now that all inbound foreign keys are cleared
+                        ec.entity.find("org.moqui.ai.AgiArtifact")
+                            .condition("agiArtifactId", "in", artIds)
+                            .deleteAll()
+                    }
+
+                    // F. Clean up any remaining WorkEfforts matching the component pattern
+                    ec.entity.find("mantle.work.effort.WorkEffort")
+                        .condition("sourceReferenceId", org.moqui.entity.EntityCondition.ComparisonOperator.LIKE, compPattern)
+                        .deleteAll()
+
+                } catch (Exception ex) {
+                    ec.logger.error("⚠️ [drop#Component] Error purging AgiArtifact hierarchy: ${ex.message}", ex)
+                }
+
+                // -------------------------------------------------------------
+                // 7. PURGE WORKSPACE BUFFERS (Using explicit java.lang.String)
+                // -------------------------------------------------------------
+                try {
+                    String bufPattern = ("%" + comp + "%").toString()
+                    ec.entity.find("org.moqui.ai.WorkspaceBuffer")
+                        .condition("artifactUri", org.moqui.entity.EntityCondition.ComparisonOperator.LIKE, bufPattern)
+                        .deleteAll()
+                } catch (Exception ex) {
+                    ec.logger.warn("⚠️ [drop#Component] Error purging WorkspaceBuffer: ${ex.message}")
+                }
+
+                // -------------------------------------------------------------
+                // 8. PURGE PHYSICAL FILESYSTEM DIRECTORY
+                // -------------------------------------------------------------
+                File compDir = new File("runtime/component/${comp}")
+                boolean fileSuccess = true
+                if (compDir.exists()) {
+                    fileSuccess = compDir.deleteDir()
+                    ec.logger.info("🗑️ [drop#Component] Directory purge for ${compDir.getPath()}: ${fileSuccess}")
+                }
+
+                // -------------------------------------------------------------
+                // 9. CLEAR CACHES
+                // -------------------------------------------------------------
+                try {
+                    ec.resource.clearAllCaches()
+                    ec.screen.clearScreenCache(true)
+                } catch (Exception ignore) {}
+
+                context.success = fileSuccess
+                context.message = fileSuccess ? "Component '${comp}' was completely removed from database and disk."
+                                              : "Database purged, but physical directory could not be fully deleted."
+                ec.logger.info("✅ [drop#Component] Purge complete for ${comp}: ${context.message}")
             ]]></script>
         </actions>
     </service>

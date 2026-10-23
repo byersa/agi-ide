@@ -19,16 +19,9 @@
             egressPayload: { type: Object, default: () => null }
         },
         emits: [
-            'update:activePort',
-            'advance-to-build',
-            'branch-successor',
-            'orchestrate-module',
-            'fork-step',
-            'archive-branch',
-            'set-stance',
-            'locate-canvas',
-            'open-artifact',
-            'update-target-artifact'
+            'update:active-port', 'branch-successor', 'orchestrate-module',
+            'advance-to-build', 'fork-step', 'archive-branch', 'set-stance',
+            'locate-canvas', 'open-artifact', 'update-target-artifact', 'promote-step'
         ],
         data() {
             return {
@@ -307,8 +300,52 @@
                             <q-btn flat dense no-caps size="xs" icon="handyman" label="+ Build" color="amber-3" class="q-px-xs rounded-borders bg-amber-10 text-weight-bolder" style="border: 1px solid #f59e0b; height: 22px;" :loading="isAdvancing" @click="branchStep('build')" />
                         </template>
 
-                        <q-btn flat dense no-caps size="xs" icon="fork_right" label="Fork" color="amber-4" class="q-px-xs rounded-borders q-ml-sm" style="border: 1px solid rgba(251, 191, 36, 0.4); height: 22px;" :loading="isForking" @click="$emit('fork-step')" />
-                        <q-btn flat dense no-caps size="xs" icon="archive" label="Archive" color="slate-400" class="q-px-xs rounded-borders" style="border: 1px solid #334155; height: 22px;" :loading="isArchiving" @click="$emit('archive-branch')" />
+                        <!-- Fork Branch Button -->
+                        <q-btn 
+                            flat dense no-caps size="xs" 
+                            icon="fork_right" 
+                            label="Fork" 
+                            color="amber-4" 
+                            class="q-px-xs rounded-borders q-ml-sm" 
+                            style="border: 1px solid rgba(251, 191, 36, 0.4); height: 22px;" 
+                            :loading="isForking" 
+                            @click="$emit('fork-step')"
+                        >
+                            <q-tooltip class="bg-slate-900 text-amber-2 font-mono" :offset="[0, 6]">
+                                Fork an alternate draft branch from this step
+                            </q-tooltip>
+                        </q-btn>
+                        
+                        <!-- Promote/Extract to Discussion Button -->
+                        <q-btn 
+                            flat dense no-caps size="xs" 
+                            icon="drive_file_move" 
+                            label="Extract" 
+                            color="cyan-3" 
+                            class="q-px-xs rounded-borders q-ml-xs" 
+                            style="border: 1px solid rgba(103, 232, 249, 0.4); height: 22px;" 
+                            @click="$emit('promote-step', stepId)"
+                        >
+                            <q-tooltip class="bg-slate-900 text-cyan-2 font-mono" :offset="[0, 6]">
+                                Extract step &amp; downstream branch into a new standalone Discussion
+                            </q-tooltip>
+                        </q-btn>
+                        
+                        <!-- Archive Branch Button -->
+                        <q-btn 
+                            flat dense no-caps size="xs" 
+                            icon="archive" 
+                            label="Archive" 
+                            color="slate-400" 
+                            class="q-px-xs rounded-borders q-ml-xs" 
+                            style="border: 1px solid #334155; height: 22px;" 
+                            :loading="isArchiving" 
+                            @click="$emit('archive-branch')"
+                        >
+                            <q-tooltip class="bg-slate-900 text-slate-300 font-mono" :offset="[0, 6]">
+                                Archive this step and all downstream branch steps
+                            </q-tooltip>
+                        </q-btn>
                     </div>
 
                     <!-- Stance Selector -->

@@ -170,6 +170,11 @@
                 <service name="org.moqui.ide.ComponentServices.create#Component"/>
             </method>
         </resource>
+        <resource name="drop">
+            <method type="post">
+                <service name="org.moqui.ide.ComponentServices.drop#Component"/>
+            </method>
+        </resource>
     </resource>
 
     <!-- ========================================================= -->

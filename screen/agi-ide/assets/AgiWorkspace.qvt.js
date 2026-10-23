@@ -17,6 +17,7 @@
                 companionQvtPath: '',
                 themeArtifactPath: 'component://nursinghome/theme/default.theme.json',
                 showArtifactPalette: false,
+                showNewComponentWizardModal: false,
                 targetComponentName: 'nursinghome',
                 ignoredFrameworkComponents: ['agi-ide', 'agi-ai', 'moqui-usl', 'mantle-usl', 'webroot', 'tools'],
 
@@ -68,7 +69,7 @@
                     MoquiXmlHost: true,
                     AgiArtifactPalette: false,
                     AgiWorkEffortDetail: false,
-                    AgiNewComponentWizard: false,
+                    //AgiNewComponentWizard: false,
                     AgiIntentDetail: false,
                     AgiTestRunner: false,
                     AgiReportEditor: false
@@ -88,7 +89,7 @@
                     AgiArtifactPalette: null,
                     MoquiXmlHost: null,
                     AgiWorkEffortDetail: null,
-                    AgiNewComponentWizard: null,
+                    //AgiNewComponentWizard: null,
                     AgiIntentDetail: null,
                     AgiTestRunner: null,
                     AgiReportEditor: null
@@ -463,9 +464,23 @@
                                 </button>
                             </div>
 
-                            <!-- Center: Current Artifact Path -->
-                            <div class="text-caption text-slate-200 font-mono ellipsis q-px-sm text-weight-medium" style="max-width: 45%;">
-                                {{ localScreenPath || 'No Artifact Focused' }}
+                            <!-- Center: Current Artifact Path (High Contrast Pill) -->
+                            <div 
+                                class="row items-center no-wrap ellipsis q-px-sm rounded-borders font-mono text-caption" 
+                                style="max-width: 50%; height: 22px; background-color: #020617; border: 1px solid #334155;"
+                            >
+                                <q-icon 
+                                    :name="localScreenPath ? 'description' : 'layers'" 
+                                    size="13px" 
+                                    :class="localScreenPath ? 'text-amber-4' : 'text-cyan-4'" 
+                                    class="q-mr-xs" 
+                                />
+                                <span 
+                                    class="ellipsis text-weight-bold" 
+                                    :style="{ color: localScreenPath ? '#f8fafc' : '#94a3b8' }"
+                                >
+                                    {{ localScreenPath || (targetComponentName ? 'component://' + targetComponentName + ' (Component Scope)' : 'No Artifact Focused') }}
+                                </span>
                             </div>
 
                             <!-- Right: Multi-Editor Selection Dropdown Menu (High Contrast Enforced) -->
@@ -550,6 +565,14 @@
                         </q-card-section>
                     </q-card>
                 </q-dialog>
+
+                <!-- NEW COMPONENT WIZARD MODAL -->
+                <component 
+                    v-if="showNewComponentWizardModal && editorConstructors.AgiNewComponentWizard" 
+                    :is="editorConstructors.AgiNewComponentWizard"
+                    :open="showNewComponentWizardModal"
+                    @close="showNewComponentWizardModal = false"
+                />
 
                 <!-- UNSAVED NAVIGATION CONFIRMATION MODAL -->
                 <q-dialog v-model="showUnsavedSwitchDialog" persistent>
@@ -669,6 +692,7 @@
             },
 
             handleDomainAction(action) {
+                const vm = this;
                 if (action === 'instructions') {
                     const instructionsPath = `component://${this.targetComponentName}/mcp/instructions/component.md`;
                     this.executeArtifactSwitch({ value: instructionsPath });
@@ -676,7 +700,7 @@
                         this.activeEditors.push('AgiScreenEditor');
                     }
                 } else if (action === 'new') {
-                    if (this.contextBus) this.contextBus.postMessage({ event: 'open-new-component-wizard' });
+                    this.openNewComponentWizard();
                 } else if (action === 'save') {
                     this.handleChildEditorSave();
                 } else if (action === 'rename') {
@@ -686,8 +710,49 @@
                         this.$q?.notify({ type: 'info', message: `Target domain updated to: ${this.targetComponentName}` });
                     }
                 } else if (action === 'delete') {
-                    if (confirm(`Are you sure you want to remove the domain configuration for "${this.targetComponentName}"?`)) {
-                        this.$q?.notify({ type: 'warning', message: `Domain deletion queued for ${this.targetComponentName}` });
+                    const target = this.targetComponentName;
+                    if (confirm(`⚠️ PERMANENT PURGE WARNING\n\nAre you sure you want to completely drop "${target}"?\nThis will permanently delete all files in runtime/component/${target} and wipe all associated database records.`)) {
+                        this.$q?.loading?.show({ message: `Purging ${target}...` });
+                        axios.post('/rest/s1/agi-ide/component/drop', {
+                            componentName: target
+                        }, {
+                            headers: { 'moquiSessionToken': this.resolveCsrfToken() }
+                        }).then(resp => {
+                            this.$q?.loading?.hide();
+                            if (resp.data?.success) {
+                                this.$q?.notify({
+                                    type: 'positive',
+                                    message: `Component "${target}" has been completely wiped.`,
+                                    icon: 'delete_forever',
+                                    timeout: 4000
+                                });
+                                // Reset workspace to default clean slate
+                                this.localScreenPath = '';
+                                this.activeDiscussionId = '';
+                                this.activeDiscussionTitle = '';
+                                this.selectedStage = null;
+                                if (this.contextBus) {
+                                    this.contextBus.postMessage({ event: 'refresh-artifact-discovery' });
+                                }
+                                // Prompt or trigger wizard to start over immediately
+                                setTimeout(() => {
+                                    if (confirm(`Do you want to initialize a fresh skeleton for "${target}" now?`)) {
+                                        vm.handleDomainAction('new');
+                                    }
+                                }, 500);
+                            } else {
+                                this.$q?.notify({
+                                    type: 'negative',
+                                    message: resp.data?.message || 'Purge failed.'
+                                });
+                            }
+                        }).catch(err => {
+                            this.$q?.loading?.hide();
+                            this.$q?.notify({
+                                type: 'negative',
+                                message: 'Error deleting component: ' + (err.response?.data?.errors || err.message)
+                            });
+                        });
                     }
                 }
             },
@@ -760,7 +825,7 @@
                     { name: 'AgiArtifactPalette', url: '/agi-ide-assets/AgiArtifactPalette.qvt.js', globalVar: 'AgiArtifactPalette' },
                     { name: 'MoquiXmlHost', url: '/agi-ai-assets/moqui-xml-host.qvt.js', globalVar: 'MoquiXmlHost' },
                     { name: 'AgiWorkEffortDetail', url: '/agi-ai-assets/AgiWorkEffortDetail.qvt.js', globalVar: 'AgiWorkEffortDetail' },
-                    { name: 'AgiNewComponentWizard', url: '/agi-ide-assets/AgiNewComponentWizard.qvt.js', globalVar: 'AgiNewComponentWizard' },
+                    //{ name: 'AgiNewComponentWizard', url: '/agi-ide-assets/AgiNewComponentWizard.qvt.js', globalVar: 'AgiNewComponentWizard' },
                     { name: 'AgiIntentDetail', url: '/agi-ide-assets/AgiIntentDetail.qvt.js', globalVar: 'AgiIntentDetail' },
                     { name: 'AgiStudio', url: '/agi-ide-assets/AgiStudio.qvt.js', globalVar: 'AgiStudio' },
                     { name: 'AgiEditors', url: '/agi-ide-assets/AgiEditors.qvt.js', globalVar: 'AgiEditors' },
@@ -1085,6 +1150,43 @@
                 }
 
                 window.open(targetUrl, 'moqui-production-preview');
+            },
+            async openNewComponentWizard() {
+                if (!this.editorConstructors.AgiNewComponentWizard) {
+                    await this.loadLazyComponent(
+                        'AgiNewComponentWizard',
+                        '/agi-ide-assets/AgiNewComponentWizard.qvt.js',
+                        'AgiNewComponentWizard'
+                    );
+                }
+                this.showNewComponentWizardModal = true;
+            },
+
+            loadLazyComponent(name, url, globalVar) {
+                return new Promise((resolve, reject) => {
+                    const markRaw = (window.Vue && window.Vue.markRaw) ? window.Vue.markRaw : (obj) => obj;
+                    const existing = window[globalVar] || window.AgiComponents?.[name];
+                    if (existing) {
+                        this.editorConstructors[name] = markRaw(existing);
+                        return resolve(existing);
+                    }
+
+                    const script = document.createElement('script');
+                    script.type = 'text/javascript';
+                    script.src = url;
+                    script.async = true;
+                    script.onload = () => {
+                        const loaded = window[globalVar] || window.AgiComponents?.[name];
+                        if (loaded) {
+                            this.editorConstructors[name] = markRaw(loaded);
+                            resolve(loaded);
+                        } else {
+                            reject(new Error(`Failed to resolve global for ${name}`));
+                        }
+                    };
+                    script.onerror = reject;
+                    document.head.appendChild(script);
+                });
             },
         },
     };

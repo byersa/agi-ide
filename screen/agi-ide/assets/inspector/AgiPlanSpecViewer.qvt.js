@@ -241,6 +241,40 @@
                     </div>
                 </div>
 
+                <!-- DYNAMIC TRANSITION BANNER (PLAN -> BUILD) -->
+                <div 
+                    class="row items-center justify-between q-pa-md q-mt-lg rounded-borders" 
+                    style="background-color: #0b1329; border: 1px solid #f59e0b;"
+                >
+                    <div class="col-grow q-mr-md">
+                        <div class="row items-center q-gutter-x-xs q-mb-xs">
+                            <q-badge color="amber-10" text-color="black" class="font-mono text-weight-bolder" style="font-size: 9px;">
+                                SPECIFICATION READY
+                            </q-badge>
+                            <span class="text-caption font-mono text-slate-200">
+                                Target Artifact: <strong class="text-amber-3">{{ targetArtifactUri || 'component://nursinghome/screen/nursinghome.xml' }}</strong>
+                            </span>
+                        </div>
+                        <div class="text-caption text-slate-400 font-mono" style="font-size: 11px;">
+                            Synthesize the formal screen XML, subscreen containers, transitions, and Mantle UDM entity forms.
+                        </div>
+                    </div>
+                
+                    <q-btn 
+                        color="amber-9" 
+                        text-color="black"
+                        icon="handyman" 
+                        label="Advance to Build: Screen XML" 
+                        no-caps 
+                        dense
+                        class="text-weight-bolder font-mono q-px-md q-py-xs"
+                        style="height: 34px; font-size: 11px;"
+                        @click="$emit('advance-to-build')"
+                    >
+                        <q-tooltip>Fork successor step with stance BUILD and synthesized layout prompt</q-tooltip>
+                    </q-btn>
+                </div>
+
             </div>
         `
     };
