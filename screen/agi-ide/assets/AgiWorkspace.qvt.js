@@ -27,6 +27,7 @@
                 // Full-Width Top Sliding Drawer States
                 showDiscussionDrawer: false,
                 showDagDrawer: false,
+                showBlueprintDrawer: false,
 
                 // Active Discussion / DAG Context
                 activeDiscussionId: '',
@@ -410,16 +411,19 @@
                             :width-percent="studioWidthPercent"
                             :show-discussion-drawer="showDiscussionDrawer"
                             :show-dag-drawer="showDagDrawer"
+                            :show-blueprint-drawer="showBlueprintDrawer"
                             :active-discussion-id-prop="activeDiscussionId"
                             :active-discussion-title-prop="activeDiscussionTitle"
                             :selected-stage-prop="selectedStage"
                             @toggle-discussion="toggleDiscussionDrawer"
                             @toggle-dag="toggleDagDrawer"
+                            @toggle-blueprint="toggleBlueprintDrawer"
                             @pipeline-selected="onPipelineSelectedFromDrawer"
                             @stage-selected="onStageSelectedFromDrawer"
                             @stage-dispatched="onStageDispatched"
                             @set-width="setStudioWidth"
                             @open-artifact="onArtifactOpened"
+                            @seed-pipeline-step="handleSeedPipelineStep"
                         ></component>
                     </div>
 
@@ -1137,17 +1141,27 @@
                 return uri;
             },
             openProductionView() {
-                let targetUrl = `/${this.targetComponentName}`;
+                const comp = this.targetComponentName || 'nursinghome';
+                let targetUrl = `/${comp}`;
 
-                if (this.localScreenPath && this.localScreenPath.startsWith(`component://${this.targetComponentName}/screen/`)) {
+                if (this.localScreenPath && this.localScreenPath.startsWith(`component://${comp}/screen/`)) {
                     let subPath = this.localScreenPath
-                        .replace(`component://${this.targetComponentName}/screen/`, '')
+                        .replace(`component://${comp}/screen/`, '')
                         .replace(/\.xml$/, '');
 
-                    if (subPath !== this.targetComponentName && !subPath.endsWith('/' + this.targetComponentName)) {
-                        targetUrl = `/${this.targetComponentName}/${subPath}`;
+                    // Strip leading component name if subPath starts with '${comp}/'
+                    if (subPath.startsWith(comp + '/')) {
+                        subPath = subPath.substring(comp.length + 1);
+                    }
+
+                    // If pointing directly to root screen, just use /${comp}
+                    if (subPath && subPath !== comp) {
+                        targetUrl = `/${comp}/${subPath}`;
                     }
                 }
+
+                // If your webroot mounts apps under /qapps or /apps, adjust prefix here if needed:
+                // targetUrl = `/qapps${targetUrl}`;
 
                 window.open(targetUrl, 'moqui-production-preview');
             },
@@ -1187,6 +1201,133 @@
                     script.onerror = reject;
                     document.head.appendChild(script);
                 });
+            },
+            toggleBlueprintDrawer() {
+                this.showBlueprintDrawer = !this.showBlueprintDrawer;
+                if (this.showBlueprintDrawer) {
+                    this.showDiscussionDrawer = false;
+                    this.showDagDrawer = false;
+                }
+            },
+            toggleDiscussionDrawer() {
+                this.showDiscussionDrawer = !this.showDiscussionDrawer;
+                if (this.showDiscussionDrawer) {
+                    this.showDagDrawer = false;
+                    this.showBlueprintDrawer = false; // <-- Add this
+                }
+            },
+            toggleDagDrawer() {
+                this.showDagDrawer = !this.showDagDrawer;
+                if (this.showDagDrawer) {
+                    this.showDiscussionDrawer = false;
+                    this.showBlueprintDrawer = false; // <-- Add this
+                    this.$nextTick(() => {
+                        setTimeout(() => {
+                            if (this.$refs.globalCanvasRef && typeof this.$refs.globalCanvasRef.scheduleRecalcEdges === 'function') {
+                                this.$refs.globalCanvasRef.scheduleRecalcEdges();
+                            }
+                        }, 150);
+                    });
+                }
+            },
+            async handleSeedPipelineStep(node) {
+                const screenTitle = node.displayTitle || node.screenName;
+                const isPlaceholder = node.status === 'placeholder';
+                const targetStance = isPlaceholder ? 'AamBuild' : 'AamPlan';
+                const prompt = targetStance === 'AamBuild'
+                    ? `Implement full Moqui XML screen for ${node.screenName} (${node.artifactUri}) adhering to Mantle UDM and Quasar syntax standards.`
+                    : `Formulate architectural implementation plan for ${node.screenName} subscreen under ${this.targetComponentName}.`;
+
+                try {
+                    this.$q.loading.show({ message: `Resolving pipeline for ${screenTitle}...` });
+
+                    // 1. Resolve or Auto-Provision Discussion Initiative
+                    let discId = this.activeDiscussionId;
+
+                    if (!discId) {
+                        // Attempt to pick up an existing initiative for this component
+                        try {
+                            const graphResp = await axios.get('/rest/s1/agi-ai/discussions/pipeline-graph', {
+                                params: { targetComponent: this.targetComponentName, includeArchived: 'N' },
+                                headers: { 'moquiSessionToken': this.resolveCsrfToken() }
+                            });
+                            const initiatives = graphResp.data?.initiatives || [];
+                            if (initiatives.length > 0) {
+                                discId = String(initiatives[0].discussionId);
+                                this.activeDiscussionId = discId;
+                                this.activeDiscussionTitle = initiatives[0].name || `Pipeline #${discId}`;
+                            }
+                        } catch (e) {
+                            console.warn("Could not query pipeline graph for default initiative:", e);
+                        }
+
+                        // If still none, auto-create a dedicated pipeline initiative
+                        if (!discId) {
+                            const createResp = await axios.post('/rest/s1/agi-ai/discussions', {
+                                name: `${screenTitle} Implementation`,
+                                targetComponent: this.targetComponentName
+                            }, { headers: { 'moquiSessionToken': this.resolveCsrfToken() } });
+
+                            discId = String(createResp.data?.discussionId);
+                            this.activeDiscussionId = discId;
+                            this.activeDiscussionTitle = `${screenTitle} Implementation`;
+                        }
+                    }
+
+                    this.$q.loading.show({ message: `Forking draft step for ${node.screenName}...` });
+
+                    // 2. Identify Parent Step (Current selection or omit if root)
+                    const sourceStepId = this.selectedStage?.pipelineStepId || null;
+
+                    const forkPayload = {
+                        discussionId: discId,
+                        targetStanceEnumId: targetStance,
+                        directivePrompt: prompt
+                    };
+                    if (sourceStepId) {
+                        forkPayload.sourceStepId = sourceStepId;
+                    }
+
+                    // 3. Fork Draft Step
+                    const resp = await axios.post('/rest/s1/agi-ai/pipeline/step/fork', forkPayload, {
+                        headers: { 'moquiSessionToken': this.resolveCsrfToken() }
+                    });
+
+                    const newStepId = resp.data?.newStepId;
+                    if (newStepId) {
+                        // 4. Anchor Artifact URI to Step
+                        await axios.post('/rest/s1/agi-ai/pipeline/step/artifact', {
+                            pipelineStepId: newStepId,
+                            targetArtifactUri: node.artifactUri
+                        }, { headers: { 'moquiSessionToken': this.resolveCsrfToken() } });
+
+                        this.$q.notify({
+                            type: 'positive',
+                            message: `Created Draft Step #${newStepId} (${targetStance.replace('Aam', '')}) for ${screenTitle}`,
+                            caption: `Assigned to Pipeline #${discId}: ${this.activeDiscussionTitle}`,
+                            icon: 'auto_fix_high',
+                            timeout: 3500
+                        });
+
+                        // 5. Close Blueprint Drawer, Open DAG Canvas, and Select Node
+                        this.showBlueprintDrawer = false;
+                        this.showDagDrawer = true;
+
+                        if (this.$refs.globalCanvasRef && typeof this.$refs.globalCanvasRef.fetchPipelineGraph === 'function') {
+                            await this.$refs.globalCanvasRef.fetchPipelineGraph();
+                            if (typeof this.$refs.globalCanvasRef.selectStageById === 'function') {
+                                this.$refs.globalCanvasRef.selectStageById(newStepId);
+                            }
+                        }
+                    }
+                } catch (err) {
+                    this.$q.notify({
+                        type: 'negative',
+                        message: 'Failed to create step: ' + (err.response?.data?.errors || err.message)
+                    });
+                } finally {
+                    this.$q.loading.hide();
+                }
             },
         },
     };

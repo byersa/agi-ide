@@ -1,587 +1,359 @@
 (function () {
     const AgiArtifactPalette = {
         name: 'AgiArtifactPalette',
-        template: `
-            <div class="agi-artifact-palette bg-slate-900 text-white rounded-borders q-pa-xs">
-                <!-- Section Selector Tabs -->
-                <q-tabs
-                    v-model="activeTab"
-                    dense
-                    no-caps
-                    align="justify"
-                    class="bg-slate-950 text-grey-4 q-mb-xs rounded-borders"
-                    active-color="cyan-4"
-                    indicator-color="cyan-4"
-                >
-                    <q-tab name="search" icon="search" label="Search" />
-                    <q-tab name="grouped" icon="category" label="By Type" />
-                    <q-tab name="history" icon="history" label="Recent" />
-                </q-tabs>
-
-                <!-- Search Input -->
-                <q-input 
-                    v-model="searchQuery" 
-                    placeholder="Filter artifacts (e.g. screen, service, entity)..." 
-                    dense 
-                    outlined 
-                    class="q-mb-xs font-mono text-caption"
-                    bg-color="white"
-                >
-                    <template v-slot:append>
-                        <q-icon name="filter_list" color="grey-8" size="xs" />
-                    </template>
-                </q-input>
-
-                <!-- ========================================================= -->
-                <!-- TAB 1: ALL / QUERY SEARCH LIST                            -->
-                <!-- ========================================================= -->
-                <div v-if="activeTab === 'search'">
-                    <q-list separator dense class="max-h-80 overflow-y-auto">
-                        <template v-if="filteredArtifacts.length > 0">
-                            <q-expansion-item
-                                v-for="item in filteredArtifacts" 
-                                :key="item.value"
-                                group="artifact-palette"
-                                header-class="q-pa-xs bg-slate-950 hover-bg-slate-800 rounded-borders"
-                                @show="onArtifactExpanded(item.value)"
-                            >
-                                <template v-slot:header>
-                                    <q-item-section avatar min-width="24px">
-                                        <q-icon :name="getArtifactIcon(item.type)" :color="getArtifactColor(item.type)" size="xs" />
-                                    </q-item-section>
-                                    
-                                    <q-item-section @click.stop="selectArtifact(item)" class="cursor-pointer">
-                                        <q-item-label class="font-mono text-caption text-weight-bold" :class="'text-' + getArtifactColor(item.type)">
-                                            {{ item.label }}
-                                        </q-item-label>
-                                        <q-item-label caption class="text-grey-5 font-mono text-caption ellipsis" style="max-width: 250px;">
-                                            {{ item.value }}
-                                        </q-item-label>
-
-                                        <!-- Tooltip -->
-                                        <q-tooltip anchor="top middle" self="bottom middle" class="bg-slate-950 text-cyan-4 font-mono text-caption shadow-4 border-dark" style="border: 1px solid #334155; max-width: 500px; word-break: break-all;">
-                                            <div class="text-weight-bold text-white q-mb-xs">{{ item.label }} ({{ item.type }})</div>
-                                            <div>{{ item.value }}</div>
-                                        </q-tooltip>
-                                    </q-item-section>
-
-                                    <q-item-section side class="row items-center no-wrap q-gutter-x-xs">
-                                        <q-badge :color="getBadgeColor(item.type)" text-color="white" class="font-mono" style="font-size: 9px;">
-                                            {{ item.type }}
-                                        </q-badge>
-                                        <q-btn flat round dense size="xs" color="negative" icon="delete_forever" @click.stop="confirmDeleteArtifact(item)">
-                                            <q-tooltip class="bg-slate-900 text-negative text-caption">Delete from DB &amp; Disk</q-tooltip>
-                                        </q-btn>
-                                    </q-item-section>
-                                </template>
-
-                                <!-- Expanded WorkspaceBuffer AST Drawer -->
-                                <q-card class="bg-slate-950 text-grey-8 q-pa-xs border-top-dark">
-                                    <div class="row items-center justify-between q-mb-xs q-px-xs">
-                                        <div class="text-caption text-weight-bold text-amber-5 font-mono row items-center">
-                                            <q-icon name="memory" size="xs" class="q-mr-xs" />
-                                            WORKSPACE BUFFER AST
-                                        </div>
-                                        <div class="row q-gutter-x-xs">
-                                            <q-btn flat dense icon="refresh" color="cyan-4" size="xs" @click.stop="fetchBufferForUri(item.value)">
-                                                <q-tooltip class="bg-slate-900 text-caption">Reload Buffer</q-tooltip>
-                                            </q-btn>
-                                            <q-btn flat dense icon="content_copy" color="grey-4" size="xs" @click.stop="copyBufferJson(item.value)">
-                                                <q-tooltip class="bg-slate-900 text-caption">Copy AST</q-tooltip>
-                                            </q-btn>
-                                        </div>
-                                    </div>
-                                    <div class="bg-slate-900 q-pa-xs rounded-borders border-dark overflow-auto max-h-48 font-mono" style="font-size: 10px; border: 1px solid #1e293b;">
-                                        <div v-if="loadingBuffers[item.value]" class="text-center text-grey-8 q-pa-sm text-italic">
-                                            <q-spinner-dots color="amber-5" size="xs" /> Loading WorkspaceBuffer...
-                                        </div>
-                                        <pre v-else-if="bufferCache[item.value]" class="q-ma-none text-grey-3" style="white-space: pre-wrap; word-break: break-all;">{{ bufferCache[item.value] }}</pre>
-                                        <div v-else class="text-center text-grey-5 q-pa-sm text-italic">
-                                            No buffer initialized for this artifact.
-                                        </div>
-                                    </div>
-                                </q-card>
-                            </q-expansion-item>
-                        </template>
-                        <div v-else class="text-center text-grey-6 q-pa-md text-caption font-mono">
-                            No artifacts matching query "{{ searchQuery }}".
-                        </div>
-                    </q-list>
-                </div>
-
-                <!-- ========================================================= -->
-                <!-- TAB 2: GROUPED BY ARTIFACT TYPE                           -->
-                <!-- ========================================================= -->
-                <div v-else-if="activeTab === 'grouped'" class="max-h-80 overflow-y-auto">
-                    <q-list separator dense>
-                        <q-expansion-item
-                            v-for="(groupList, groupKey) in groupedArtifacts"
-                            :key="groupKey"
-                            default-opened
-                            header-class="bg-slate-950 font-mono text-caption text-weight-bold text-grey-3 q-py-xs"
-                        >
-                            <template v-slot:header>
-                                <q-item-section avatar min-width="24px">
-                                    <q-icon :name="getGroupIcon(groupKey)" :color="getGroupColor(groupKey)" size="xs" />
-                                </q-item-section>
-                                <q-item-section>
-                                    {{ groupKey }} ({{ groupList.length }})
-                                </q-item-section>
-                            </template>
-
-                            <q-item
-                                v-for="item in groupList"
-                                :key="item.value"
-                                clickable
-                                v-ripple
-                                class="q-pl-lg q-py-xs bg-slate-900 hover-bg-slate-800"
-                                @click="selectArtifact(item)"
-                            >
-                                <q-item-section avatar min-width="20px">
-                                    <q-icon :name="getArtifactIcon(item.type)" :color="getArtifactColor(item.type)" size="xs" />
-                                </q-item-section>
-                                <q-item-section>
-                                    <q-item-label class="font-mono text-caption" :class="'text-' + getArtifactColor(item.type)">
-                                        {{ item.label }}
-                                    </q-item-label>
-                                    <q-item-label caption class="text-grey-5 font-mono ellipsis" style="font-size: 10px; max-width: 210px;">
-                                        {{ item.value }}
-                                    </q-item-label>
-
-                                    <!-- Tooltip -->
-                                    <q-tooltip anchor="top middle" self="bottom middle" class="bg-slate-950 text-cyan-4 font-mono text-caption shadow-4 border-dark" style="border: 1px solid #334155; max-width: 500px; word-break: break-all;">
-                                        <div class="text-weight-bold text-white q-mb-xs">{{ item.label }} ({{ item.type }})</div>
-                                        <div>{{ item.value }}</div>
-                                    </q-tooltip>
-                                </q-item-section>
-                                <q-item-section side class="row items-center no-wrap q-gutter-x-xs">
-                                    <q-badge :color="getBadgeColor(item.type)" text-color="white" class="font-mono" style="font-size: 8px;">
-                                        {{ item.type }}
-                                    </q-badge>
-                                    <q-btn flat round dense size="xs" color="negative" icon="delete_forever" @click.stop="confirmDeleteArtifact(item)">
-                                        <q-tooltip class="bg-slate-900 text-negative text-caption">Delete from DB &amp; Disk</q-tooltip>
-                                    </q-btn>
-                                </q-item-section>
-                            </q-item>
-                        </q-expansion-item>
-                    </q-list>
-                </div>
-
-                <!-- ========================================================= -->
-                <!-- TAB 3: RECENTLY SELECTED HISTORY                          -->
-                <!-- ========================================================= -->
-                <div v-else-if="activeTab === 'history'" class="max-h-80 overflow-y-auto">
-                    <div class="row justify-between items-center q-pa-xs">
-                        <span class="text-caption text-grey-5 font-mono">Recent History</span>
-                        <q-btn flat dense size="xs" color="grey-5" icon="delete_sweep" label="Clear" @click="clearHistory" />
-                    </div>
-                    <q-list separator dense>
-                        <template v-if="recentHistory.length > 0">
-                            <q-item
-                                v-for="item in recentHistory"
-                                :key="item.value"
-                                clickable
-                                v-ripple
-                                class="q-pa-xs bg-slate-950 hover-bg-slate-800 rounded-borders q-mb-xs"
-                                @click="selectArtifact(item)"
-                            >
-                                <q-item-section avatar min-width="24px">
-                                    <q-icon :name="getArtifactIcon(item.type)" :color="getArtifactColor(item.type)" size="xs" />
-                                </q-item-section>
-                                <q-item-section>
-                                    <q-item-label class="font-mono text-caption text-weight-bold" :class="'text-' + getArtifactColor(item.type)">
-                                        {{ item.label }}
-                                    </q-item-label>
-                                    <q-item-label caption class="text-grey-5 font-mono text-caption ellipsis" style="max-width: 250px;">
-                                        {{ item.value }}
-                                    </q-item-label>
-                                </q-item-section>
-                                <q-item-section side class="row items-center no-wrap q-gutter-x-xs">
-                                    <span class="text-grey-5 font-mono q-mr-xs" style="font-size: 9px;">{{ item.openedAt || 'Recent' }}</span>
-                                    <q-btn flat round dense size="xs" color="negative" icon="delete_forever" @click.stop="confirmDeleteArtifact(item)">
-                                        <q-tooltip class="bg-slate-900 text-negative text-caption">Delete from DB &amp; Disk</q-tooltip>
-                                    </q-btn>
-                                </q-item-section>
-                            </q-item>
-                        </template>
-                        <div v-else class="text-center text-grey-6 q-pa-md text-caption font-mono">
-                            No recent artifact history yet.
-                        </div>
-                    </q-list>
-                </div>
-            </div>
-        `,
+        emits: ['artifact-selected', 'seed-pipeline-step'],
+        props: {
+            targetComponent: { type: String, default: 'nursinghome' },
+            activeArtifactUri: { type: String, default: '' }
+        },
         data() {
             return {
-                activeTab: 'search',
-                searchQuery: '',
+                viewMode: 'matrix', // 'matrix' | 'list'
+                loading: false,
+                searchFilter: '',
                 artifacts: [],
-                recentHistory: [],
-                bufferCache: {},
-                loadingBuffers: {}
+                hierarchyRoot: null,
+                summaryStats: { total: 0, built: 0, placeholder: 0, empty: 0, tested: 0 }
             };
         },
         computed: {
-            filteredArtifacts() {
-                if (!this.searchQuery.trim()) return this.artifacts;
-                const q = this.searchQuery.toLowerCase();
-                return this.artifacts.filter(a =>
-                    a.label.toLowerCase().includes(q) ||
-                    a.value.toLowerCase().includes(q) ||
-                    a.type.toLowerCase().includes(q)
-                );
-            },
-            groupedArtifacts() {
-                const list = this.filteredArtifacts;
-                const groups = {
-                    'XML Screens': [],
-                    'QVT Components': [],
-                    'Services & Logic': [],
-                    'Entity Definitions': [],
-                    'Automated Tests': [],
-                    'Reports & Templates': []
-                };
-
-                list.forEach(item => {
-                    if (item.type === 'XML') groups['XML Screens'].push(item);
-                    else if (item.type === 'QVT') groups['QVT Components'].push(item);
-                    else if (item.type === 'SRV') groups['Services & Logic'].push(item);
-                    else if (item.type === 'ENT') groups['Entity Definitions'].push(item);
-                    else if (item.type === 'TST') groups['Automated Tests'].push(item);
-                    else groups['Reports & Templates'].push(item);
-                });
-
-                Object.keys(groups).forEach(k => {
-                    if (groups[k].length === 0) delete groups[k];
-                });
-                return groups;
+            filteredListArtifacts() {
+                let list = this.artifacts || [];
+                const q = (this.searchFilter || '').toLowerCase().trim();
+                if (q) {
+                    list = list.filter(a => {
+                        const path = (a.artifactPath || a.value || '').toLowerCase();
+                        const label = (a.label || a.screenName || '').toLowerCase();
+                        return path.includes(q) || label.includes(q);
+                    });
+                }
+                return list;
             }
+        },
+        watch: {
+            targetComponent() { this.loadData(); }
         },
         mounted() {
-            const vm = this;
-            this.contextBus = new BroadcastChannel('agi-ide-context-bus');
-            this.contextBus.onmessage = function (event) {
-                if (event.data && event.data.event === 'artifact-state-mutated') {
-                    if (event.data.artifactUri) {
-                        vm.fetchBufferForUri(event.data.artifactUri);
-                    }
-                }
-                if (event.data?.event === 'artifact-deleted') {
-                    vm.onArtifactDeleted(event.data.artifactLocation);
-                }
-            };
-            this.onWindowDelete = (e) => {
-                if (e.detail?.artifactLocation) {
-                    vm.onArtifactDeleted(e.detail.artifactLocation);
-                }
-            };
-            window.addEventListener('artifact-deleted', vm.onWindowDelete);
-
-            this.loadHistoryFromStorage();
-            this.loadKnownArtifacts();
-        },
-        beforeUnmount() {
-            if (this.contextBus) this.contextBus.close();
-            if (this.onWindowDelete) {
-                window.removeEventListener('artifact-deleted', this.onWindowDelete);
-            }
+            this.loadData();
         },
         methods: {
-            resolveCsrfToken() {
+            resolveCsrf() {
                 return window.AGI_SERVER_CSRF_TOKEN
                     || (window.moqui && window.moqui.moquiSessionToken)
-                    || (document.querySelector('meta[name="moqui-session-token"]')?.getAttribute('content'))
                     || "";
             },
 
-            confirmDeleteArtifact(item) {
-                const vm = this;
-                if (!this.$q || !this.$q.dialog) {
-                    if (confirm(`Permanently delete ${item.label} (${item.value}) from database and disk?`)) {
-                        vm.executeArtifactCascadeDelete(item);
-                    }
-                    return;
-                }
-
-                this.$q.dialog({
-                    title: 'Confirm Artifact Deletion',
-                    message: `Permanently delete "${item.label}"?\n\nTarget: ${item.value}\n\nThis purges all associated WorkEfforts, AgiPayloads, Facets, and deletes the physical file from disk.`,
-                    cancel: true,
-                    persistent: true,
-                    ok: {
-                        label: 'Delete Forever',
-                        color: 'negative',
-                        flat: false
-                    }
-                }).onOk(() => {
-                    vm.executeArtifactCascadeDelete(item);
-                });
-            },
-
-            async executeArtifactCascadeDelete(item) {
-                const vm = this;
-                const headers = {
-                    'moquiSessionToken': this.resolveCsrfToken(),
-                    'Content-Type': 'application/json'
-                };
-
+            async loadData() {
+                this.loading = true;
                 try {
-                    await axios.post('/rest/s1/agi-ide/deleteArtifactCascade', {
-                        artifactUri: item.value,
-                        deletePhysicalFile: true
-                    }, { headers });
-
-                    if (vm.$q) {
-                        vm.$q.notify({
-                            type: 'positive',
-                            message: `Purged artifact and file: ${item.label}`
-                        });
-                    }
-
-                    // Broadcast deletion to all studio panels
-                    if (vm.contextBus) {
-                        vm.contextBus.postMessage({
-                            event: 'artifact-deleted',
-                            artifactLocation: item.value
-                        });
-                    }
-
-                    vm.onArtifactDeleted(item.value);
-
-                } catch (err) {
-                    const msg = err.response?.data?.errors || err.message;
-                    if (vm.$q) vm.$q.notify({ type: 'negative', message: `Delete failed: ${msg}` });
+                    await Promise.all([
+                        this.fetchHierarchy(),
+                        this.fetchArtifactList()
+                    ]);
+                } finally {
+                    this.loading = false;
                 }
             },
 
-            onArtifactDeleted(artifactLocation) {
-                if (!artifactLocation) return;
-
-                if (this.artifacts && Array.isArray(this.artifacts)) {
-                    this.artifacts = this.artifacts.filter(a => a.value !== artifactLocation);
-                }
-
-                if (this.recentHistory && Array.isArray(this.recentHistory)) {
-                    this.recentHistory = this.recentHistory.filter(h => h.value !== artifactLocation);
-                    try {
-                        localStorage.setItem('agi_recent_artifact_history', JSON.stringify(this.recentHistory));
-                    } catch (e) { }
-                }
-
-                if (this.bufferCache && this.bufferCache[artifactLocation]) {
-                    delete this.bufferCache[artifactLocation];
-                }
-
-                this.loadKnownArtifacts();
-            },
-
-            getArtifactIcon(type) {
-                switch (type) {
-                    case 'QVT': return 'javascript';
-                    case 'SRV': return 'settings_suggest';
-                    case 'ENT': return 'storage';
-                    case 'TST': return 'flaky';
-                    case 'RPT': return 'summarize';
-                    case 'FTL': return 'code';
-                    default: return 'description';
-                }
-            },
-            getArtifactColor(type) {
-                switch (type) {
-                    case 'QVT': return 'amber-5';
-                    case 'SRV': return 'deep-orange-4';
-                    case 'ENT': return 'teal-4';
-                    case 'TST': return 'purple-4';
-                    case 'RPT': return 'light-green-4';
-                    default: return 'cyan-4';
-                }
-            },
-            getBadgeColor(type) {
-                switch (type) {
-                    case 'QVT': return 'amber-9';
-                    case 'SRV': return 'deep-orange-9';
-                    case 'ENT': return 'teal-9';
-                    case 'TST': return 'purple-9';
-                    case 'RPT': return 'light-green-9';
-                    default: return 'deep-purple-9';
-                }
-            },
-            getGroupIcon(group) {
-                if (group.includes('QVT')) return 'javascript';
-                if (group.includes('Services')) return 'settings_suggest';
-                if (group.includes('Entity')) return 'storage';
-                if (group.includes('Tests')) return 'flaky';
-                if (group.includes('Reports')) return 'summarize';
-                return 'layers';
-            },
-            getGroupColor(group) {
-                if (group.includes('QVT')) return 'amber-4';
-                if (group.includes('Services')) return 'deep-orange-4';
-                if (group.includes('Entity')) return 'teal-4';
-                if (group.includes('Tests')) return 'purple-4';
-                if (group.includes('Reports')) return 'light-green-4';
-                return 'cyan-4';
-            },
-
-            selectArtifact(item) {
-                let location = item.value;
-                if (location && location.startsWith('runtime/component/')) {
-                    location = location.replace(/^runtime\/component\/([^\/]+)\//, 'component://$1/');
-                }
-
-                const payload = {
-                    ...item,
-                    value: location
-                };
-
-                this.recordHistory(payload);
-                this.$emit('artifact-selected', payload);
-                if (this.contextBus) {
-                    this.contextBus.postMessage({
-                        event: 'open-screen-artifact',
-                        artifactLocation: location,
-                        artifactType: item.type,
-                        targetComponent: item.componentName || 'nursinghome'
+            async fetchHierarchy() {
+                try {
+                    const resp = await axios.get('/rest/s1/agi-ai/component-hierarchy', {
+                        params: { targetComponent: this.targetComponent },
+                        headers: { 'moquiSessionToken': this.resolveCsrf() }
                     });
-                }
-            },
-
-            recordHistory(item) {
-                const now = new Date();
-                const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                const entry = { ...item, openedAt: timeStr };
-
-                this.recentHistory = [entry, ...this.recentHistory.filter(h => h.value !== item.value)].slice(0, 15);
-                try {
-                    localStorage.setItem('agi_recent_artifact_history', JSON.stringify(this.recentHistory));
-                } catch (e) { }
-            },
-
-            loadHistoryFromStorage() {
-                try {
-                    const raw = localStorage.getItem('agi_recent_artifact_history');
-                    if (raw) this.recentHistory = JSON.parse(raw);
+                    this.hierarchyRoot = resp.data?.rootNode || null;
+                    if (resp.data?.summaryStats) {
+                        this.summaryStats = resp.data.summaryStats;
+                    }
                 } catch (e) {
-                    this.recentHistory = [];
+                    console.error("Failed to load component screen hierarchy:", e);
                 }
             },
 
-            clearHistory() {
-                this.recentHistory = [];
+            async fetchArtifactList() {
                 try {
-                    localStorage.removeItem('agi_recent_artifact_history');
-                } catch (e) { }
-            },
-
-            onArtifactExpanded(artifactUri) {
-                if (!this.bufferCache[artifactUri]) {
-                    this.fetchBufferForUri(artifactUri);
-                }
-            },
-
-            async fetchBufferForUri(artifactUri) {
-                if (!artifactUri) return;
-                const vm = this;
-                vm.loadingBuffers[artifactUri] = true;
-                const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
-
-                try {
-                    const response = await axios.get('/rest/s1/agi-ide/getWorkspaceBuffer', {
-                        params: { artifactUri: artifactUri },
-                        headers: headers
+                    const resp = await axios.get('/rest/s1/agi-ide/known-artifacts', {
+                        params: { targetComponent: this.targetComponent },
+                        headers: { 'moquiSessionToken': this.resolveCsrf() }
                     });
-
-                    vm.loadingBuffers[artifactUri] = false;
-                    const resData = response.data || {};
-                    const rawBuffer = resData.metaJsonBuffer || resData.layoutTree || resData;
-
-                    if (rawBuffer) {
-                        const jsonObj = typeof rawBuffer === 'string' ? JSON.parse(rawBuffer) : rawBuffer;
-                        vm.bufferCache[artifactUri] = JSON.stringify(jsonObj, null, 2);
-                    } else {
-                        vm.bufferCache[artifactUri] = 'Empty buffer response.';
-                    }
-                } catch (err) {
-                    vm.loadingBuffers[artifactUri] = false;
-                    vm.bufferCache[artifactUri] = JSON.stringify({
-                        status: 'error',
-                        message: 'Could not fetch WorkspaceBuffer for artifact.',
-                        error: err.message
-                    }, null, 2);
+                    this.artifacts = resp.data?.artifacts || [];
+                } catch (e) {
+                    console.error("Failed to load flat artifact list:", e);
                 }
             },
 
-            copyBufferJson(artifactUri) {
-                const jsonText = this.bufferCache[artifactUri];
-                if (jsonText && navigator.clipboard) {
-                    navigator.clipboard.writeText(jsonText);
-                    if (this.$q) {
-                        this.$q.notify({
-                            type: 'positive',
-                            message: 'WorkspaceBuffer JSON copied to clipboard!'
-                        });
-                    }
-                }
+            selectArtifact(uri) {
+                if (!uri) return;
+                this.$emit('artifact-selected', uri);
             },
 
-            async loadKnownArtifacts() {
-                const vm = this;
-                const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
+            seedPipelineForScreen(node) {
+                this.$emit('seed-pipeline-step', node);
+            }
+        },
+        template: `
+            <div class="column fit no-wrap bg-slate-950 text-white font-mono overflow-hidden" style="width: 100%; height: 100%;">
+                
+                <!-- HEADER (FIXED 34px) -->
+                <div class="row items-center justify-between q-px-sm bg-slate-900 text-white no-wrap" style="height: 34px; min-height: 34px; flex: 0 0 34px; border-bottom: 1px solid #334155;">
+                    <div class="row items-center q-gutter-x-xs no-wrap">
+                        <q-icon name="dashboard_customize" color="teal-3" size="xs" />
+                        <span class="text-caption text-weight-bolder text-teal-2">APP BLUEPRINT</span>
+                    </div>
 
-                try {
-                    const response = await axios.get('/rest/s1/agi-ide/getKnownArtifacts', { headers });
-                    const list = response.data?.artifacts || response.data || [];
-                    const items = [];
+                    <!-- Explicit Native Toggle -->
+                    <div class="row items-center q-gutter-x-xs no-wrap">
+                        <q-btn-toggle
+                            v-model="viewMode"
+                            dark
+                            dense
+                            no-caps
+                            unelevated
+                            toggle-color="teal-8"
+                            toggle-text-color="white"
+                            color="grey-10"
+                            text-color="grey-4"
+                            size="xs"
+                            style="border: 1px solid #475569;"
+                            :options="[
+                                { label: 'Matrix', value: 'matrix', icon: 'account_tree' },
+                                { label: 'List', value: 'list', icon: 'view_list' }
+                            ]"
+                        />
+                        <q-btn flat round dense icon="refresh" size="xs" color="teal-3" @click="loadData" />
+                    </div>
+                </div>
 
-                    list.forEach(a => {
-                        const path = a.artifactPath || a;
-                        if (!path) return;
+                <!-- PROGRESS SUMMARY METRICS (FIXED 26px) -->
+                <div v-if="viewMode === 'matrix' && summaryStats.total > 0" class="row items-center justify-between q-px-sm bg-slate-900 text-caption no-wrap" style="height: 26px; min-height: 26px; flex: 0 0 26px; border-bottom: 1px solid #1e293b; font-size: 10px;">
+                    <div class="row items-center q-gutter-x-xs no-wrap">
+                        <span class="text-slate-400">STATUS:</span>
+                        <q-badge color="cyan-9" text-color="white" class="q-px-xs">Built: {{ summaryStats.built }}</q-badge>
+                        <q-badge color="amber-9" text-color="white" class="q-px-xs">Stubs: {{ summaryStats.placeholder }}</q-badge>
+                        <q-badge color="rose-9" text-color="white" class="q-px-xs">Empty: {{ summaryStats.empty }}</q-badge>
+                        <q-badge v-if="summaryStats.tested" color="positive" text-color="black" class="q-px-xs">Tested: {{ summaryStats.tested }}</q-badge>
+                    </div>
+                    <span class="text-slate-400 text-weight-bold">{{ summaryStats.total }} Screens</span>
+                </div>
 
-                        const baseName = a.screenName || path.substring(path.lastIndexOf('/') + 1) || 'Artifact';
+                <!-- SEARCH FILTER BAR (LIST MODE) -->
+                <div v-if="viewMode === 'list'" class="q-pa-xs bg-slate-950" style="border-bottom: 1px solid #1e293b; flex: 0 0 auto;">
+                    <q-input 
+                        v-model="searchFilter" 
+                        placeholder="Filter artifacts..." 
+                        dense dark outlined 
+                        color="teal-3"
+                        class="text-caption font-mono"
+                        input-class="text-caption font-mono text-slate-200"
+                        style="background-color: #020617; border-radius: 4px;"
+                        clearable
+                    >
+                        <template v-slot:prepend>
+                            <q-icon name="search" size="14px" color="teal-4" />
+                        </template>
+                    </q-input>
+                </div>
 
-                        let type = 'XML';
-                        if (path.endsWith('.qvt.js')) {
-                            type = 'QVT';
-                        } else if (path.includes('/service/') || path.includes('Services.xml') || path.endsWith('.groovy')) {
-                            type = 'SRV';
-                        } else if (path.includes('/entity/') || path.includes('Entities.xml')) {
-                            type = 'ENT';
-                        } else if (path.includes('/test/') || path.includes('Test.xml')) {
-                            type = 'TST';
-                        } else if (path.includes('/report/') || path.endsWith('.ftl') || path.endsWith('.xsl-fo')) {
-                            type = 'RPT';
-                        }
+                <!-- CONTENT VIEWPORT (FLEX 1 1 0%, OVERFLOW AUTO) -->
+                <div class="col full-width overflow-auto q-pa-sm" style="flex: 1 1 0%; min-height: 0; background-color: #020617;">
+                    <div v-if="loading" class="fit row flex-center q-pa-md">
+                        <q-spinner color="teal-4" size="1.8em" />
+                    </div>
 
-                        items.push({
-                            label: baseName,
-                            value: path,
-                            type: type,
-                            componentName: a.componentName || ''
-                        });
+                    <!-- 1. HIERARCHICAL MATRIX VIEW -->
+                    <div v-else-if="viewMode === 'matrix'" class="full-width">
+                        <div v-if="!hierarchyRoot" class="text-slate-500 italic text-caption text-center q-pa-md">
+                            No screens found for {{ targetComponent }}.
+                        </div>
 
-                        if (type === 'XML' && path.includes('/screen/')) {
-                            const screenIdx = path.indexOf('/screen/');
-                            const qvtPath = path.substring(0, screenIdx) + '/assets/' + path.substring(screenIdx + 8).replace(/\.xml$/, '.qvt.js');
-                            const qvtName = baseName.replace(/\.xml$/, '.qvt.js');
+                        <div v-else class="column full-width q-gutter-y-xs">
+                            <hierarchy-node 
+                                :node="hierarchyRoot" 
+                                :active-artifact-uri="activeArtifactUri"
+                                @select-artifact="selectArtifact"
+                                @seed-pipeline="seedPipelineForScreen"
+                            />
+                        </div>
+                    </div>
 
-                            items.push({
-                                label: qvtName,
-                                value: qvtPath,
-                                type: 'QVT',
-                                componentName: a.componentName || ''
-                            });
-                        }
-                    });
+                    <!-- 2. FLAT LIST VIEW -->
+                    <div v-else-if="viewMode === 'list'" class="full-width">
+                        <div v-if="filteredListArtifacts.length === 0" class="text-slate-500 italic text-caption text-center q-pa-md">
+                            No artifacts matching filter.
+                        </div>
 
-                    vm.artifacts = items;
-                } catch (err) {
-                    console.warn("Could not load artifacts from server:", err);
+                        <q-list dense separator class="rounded-borders full-width" style="border: 1px solid #1e293b;">
+                            <q-item
+                                v-for="art in filteredListArtifacts"
+                                :key="art.artifactPath || art.value"
+                                clickable
+                                v-ripple
+                                class="q-py-xs"
+                                :class="{ 'bg-slate-900 border-l-4': (activeArtifactUri === (art.artifactPath || art.value)) }"
+                                :style="(activeArtifactUri === (art.artifactPath || art.value)) ? 'border-left: 4px solid #0d9488;' : ''"
+                                @click="selectArtifact(art.artifactPath || art.value)"
+                            >
+                                <q-item-section avatar style="min-width: 26px;">
+                                    <q-icon name="description" color="teal-4" size="xs" />
+                                </q-item-section>
+                                <q-item-section>
+                                    <div class="text-caption font-mono text-slate-100 text-weight-bold ellipsis">{{ art.screenName || art.label }}</div>
+                                    <div class="text-slate-400 font-mono ellipsis" style="font-size: 9px;">{{ art.artifactPath || art.value }}</div>
+                                </q-item-section>
+                                <q-item-section side>
+                                    <q-badge color="slate-800" text-color="teal-3" class="font-mono text-caption" style="font-size: 8px;">
+                                        {{ art.type || 'XML' }}
+                                    </q-badge>
+                                </q-item-section>
+                            </q-item>
+                        </q-list>
+                    </div>
+                </div>
+
+            </div>
+        `
+    };
+
+    const HierarchyNode = {
+        name: 'HierarchyNode',
+        props: {
+            node: { type: Object, required: true },
+            activeArtifactUri: { type: String, default: '' },
+            depth: { type: Number, default: 0 }
+        },
+        emits: ['select-artifact', 'seed-pipeline'],
+        data() {
+            return {
+                expanded: true
+            };
+        },
+        computed: {
+            isActive() {
+                return this.activeArtifactUri === this.node.artifactUri;
+            },
+            statusBadgeColor() {
+                switch (this.node.status) {
+                    case 'tested': return 'positive';
+                    case 'built': return 'cyan-8';
+                    case 'placeholder': return 'amber-9';
+                    case 'empty': default: return 'rose-9';
+                }
+            },
+            borderColor() {
+                switch (this.node.status) {
+                    case 'tested': return '#10b981';
+                    case 'built': return '#0891b2';
+                    case 'placeholder': return '#f59e0b';
+                    case 'empty': default: return '#f43f5e';
+                }
+            },
+            textColor() {
+                switch (this.node.status) {
+                    case 'tested': return '#6ee7b7';
+                    case 'built': return '#a5f3fc';
+                    case 'placeholder': return '#fde68a';
+                    case 'empty': default: return '#fecdd3';
                 }
             }
-        }
+        },
+        template: `
+            <div class="column full-width font-mono" :style="{ paddingLeft: depth > 0 ? '16px' : '0px' }">
+                <!-- Card Container -->
+                <div 
+                    class="rounded-borders q-pa-xs q-mb-xs cursor-pointer transition-all full-width"
+                    :style="{
+                        border: '1px solid ' + borderColor,
+                        borderStyle: (node.status === 'built' || node.status === 'tested') ? 'solid' : 'dashed',
+                        backgroundColor: '#090d16',
+                        minHeight: '44px'
+                    }"
+                    @click="$emit('select-artifact', node.artifactUri)"
+                >
+                    <!-- Top Line: Icon, Title, Status, Action Wand -->
+                    <div class="row items-center justify-between no-wrap full-width">
+                        
+                        <!-- Left Group -->
+                        <div class="row items-center q-gutter-x-xs no-wrap ellipsis col" style="min-width: 0;">
+                            <q-icon 
+                                v-if="node.children && node.children.length > 0" 
+                                :name="expanded ? 'expand_more' : 'chevron_right'" 
+                                size="14px" 
+                                class="cursor-pointer text-slate-400"
+                                @click.stop="expanded = !expanded"
+                            />
+                            <q-icon 
+                                name="web" 
+                                size="14px" 
+                                :style="{ color: borderColor }" 
+                            />
+                            
+                            <!-- Guaranteed Readable Title -->
+                            <span 
+                                class="text-caption text-weight-bold ellipsis font-mono"
+                                :style="{ color: textColor }"
+                                :title="node.artifactUri"
+                            >
+                                {{ node.displayTitle || node.screenName }}
+                            </span>
+                        </div>
+
+                        <!-- Right Group: Status Badge & Wand Action -->
+                        <div class="row items-center q-gutter-x-xs no-wrap" style="flex: 0 0 auto;">
+                            <q-badge :color="statusBadgeColor" text-color="white" class="font-mono text-caption" style="font-size: 8px;">
+                                {{ node.status.toUpperCase() }}
+                            </q-badge>
+
+                            <q-btn 
+                                flat round dense 
+                                icon="auto_fix_high" 
+                                size="xs" 
+                                color="amber-3"
+                                class="bg-slate-900"
+                                style="border: 1px solid #475569;"
+                                @click.stop="$emit('seed-pipeline', node)"
+                            >
+                                <q-tooltip class="bg-slate-900 text-amber-2 font-mono">Plan/Build step for this screen</q-tooltip>
+                            </q-btn>
+                        </div>
+                    </div>
+
+                    <!-- Bottom Line: Subscreen Filename & Micro Metrics -->
+                    <div class="row items-center justify-between q-mt-xs text-slate-400 full-width no-wrap" style="font-size: 9px; line-height: 12px;">
+                        <span class="ellipsis text-slate-500 col" style="min-width: 0;">{{ node.screenName }}.xml</span>
+                        <div class="row items-center q-gutter-x-xs text-slate-300" style="flex: 0 0 auto;">
+                            <span v-if="node.transCount" title="Transitions">⚡ {{ node.transCount }}</span>
+                            <span v-if="node.formCount" title="Forms">📋 {{ node.formCount }}</span>
+                            <span v-if="node.subscreenCount" title="Subscreens">🔗 {{ node.subscreenCount }}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recursive Subscreens Branch -->
+                <div v-if="expanded && node.children && node.children.length > 0" class="column full-width" style="border-left: 1px solid #1e293b; margin-left: 6px;">
+                    <hierarchy-node 
+                        v-for="child in node.children" 
+                        :key="child.artifactUri" 
+                        :node="child"
+                        :depth="depth + 1"
+                        :active-artifact-uri="activeArtifactUri"
+                        @select-artifact="(uri) => $emit('select-artifact', uri)"
+                        @seed-pipeline="(n) => $emit('seed-pipeline', n)"
+                    />
+                </div>
+            </div>
+        `
     };
 
     window.AgiArtifactPalette = AgiArtifactPalette;
-    if (!window.AgiComponents) window.AgiComponents = {};
-    window.AgiComponents['agi-artifact-palette'] = AgiArtifactPalette;
+    window.HierarchyNode = HierarchyNode;
+
+    const registerComp = () => {
+        if (window.moqui && window.moqui.webrootVueApp) {
+            window.moqui.webrootVueApp.component('hierarchy-node', HierarchyNode);
+            window.moqui.webrootVueApp.component('agi-artifact-palette', AgiArtifactPalette);
+        } else {
+            setTimeout(registerComp, 50);
+        }
+    };
+    registerComp();
 })();

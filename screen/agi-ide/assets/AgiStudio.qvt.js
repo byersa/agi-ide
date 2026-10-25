@@ -1,13 +1,18 @@
 (function () {
     const AgiStudio = {
         name: 'AgiStudio',
-        emits: ['close', 'set-width', 'open-artifact', 'toggle-discussion', 'toggle-dag', 'pipeline-selected', 'stage-selected', 'stage-dispatched'],
+        emits: [
+            'close', 'set-width', 'open-artifact', 'toggle-discussion', 'toggle-dag',
+            'toggle-blueprint', 'pipeline-selected', 'stage-selected', 'stage-dispatched',
+            'seed-pipeline-step'
+        ],
         props: {
             activeArtifact: { type: String, default: '' },
             targetComponentProp: { type: String, default: 'nursinghome' },
             widthPercent: { type: Number, default: 50 },
             showDiscussionDrawer: { type: Boolean, default: false },
             showDagDrawer: { type: Boolean, default: false },
+            showBlueprintDrawer: { type: Boolean, default: false },
             activeDiscussionIdProp: { type: String, default: '' },
             activeDiscussionTitleProp: { type: String, default: '' },
             selectedStageProp: { type: Object, default: () => null }
@@ -34,14 +39,14 @@
             },
             discussionButtonLabel() {
                 if (this.activeDiscussionTitle) {
-                    return this.activeDiscussionTitle.length > 24
-                        ? this.activeDiscussionTitle.substring(0, 22) + '...'
+                    return this.activeDiscussionTitle.length > 20
+                        ? this.activeDiscussionTitle.substring(0, 18) + '...'
                         : this.activeDiscussionTitle;
                 }
                 if (this.activeDiscussionId) {
                     return `Pipeline #${this.activeDiscussionId}`;
                 }
-                return 'Select Discussion';
+                return 'Discussions';
             },
             dagButtonLabel() {
                 if (!this.selectedStage) return 'DAG Canvas';
@@ -53,7 +58,7 @@
                 let title = `${stance} #${stepId}`;
                 if (stepNum) title = `Step ${stepNum}: ${title}`;
                 if (label && !label.startsWith('Step #')) {
-                    const cleanLabel = label.length > 20 ? label.substring(0, 18) + '...' : label;
+                    const cleanLabel = label.length > 16 ? label.substring(0, 14) + '...' : label;
                     title += ` (${cleanLabel})`;
                 }
                 return title;
@@ -73,6 +78,12 @@
             },
             selectedStageProp(val) {
                 this.selectedStage = val;
+            },
+            activeArtifact(val) {
+                this.activeArtifactLocation = val || '';
+            },
+            targetComponentProp(val) {
+                this.targetComponent = val || 'nursinghome';
             }
         },
         mounted() {
@@ -109,6 +120,9 @@
             },
             toggleDag() {
                 this.$emit('toggle-dag');
+            },
+            toggleBlueprint() {
+                this.$emit('toggle-blueprint');
             },
             onPipelineSelected(item) {
                 if (!item) return;
@@ -155,6 +169,13 @@
                         isVirtual: Boolean(xml || tree)
                     });
                 }
+            },
+            onArtifactSelected(uri) {
+                this.activeArtifactLocation = uri;
+                this.$emit('open-artifact', { artifactUri: uri });
+            },
+            onSeedPipelineStep(payload) {
+                this.$emit('seed-pipeline-step', payload);
             }
         },
         template: `
@@ -163,8 +184,23 @@
                 <!-- 1. STUDIO HEADER (FIXED 32px) -->
                 <div class="row items-center justify-between q-px-sm bg-black" style="border-bottom: 1px solid #1e293b; height: 32px; min-height: 32px; flex: 0 0 32px; z-index: 30;">
                     
-                    <!-- Left: Full-Width Drawer Triggers (Discussion & DAG) -->
+                    <!-- Left: Navigation Drawers (Blueprint, Discussion, DAG) -->
                     <div class="row items-center q-gutter-x-xs no-wrap ellipsis">
+                        <!-- APP BLUEPRINT / PROGRESS MATRIX TRIGGER BUTTON -->
+                        <q-btn 
+                            flat dense no-caps size="xs"
+                            :color="showBlueprintDrawer ? 'teal-3' : 'slate-300'"
+                            :class="showBlueprintDrawer ? 'bg-slate-800 text-weight-bolder' : ''"
+                            icon="dashboard_customize"
+                            label="Blueprint"
+                            class="q-px-xs rounded-borders"
+                            style="border: 1px solid rgba(20, 184, 166, 0.4); max-width: 140px;"
+                            @click="toggleBlueprint"
+                        >
+                            <q-icon :name="showBlueprintDrawer ? 'expand_less' : 'expand_more'" size="14px" class="q-ml-xs" />
+                            <q-tooltip class="bg-slate-900 text-teal-2 font-mono">App Blueprint &amp; Screen Progress Matrix</q-tooltip>
+                        </q-btn>
+
                         <!-- DISCUSSION FULL-WIDTH TRIGGER BUTTON -->
                         <q-btn 
                             flat dense no-caps size="xs"
@@ -173,11 +209,11 @@
                             icon="forum"
                             :label="discussionButtonLabel"
                             class="q-px-xs rounded-borders"
-                            style="border: 1px solid rgba(56, 189, 248, 0.3); max-width: 220px;"
+                            style="border: 1px solid rgba(56, 189, 248, 0.3); max-width: 190px;"
                             @click="toggleDiscussion"
                         >
                             <q-icon :name="showDiscussionDrawer ? 'expand_less' : 'expand_more'" size="14px" class="q-ml-xs" />
-                            <q-tooltip>Toggle Full-Width Initiatives & Discussion Index</q-tooltip>
+                            <q-tooltip class="bg-slate-900 text-cyan-2 font-mono">Initiatives &amp; Discussions</q-tooltip>
                         </q-btn>
 
                         <!-- DAG FULL-WIDTH TRIGGER BUTTON -->
@@ -188,11 +224,11 @@
                             icon="account_tree"
                             :label="dagButtonLabel"
                             class="q-px-xs rounded-borders"
-                            style="border: 1px solid rgba(245, 158, 11, 0.3); max-width: 260px;"
+                            style="border: 1px solid rgba(245, 158, 11, 0.3); max-width: 210px;"
                             @click="toggleDag"
                         >
                             <q-icon :name="showDagDrawer ? 'expand_less' : 'expand_more'" size="14px" class="q-ml-xs" />
-                            <q-tooltip>Toggle Full-Width Pipeline DAG Canvas</q-tooltip>
+                            <q-tooltip class="bg-slate-900 text-amber-2 font-mono">Pipeline DAG Canvas</q-tooltip>
                         </q-btn>
                     </div>
 
@@ -213,7 +249,32 @@
                     </div>
                 </div>
 
-                <!-- 2. MAIN WORKSPACE VIEWPORT: AgiStageInspector (FULL STUDIO BODY) -->
+                <!-- 2. SLIDING DRAWER: BLUEPRINT & SCREEN PROGRESS MATRIX -->
+                <q-slide-transition>
+                    <div 
+                        v-if="showBlueprintDrawer" 
+                        class="full-width column no-wrap bg-slate-950 shadow-10 relative-position overflow-hidden" 
+                        style="height: 380px; min-height: 380px; max-height: 380px; border-bottom: 2px solid #0d9488; z-index: 35; flex: 0 0 380px;"
+                    >
+                        <div class="row items-center justify-between q-px-sm bg-black" style="height: 26px; min-height: 26px; flex: 0 0 26px; border-bottom: 1px solid #1e293b;">
+                            <span class="text-caption font-mono text-teal-3 text-weight-bold" style="font-size: 11px;">
+                                <q-icon name="dashboard_customize" size="14px" class="q-mr-xs" /> APP BLUEPRINT &amp; PROGRESS MATRIX
+                            </span>
+                            <q-btn flat round dense icon="close" size="xs" color="slate-400" @click="toggleBlueprint" />
+                        </div>
+                        <div class="col full-width overflow-hidden relative-position" style="flex: 1 1 0%; min-height: 0;">
+                            <component 
+                                :is="'agi-artifact-palette'"
+                                :target-component="targetComponent"
+                                :active-artifact-uri="activeArtifactLocation"
+                                @artifact-selected="onArtifactSelected"
+                                @seed-pipeline-step="onSeedPipelineStep"
+                            />
+                        </div>
+                    </div>
+                </q-slide-transition>
+
+                <!-- 3. MAIN WORKSPACE VIEWPORT: AgiStageInspector -->
                 <div class="col full-width column no-wrap relative-position overflow-hidden" style="flex: 1 1 0%; min-height: 0; height: calc(100% - 32px);">
                     <component 
                         :is="'agi-stage-inspector'"

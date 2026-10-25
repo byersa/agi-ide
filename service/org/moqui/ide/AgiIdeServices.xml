@@ -1457,4 +1457,140 @@ ${widgetsSb.toString()}    </widgets>
         </actions>
     </service>
 
+    <!-- ===================================================================== -->
+    <!-- GET COMPONENT SCREEN HIERARCHY & PROGRESS MATRIX                      -->
+    <!-- ===================================================================== -->
+    <service verb="get" noun="ComponentScreenHierarchy" type="inline" authenticate="anonymous-all">
+        <description>
+            Recursively traverses the screen/subscreens tree for a component starting 
+            at its root screen, evaluates the implementation and test status of each screen 
+            (empty, placeholder, built, tested), and returns a hierarchical blueprint tree.
+        </description>
+        <in-parameters>
+            <parameter name="targetComponent" default-value="nursinghome"/>
+            <parameter name="rootScreenUri"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rootNode" type="Map"/>
+            <parameter name="summaryStats" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import org.moqui.resource.ResourceReference
+                import groovy.xml.XmlParser
+                import java.util.regex.Pattern
+
+                String comp = (targetComponent ?: 'nursinghome').trim()
+                String rootUri = rootScreenUri ?: "component://${comp}/screen/${comp}.xml"
+
+                Map stats = [total: 0, built: 0, placeholder: 0, empty: 0, tested: 0]
+                Set<String> visited = new HashSet<>()
+
+                def analyzeScreenNode
+                analyzeScreenNode = { String artifactUri, String parentName, String explicitTitle ->
+                    if (!artifactUri || visited.contains(artifactUri)) return null
+                    visited.add(artifactUri)
+                    stats.total++
+
+                    String cleanName = artifactUri.replaceAll("^.*/", "").replaceAll("\\.xml\$", "")
+                    Map node = [
+                        artifactUri : artifactUri,
+                        screenName  : cleanName,
+                        displayTitle: explicitTitle ?: cleanName,
+                        parentName  : parentName,
+                        status      : "empty",
+                        widgetCount : 0,
+                        formCount   : 0,
+                        transCount  : 0,
+                        subscreenCount: 0,
+                        children    : []
+                    ]
+
+                    ResourceReference rr = ec.resource.getLocationReference(artifactUri)
+                    if (rr == null || !rr.exists) {
+                        node.status = "empty"
+                        stats.empty++
+                        return node
+                    }
+
+                    String content = ""
+                    try {
+                        content = rr.getText() ?: ""
+                    } catch (Exception e) {
+                        ec.logger.warn("⚠️ [get#ComponentScreenHierarchy] Error reading ${artifactUri}: ${e.message}")
+                    }
+
+                    if (!content || content.trim().isEmpty()) {
+                        node.status = "empty"
+                        stats.empty++
+                        return node
+                    }
+
+                    // Check for test coverage in AgiArtifact or test suite
+                    def artRecord = ec.entity.find("org.moqui.ai.AgiArtifact")
+                        .condition("artifactPath", artifactUri)
+                        .one()
+                    boolean hasTestRecord = (artRecord?.artifactStatusEnumId == "AasActive" && artRecord?.completedIntentCount > 0)
+
+                    // Lightweight regex heuristics to inspect screen density
+                    int transCount = 0
+                    def transMatcher = content =~ /<transition\b/
+                    while (transMatcher.find()) transCount++
+                    node.transCount = transCount
+
+                    int formCount = 0
+                    def formMatcher = content =~ /<form-(?:single|list)\b/
+                    while (formMatcher.find()) formCount++
+                    node.formCount = formCount
+
+                    // Identify Placeholder Stubs
+                    boolean isStubCard = content.contains("Module Placeholder") || 
+                                        content.contains("This subscreen is in DRAFT status") ||
+                                        (content.contains("<label") && !content.contains("<form-") && !content.contains("<subscreens-menu") && transCount == 0)
+
+                    if (isStubCard) {
+                        node.status = "placeholder"
+                        stats.placeholder++
+                    } else if (hasTestRecord) {
+                        node.status = "tested"
+                        stats.tested++
+                    } else if (formCount > 0 || transCount > 0 || content.contains("<subscreens-menu") || content.contains("<container style=")) {
+                        node.status = "built"
+                        stats.built++
+                    } else {
+                        node.status = "empty"
+                        stats.empty++
+                    }
+
+                    // Traverse Subscreens
+                    List<Map> declaredSubscreens = []
+                    try {
+                        def subsMatcher = content =~ /<subscreens-item\s+[^>]*name="([^"]+)"\s+[^>]*location="([^"]+)"(?:\s+[^>]*menu-title="([^"]+)")?/
+                        while (subsMatcher.find()) {
+                            declaredSubscreens.add([
+                                name: subsMatcher.group(1),
+                                location: subsMatcher.group(2),
+                                menuTitle: subsMatcher.group(3) ?: subsMatcher.group(1)
+                            ])
+                        }
+                    } catch (Exception ex) {
+                        ec.logger.warn("⚠️ [get#ComponentScreenHierarchy] Error parsing subscreens for ${artifactUri}: ${ex.message}")
+                    }
+
+                    node.subscreenCount = declaredSubscreens.size()
+                    declaredSubscreens.each { sub ->
+                        Map childNode = analyzeScreenNode(sub.location, cleanName, sub.menuTitle)
+                        if (childNode) node.children.add(childNode)
+                    }
+
+                    return node
+                }
+
+                Map rootHierarchy = analyzeScreenNode(rootUri, null, comp.capitalize() + " Root")
+                context.rootNode = rootHierarchy
+                context.summaryStats = stats
+                ec.logger.info("📊 [get#ComponentScreenHierarchy] Evaluated ${stats.total} screens for '${comp}': Built=${stats.built}, Stubs=${stats.placeholder}, Empty=${stats.empty}, Tested=${stats.tested}")
+            ]]></script>
+        </actions>
+    </service>
 </services>

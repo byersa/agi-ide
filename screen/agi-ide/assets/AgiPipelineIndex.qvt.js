@@ -217,32 +217,35 @@
                         <q-icon name="view_timeline" color="cyan-3" size="xs" />
                         <span class="text-caption text-weight-bolder text-cyan-2">PIPELINE INITIATIVES</span>
                         
-                        <q-badge v-if="selectedInitiative" color="slate-800" text-color="amber-3" class="text-caption font-mono row items-center" style="border: 1px solid #0284c7;" @click.stop>
-                            <span>ACTIVE: #{{ selectedInitiative.discussionId }} {{ selectedInitiative.name }}</span>
-                            <q-icon name="edit" size="10px" class="q-ml-xs text-cyan-3 cursor-pointer" />
-                            <q-tooltip class="bg-slate-900 text-cyan-2 font-mono">Click to rename active pipeline</q-tooltip>
-                            
-                            <q-popup-edit 
-                                :model-value="selectedInitiative.name" 
-                                v-slot="scope" 
-                                buttons 
-                                label-set="Save" 
-                                label-cancel="Cancel"
-                                color="cyan-4"
-                                dark
-                                @save="(val) => savePipelineTitle(selectedInitiative, val)"
-                            >
-                                <q-input 
-                                    v-model="scope.value" 
-                                    dense 
-                                    autofocus 
-                                    dark 
-                                    outlined 
-                                    class="font-mono text-caption"
-                                    label="Pipeline Name"
-                                    @keyup.enter="scope.set"
-                                />
-                            </q-popup-edit>
+                        <q-badge v-if="selectedInitiative" color="slate-800" text-color="amber-3" class="text-caption font-mono row items-center" style="border: 1px solid #0284c7;">
+                            <span class="cursor-pointer" @click.stop="selectPipeline(selectedInitiative)">
+                                ACTIVE: #{{ selectedInitiative.discussionId }} {{ selectedInitiative.name }}
+                            </span>
+                            <span class="cursor-pointer q-ml-xs row items-center" @click.stop>
+                                <q-icon name="edit" size="10px" class="text-cyan-3 hover:text-white" />
+                                <q-tooltip class="bg-slate-900 text-cyan-2 font-mono">Edit title</q-tooltip>
+                                <q-popup-edit 
+                                    :model-value="selectedInitiative.name" 
+                                    v-slot="scope" 
+                                    buttons 
+                                    label-set="Save" 
+                                    label-cancel="Cancel"
+                                    color="cyan-4"
+                                    dark
+                                    @save="(val) => savePipelineTitle(selectedInitiative, val)"
+                                >
+                                    <q-input 
+                                        v-model="scope.value" 
+                                        dense 
+                                        autofocus 
+                                        dark 
+                                        outlined 
+                                        class="font-mono text-caption"
+                                        label="Pipeline Name"
+                                        @keyup.enter="scope.set"
+                                    />
+                                </q-popup-edit>
+                            </span>
                         </q-badge>
                     </div>
 
@@ -327,12 +330,19 @@
 
                                 <q-item-section>
                                     <div class="row items-center q-gutter-x-xs">
-                                        <!-- In-place title edit container -->
-                                        <div class="row items-center cursor-pointer text-caption font-mono text-weight-bold" :class="String(activeDiscussionId) === String(item.discussionId) ? 'text-cyan-2' : 'text-slate-300'" @click.stop>
-                                            <span>#{{ item.discussionId }} {{ item.name }}</span>
-                                            <q-icon name="edit" size="10px" class="q-ml-xs text-slate-500 hover:text-cyan-3" />
-                                            <q-tooltip class="bg-slate-900 text-cyan-2 font-mono">Click to rename pipeline #{{ item.discussionId }}</q-tooltip>
-                                            
+                                        <!-- Title Click (Selects Pipeline) -->
+                                        <span 
+                                            class="cursor-pointer text-caption font-mono text-weight-bold hover:underline" 
+                                            :class="String(activeDiscussionId) === String(item.discussionId) ? 'text-cyan-2' : 'text-slate-300'"
+                                            @click.stop="selectPipeline(item)"
+                                        >
+                                            #{{ item.discussionId }} {{ item.name }}
+                                        </span>
+
+                                        <!-- Edit Icon (Triggers In-Place Rename Popup) -->
+                                        <span class="cursor-pointer row items-center q-px-xs" @click.stop>
+                                            <q-icon name="edit" size="11px" class="text-slate-500 hover:text-cyan-3" />
+                                            <q-tooltip class="bg-slate-900 text-cyan-2 font-mono">Edit title</q-tooltip>
                                             <q-popup-edit 
                                                 :model-value="item.name" 
                                                 v-slot="scope" 
@@ -354,10 +364,16 @@
                                                     @keyup.enter="scope.set"
                                                 />
                                             </q-popup-edit>
-                                        </div>
+                                        </span>
 
-                                        <!-- NULL-SAFE BADGE RENDER -->
-                                        <q-badge :color="getStageBadgeColor(item.terminalStage || 'discuss')" text-color="white" class="font-mono text-caption" style="font-size: 8px;">
+                                        <!-- Stage Status Badge (Triggers Pipeline Selection) -->
+                                        <q-badge 
+                                            :color="getStageBadgeColor(item.terminalStage || 'discuss')" 
+                                            text-color="white" 
+                                            class="font-mono text-caption cursor-pointer" 
+                                            style="font-size: 8px;"
+                                            @click.stop="selectPipeline(item)"
+                                        >
                                             {{ (item.terminalStage || 'discuss').toUpperCase() }}
                                         </q-badge>
                                         <q-badge v-if="item.promotedWorkEffortId" color="positive" text-color="black" class="font-mono text-caption" style="font-size: 8px;">
