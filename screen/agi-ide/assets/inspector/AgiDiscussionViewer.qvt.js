@@ -4,7 +4,14 @@
         props: {
             payload: { type: Object, default: () => ({}) }
         },
-        emits: ['module-action', 'advance-to-plan'],
+        emits: ['module-action', 'advance-to-plan', 'pin-to-directives'],
+        data() {
+            return {
+                selectedTextSnippet: '',
+                selectedSourceMessageId: null,
+                showSelectionPinBar: false,
+            };
+        },
         computed: {
             // Normalize payload whether fields sit at root or inside architectureSummary/planDetails
             d() {
@@ -31,6 +38,8 @@
                 }
 
                 return {
+                    messageId: base.messageId || base.assistantMessageId || null,
+                    discussionId: base.discussionId || null,
                     scopeMaturity: base.scopeMaturity || 'EXPLORATORY',
                     readyToOrchestrate: Boolean(base.readyToOrchestrate),
                     replyMessage: base.replyMessage || base.message || '',
@@ -74,7 +83,77 @@
                     normalized: this.d,
                     targetArtifactUri: this.d.targetArtifactUri
                 });
-            }
+            },
+            // Listen for user text selection inside the narrative text
+            handleTextSelection() {
+                const selection = window.getSelection();
+                const text = selection ? selection.toString().trim() : '';
+                if (text && text.length > 4) {
+                    this.selectedTextSnippet = text;
+                    this.selectedSourceMessageId = this.d.messageId;
+                    this.showSelectionPinBar = true;
+                } else {
+                    this.showSelectionPinBar = false;
+                }
+            },
+
+            // Broadcasts directly to AgiWorkspace across any component nesting depth
+            dispatchPinPayload(payloadData) {
+                // 1. Fire on the BroadcastChannel (caught directly by AgiWorkspace)
+                try {
+                    const bus = new BroadcastChannel('agi-ide-context-bus');
+                    bus.postMessage(Object.assign({ event: 'pin-turn-to-directives' }, payloadData));
+                    bus.close();
+                } catch (e) {
+                    console.warn("Could not post to agi-ide-context-bus:", e);
+                }
+
+                // 2. Also emit locally for immediate parent listeners
+                this.$emit('pin-to-directives', payloadData);
+            },
+
+            // 1. Full Narrative Response Pin
+            pinFullMessage() {
+                const targetDiscId = this.d.discussionId
+                    || this.activeDiscussionId
+                    || (window.useAgiIdeStore ? window.useAgiIdeStore().activeDiscussionId : '');
+                const mId = this.d.messageId ? `Turn #${this.d.messageId}` : 'Discussion Turn';
+                const targetComp = this.d.targetArtifactUri ? ` (${this.d.targetArtifactUri})` : '';
+
+                this.dispatchPinPayload({
+                    discussionId: targetDiscId,
+                    messageId: this.d.messageId,
+                    title: `Architecture Consensus from ${mId}${targetComp}`,
+                    content: this.d.replyMessage
+                });
+            },
+
+            // 2. Highlighted Snippet Pin with Source Provenance
+            pinSelectedSnippet() {
+                if (!this.selectedTextSnippet) return;
+                const targetDiscId = this.d.discussionId
+                    || this.activeDiscussionId
+                    || (window.useAgiIdeStore ? window.useAgiIdeStore().activeDiscussionId : '');
+                const mId = this.d.messageId ? `Turn #${this.d.messageId}` : 'Discussion Excerpt';
+                const artifact = this.d.targetArtifactUri ? ` | \`${this.d.targetArtifactUri}\`` : '';
+                const time = new Date().toLocaleTimeString();
+
+                const formattedSnippet =
+                    `> 📌 **Excerpt from ${mId} [Assistant (${time})]${artifact}**:
+> ${this.selectedTextSnippet.split('\n').join('\n> ')}`;
+
+                this.dispatchPinPayload({
+                    discussionId: targetDiscId,
+                    messageId: this.d.messageId,
+                    title: `Directives Excerpt from ${mId}`,
+                    content: formattedSnippet
+                });
+
+                // Clear selection state
+                this.selectedTextSnippet = '';
+                this.showSelectionPinBar = false;
+                window.getSelection()?.removeAllRanges();
+            },
         },
         template: `
             <div class="agi-discussion-viewer column q-gutter-y-md font-mono text-white">
@@ -95,9 +174,64 @@
                     </div>
                 </div>
 
-                <!-- 2. NARRATIVE / ANALYSIS (MARKDOWN) -->
-                <div v-if="d.replyMessage" class="q-pa-md rounded-borders" style="background-color: #0b1329; border: 1px solid #1e3a5f;">
-                    <div class="markdown-body font-mono text-caption text-slate-200" style="line-height: 1.6;" v-html="formatMarkdown(d.replyMessage)"></div>
+                <!-- 2. NARRATIVE / ANALYSIS (MARKDOWN) WITH PINNING ACTIONS -->
+                <div 
+                    v-if="d.replyMessage" 
+                    class="q-pa-md rounded-borders column q-gutter-y-xs relative-position" 
+                    style="background-color: #0b1329; border: 1px solid #1e3a5f;"
+                >
+                    <!-- Header with Full Pin Button -->
+                    <div class="row items-center justify-between border-bottom-dark q-pb-xs q-mb-xs" style="border-bottom: 1px solid #1e293b;">
+                        <div class="row items-center q-gutter-x-xs text-caption text-slate-400">
+                            <q-icon name="smart_toy" size="14px" color="cyan-4" />
+                            <span class="text-weight-bold text-slate-300">ASSISTANT ARCHITECTURE RESPONSE</span>
+                            <span v-if="d.messageId" class="text-slate-500 font-mono">(Turn #{{ d.messageId }})</span>
+                        </div>
+                        <q-btn 
+                            flat dense no-caps size="xs"
+                            color="cyan-3"
+                            icon="push_pin"
+                            label="Add Full Response to Directives"
+                            class="bg-slate-900 q-px-sm rounded-borders font-mono"
+                            style="border: 1px solid #0284c7; font-size: 10.5px;"
+                            @click="pinFullMessage"
+                        >
+                            <q-tooltip>Append this response consensus to component.md &amp; working buffer</q-tooltip>
+                        </q-btn>
+                    </div>
+
+                    <!-- Highlightable Text Container -->
+                    <div 
+                        class="markdown-body font-mono text-caption text-slate-200 select-text-enabled" 
+                        style="line-height: 1.6; user-select: text;" 
+                        @mouseup="handleTextSelection"
+                        v-html="formatMarkdown(d.replyMessage)"
+                    ></div>
+
+                    <!-- Floating Selection Banner (Appears when text is highlighted) -->
+                    <q-slide-transition>
+                        <div 
+                            v-if="showSelectionPinBar && selectedTextSnippet" 
+                            class="row items-center justify-between q-mt-sm q-pa-xs bg-slate-950 rounded-borders shadow-8"
+                            style="border: 1px solid #38bdf8; z-index: 20;"
+                        >
+                            <div class="row items-center q-gutter-x-xs ellipsis text-cyan-3" style="max-width: 60%;">
+                                <q-icon name="content_cut" size="13px" />
+                                <span class="ellipsis" style="font-size: 11px;">"{{ selectedTextSnippet.substring(0, 50) }}..."</span>
+                            </div>
+                            <div class="row items-center q-gutter-x-xs">
+                                <q-btn 
+                                    dense flat no-caps size="xs" 
+                                    color="white" 
+                                    class="bg-cyan-9 text-weight-bold q-px-sm rounded-borders font-mono"
+                                    icon="push_pin"
+                                    label="Paste Excerpt to Directives" 
+                                    @click="pinSelectedSnippet" 
+                                />
+                                <q-btn dense round flat size="xs" icon="close" color="grey-5" @click="showSelectionPinBar = false" />
+                            </div>
+                        </div>
+                    </q-slide-transition>
                 </div>
 
                 <!-- 3. PROPOSED MODULES (DYNAMIC SCOPE BREAKDOWN) -->

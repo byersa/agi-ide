@@ -8,11 +8,13 @@
                 <!-- Toolbar Header -->
                 <div class="q-mb-xs row items-center justify-between">
                     <div class="row items-center q-gutter-x-sm">
-                        <span class="text-caption text-weight-bold text-grey-4 font-mono">XML SCREEN EDITOR</span>
+                        <span class="text-caption text-weight-bold font-mono" :class="isMarkdownArtifact ? 'text-amber-4' : 'text-grey-4'">
+                            {{ isMarkdownArtifact ? 'DIRECTIVES &amp; TEXT EDITOR' : 'XML SCREEN EDITOR' }}
+                        </span>
                         <span v-if="currentArtifactUri" class="text-caption text-cyan-3 font-mono text-weight-bold" style="font-size: 11px;">
                             [{{ currentArtifactLabel }}]
                         </span>
-                        <q-btn icon="save" label="Save (Ctrl+S)" color="primary" dense size="xs" class="q-px-xs" @click="executeBufferSave" />
+                        <q-btn icon="save" label="Save (Ctrl+S)" color="primary" dense size="xs" class="q-px-xs font-mono" @click="executeBufferSave" />
                     </div>
                     
                     <!-- Transition Service Badges & Sync Chips -->
@@ -65,7 +67,7 @@
 
         props: {
             screenPath: { type: String, default: '' },
-            layoutTree: { type: [Object, Array], default: () => [] }
+            layoutTree: { type: [Object, Array, String], default: () => [] }
         },
 
         data() {
@@ -83,6 +85,16 @@
         },
 
         computed: {
+            isMarkdownArtifact() {
+                const u = (this.currentArtifactUri || '').toLowerCase();
+                return u.endsWith('.md') || u.endsWith('.txt');
+            },
+
+            isJsonArtifact() {
+                const u = (this.currentArtifactUri || '').toLowerCase();
+                return u.endsWith('.json');
+            },
+
             currentArtifactLabel() {
                 if (!this.currentArtifactUri) return '';
                 const parts = this.currentArtifactUri.split('/');
@@ -97,7 +109,7 @@
 
             detectedTransitionServices() {
                 const results = [];
-                if (!this.localBlueprintTree) return results;
+                if (this.isMarkdownArtifact || !this.localBlueprintTree) return results;
 
                 const scanTree = (node) => {
                     if (!node || typeof node !== 'object') return;
@@ -130,7 +142,7 @@
 
                 scanTree(this.localBlueprintTree);
 
-                if (results.length === 0 && this.rawXmlSource) {
+                if (results.length === 0 && this.rawXmlSource && !this.isMarkdownArtifact) {
                     const svcMatch = this.rawXmlSource.match(/<service-call\s+name=["']([^"']+)["']/);
                     if (svcMatch && svcMatch[1]) {
                         results.push({
@@ -150,12 +162,21 @@
                 handler(newPath) {
                     if (newPath) {
                         this.currentArtifactUri = newPath;
+                        this.adaptEditorMode();
+                        this.fetchRemoteScreenBuffer(newPath);
                     }
                 }
             },
             layoutTree: {
                 handler(newTree) {
-                    if (newTree && !this.isViewingVirtualBuffer) {
+                    if (this.isMarkdownArtifact) {
+                        // If markdown string passed as layoutTree, use directly as text
+                        if (typeof newTree === 'string' && newTree.trim().length > 0) {
+                            this.setEditorContent(newTree);
+                        }
+                        return;
+                    }
+                    if (newTree && !this.isViewingVirtualBuffer && typeof newTree === 'object') {
                         this.localBlueprintTree = JSON.parse(JSON.stringify(newTree));
                         this.compileTreeToXmlText();
                     }
@@ -171,7 +192,6 @@
             this.contextBus.onmessage = (msg) => {
                 if (!msg.data) return;
 
-                // 🎯 1. Catch open-screen-artifact broadcast from AgiStudio / Inspector
                 if (msg.data.event === 'open-screen-artifact') {
                     this.handleOpenScreenArtifact(msg.data);
                 }
@@ -185,7 +205,6 @@
                 }
             };
 
-            // Window event fallbacks for local component dispatches
             this.onWindowSelection = (e) => {
                 if (e.detail?.event === 'element-selected-by-id' || e.detail?.mariaId) {
                     this.highlightAndScrollToSourceElement(e.detail.mariaId, e.detail.node);
@@ -215,30 +234,41 @@
         },
 
         methods: {
+            adaptEditorMode() {
+                if (!this.cmInstance) return;
+                let targetMode = 'application/xml';
+                if (this.isMarkdownArtifact) {
+                    targetMode = 'text/x-markdown';
+                } else if (this.isJsonArtifact) {
+                    targetMode = 'application/json';
+                }
+                this.cmInstance.setOption('mode', targetMode);
+            },
+
             handleOpenScreenArtifact(payload) {
                 if (!payload) return;
-                const uri = payload.artifactUri || payload.screenPath || '';
+                const uri = payload.artifactUri || payload.screenPath || payload.artifactLocation || '';
                 const xml = payload.stagedXml || payload.rawXmlContent || '';
                 const tree = payload.layoutTree || payload.astTree || null;
 
-                if (uri) this.currentArtifactUri = uri;
+                if (uri) {
+                    this.currentArtifactUri = uri;
+                    this.adaptEditorMode();
+                }
 
-                // Case A: A virtual or staged XML string was provided
                 if (xml && typeof xml === 'string' && xml.trim().length > 0) {
                     this.isViewingVirtualBuffer = true;
                     this.setEditorContent(xml);
                     return;
                 }
 
-                // Case B: A Layout Tree AST was provided
-                if (tree && typeof tree === 'object') {
+                if (tree && typeof tree === 'object' && !this.isMarkdownArtifact) {
                     this.isViewingVirtualBuffer = false;
                     this.localBlueprintTree = JSON.parse(JSON.stringify(tree));
                     this.compileTreeToXmlText();
                     return;
                 }
 
-                // Case C: File URI provided without inline content -> Fetch workspace buffer from backend
                 if (uri) {
                     this.isViewingVirtualBuffer = false;
                     this.fetchRemoteScreenBuffer(uri);
@@ -246,10 +276,10 @@
             },
 
             setEditorContent(text) {
-                this.rawXmlSource = text;
+                this.rawXmlSource = text || '';
                 if (this.cmInstance) {
-                    if (this.cmInstance.getValue() !== text) {
-                        this.cmInstance.setValue(text);
+                    if (this.cmInstance.getValue() !== this.rawXmlSource) {
+                        this.cmInstance.setValue(this.rawXmlSource);
                     }
                     this.$nextTick(() => {
                         setTimeout(() => this.cmInstance?.refresh(), 50);
@@ -264,16 +294,31 @@
                     headers['X-CSRF-Token'] = window.AGI_SERVER_CSRF_TOKEN;
                 }
                 try {
+                    // Try getWorkspaceBuffer first
                     const resp = await axios.get('/rest/s1/agi-ide/getWorkspaceBuffer', {
                         params: { artifactUri: uri },
                         headers
                     });
-                    const xml = resp.data?.bufferText || resp.data?.fileContent || resp.data?.xmlText || '';
-                    if (xml) {
-                        this.setEditorContent(xml);
+
+                    const buffer = resp.data?.metaJsonBuffer || resp.data?.bufferText || resp.data?.fileContent || resp.data?.xmlText || '';
+
+                    if (buffer) {
+                        const contentToDisplay = (typeof buffer === 'object') ? JSON.stringify(buffer, null, 2) : buffer;
+                        this.setEditorContent(contentToDisplay);
+                        return;
+                    }
+
+                    // Fallback to getRawXml
+                    const rawResp = await axios.get('/rest/s1/agi-ide/getRawXml', {
+                        params: { artifactUri: uri },
+                        headers
+                    });
+                    const rawText = rawResp.data?.rawText || rawResp.data?.rawXml || '';
+                    if (rawText) {
+                        this.setEditorContent(rawText);
                     }
                 } catch (e) {
-                    console.warn(`Could not load remote screen buffer for ${uri}:`, e.message);
+                    console.warn(`Could not load remote buffer for ${uri}:`, e.message);
                 }
             },
 
@@ -302,7 +347,7 @@
                     this.cmAvailable = true;
                     this.cmInstance = CodeMirror(this.$refs.cmHost, {
                         value: this.rawXmlSource || '',
-                        mode: 'application/xml',
+                        mode: this.isMarkdownArtifact ? 'text/x-markdown' : 'application/xml',
                         htmlMode: false,
                         theme: 'material-darker',
                         lineNumbers: true,
@@ -338,7 +383,7 @@
             },
 
             async compileTreeToXmlText() {
-                if (!this.localBlueprintTree) return;
+                if (this.isMarkdownArtifact || !this.localBlueprintTree || typeof this.localBlueprintTree !== 'object') return;
                 const vm = this;
                 const headers = {};
                 if (window.AGI_SERVER_CSRF_TOKEN) {
@@ -361,7 +406,7 @@
                 this.$emit('trigger-save', {
                     artifactUri: this.currentArtifactUri,
                     xmlContent: this.rawXmlSource,
-                    layoutTree: this.localBlueprintTree || this.layoutTree
+                    layoutTree: this.isMarkdownArtifact ? this.rawXmlSource : (this.localBlueprintTree || this.layoutTree)
                 });
             },
 
@@ -403,7 +448,7 @@
             },
 
             highlightAndScrollToSourceElement(mariaId, nodeData = null) {
-                if (!mariaId || !this.cmInstance) return;
+                if (!mariaId || !this.cmInstance || this.isMarkdownArtifact) return;
 
                 const genericSubTags = [
                     'default-field', 'header-field', 'text-line', 'date-time',

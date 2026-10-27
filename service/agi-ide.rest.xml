@@ -39,9 +39,21 @@
         </method>
     </resource>
 
+    <resource name="known-artifacts">
+        <method type="get">
+            <service name="org.moqui.ide.AgiIdeServices.get#KnownArtifacts"/>
+        </method>
+    </resource>
+
     <resource name="getWorkspaceBuffer">
         <method type="get">
             <service name="org.moqui.ide.AgiIdeServices.get#WorkspaceBuffer"/>
+        </method>
+    </resource>
+
+    <resource name="getRawXml">
+        <method type="get">
+            <service name="org.moqui.ide.AgiIdeServices.get#RawXml"/>
         </method>
     </resource>
 

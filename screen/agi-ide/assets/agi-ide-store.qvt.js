@@ -56,17 +56,24 @@
                 this.selectedMariaId = mariaId;
             },
             // 🎯 CENTRAL MUTATION ACTION
-            updateActiveBlueprint({ artifactUri, blueprintTree }) {
-                const parsedTree = typeof blueprintTree === 'string'
-                    ? JSON.parse(blueprintTree)
-                    : blueprintTree;
+            updateActiveBlueprint(payload) {
+                if (!payload) return;
+                const uri = payload.artifactUri || '';
+                let tree = payload.blueprintTree;
 
-                this.activeBlueprintJson = parsedTree;
-                if (artifactUri) {
-                    this.blueprintCache[artifactUri] = parsedTree;
-                    this.activeScreenPath = artifactUri;
+                if (typeof tree === 'string') {
+                    const trimmed = tree.trim();
+                    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+                        try {
+                            tree = JSON.parse(trimmed);
+                        } catch (e) {
+                            console.warn("[agiIdeStore] Could not parse blueprintTree as JSON:", e.message);
+                        }
+                    }
                 }
-                console.info("💾 [agiIdeStore] Updated single source of truth for artifact:", artifactUri || 'Global');
+
+                this.activeArtifactUri = uri;
+                this.activeBlueprint = tree;
             },
             setArtifactMetadata(artifactPath, metaJsonData) {
                 let parsed = typeof metaJsonData === 'string' ? JSON.parse(metaJsonData) : metaJsonData;

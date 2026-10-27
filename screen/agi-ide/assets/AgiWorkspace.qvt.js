@@ -201,6 +201,16 @@
                     vm.hydrateWorkspaceBuffer();
                     return;
                 }
+
+                if (event.data.event === 'pin-turn-to-directives') {
+                    vm.pinMessageToDirectives(event.data);
+                    return;
+                }
+
+                if (event.data.event === 'advance-to-plan') {
+                    vm.handleAdvanceToPlan(event.data.customPrompt || null);
+                    return;
+                }
             };
 
             this.loadRequiredComponents();
@@ -424,6 +434,8 @@
                             @set-width="setStudioWidth"
                             @open-artifact="onArtifactOpened"
                             @seed-pipeline-step="handleSeedPipelineStep"
+                            @advance-to-plan="handleAdvanceToPlan"
+                            @pin-to-directives="pinMessageToDirectives"
                         ></component>
                     </div>
 
@@ -660,15 +672,25 @@
             },
 
             async onStageDispatched(eventData) {
-                if (this.$refs.globalCanvasRef && typeof this.$refs.globalCanvasRef.fetchPipelineGraph === 'function') {
-                    await this.$refs.globalCanvasRef.fetchPipelineGraph();
-                    const newStepId = eventData?.pipelineStepId;
-                    if (newStepId && this.$refs.globalCanvasRef.dagLayout?.nodeMap) {
-                        const targetNode = this.$refs.globalCanvasRef.dagLayout.nodeMap[String(newStepId)];
-                        if (targetNode) {
-                            this.$refs.globalCanvasRef.selectStage(targetNode, 'OUT');
+                try {
+                    if (this.$refs.globalCanvasRef && typeof this.$refs.globalCanvasRef.fetchPipelineGraph === 'function') {
+                        await this.$refs.globalCanvasRef.fetchPipelineGraph();
+                        const newStepId = eventData?.pipelineStepId;
+                        if (newStepId && this.$refs.globalCanvasRef.dagLayout?.nodeMap) {
+                            const targetNode = this.$refs.globalCanvasRef.dagLayout.nodeMap[String(newStepId)];
+                            if (targetNode) {
+                                this.$refs.globalCanvasRef.selectStage(targetNode, 'OUT');
+                            }
                         }
                     }
+
+                    // Check if dispatched step reported an execution failure
+                    if (eventData?.statusId === 'PlsFailed' || eventData?.status === 'error') {
+                        const errorMsg = eventData?.completionText || eventData?.message || 'Step execution encountered an error.';
+                        this.handleLlmDispatchError({ message: errorMsg });
+                    }
+                } catch (err) {
+                    this.handleLlmDispatchError(err);
                 }
             },
 
@@ -700,8 +722,14 @@
                 if (action === 'instructions') {
                     const instructionsPath = `component://${this.targetComponentName}/mcp/instructions/component.md`;
                     this.executeArtifactSwitch({ value: instructionsPath });
-                    if (!this.activeEditors.includes('AgiComponentEditor') && !this.activeEditors.includes('AgiScreenEditor')) {
+
+                    // Ensure AgiScreenEditor handles raw text editing, NOT AgiComponentEditor
+                    if (!this.activeEditors.includes('AgiScreenEditor')) {
                         this.activeEditors.push('AgiScreenEditor');
+                    }
+                    const compIdx = this.activeEditors.indexOf('AgiComponentEditor');
+                    if (compIdx !== -1) {
+                        this.activeEditors.splice(compIdx, 1);
                     }
                 } else if (action === 'new') {
                     this.openNewComponentWizard();
@@ -730,7 +758,6 @@
                                     icon: 'delete_forever',
                                     timeout: 4000
                                 });
-                                // Reset workspace to default clean slate
                                 this.localScreenPath = '';
                                 this.activeDiscussionId = '';
                                 this.activeDiscussionTitle = '';
@@ -738,7 +765,6 @@
                                 if (this.contextBus) {
                                     this.contextBus.postMessage({ event: 'refresh-artifact-discovery' });
                                 }
-                                // Prompt or trigger wizard to start over immediately
                                 setTimeout(() => {
                                     if (confirm(`Do you want to initialize a fresh skeleton for "${target}" now?`)) {
                                         vm.handleDomainAction('new');
@@ -935,15 +961,26 @@
                         const data = response.data;
 
                         if (data && data.metaJsonBuffer) {
-                            const parsedBuffer = typeof data.metaJsonBuffer === 'string'
-                                ? JSON.parse(data.metaJsonBuffer)
-                                : data.metaJsonBuffer;
+                            let parsedBuffer = data.metaJsonBuffer;
+
+                            // Only parse JSON if this is a structured AST layout tree (not raw markdown/text)
+                            const isNonXml = this.localScreenPath.endsWith('.md') ||
+                                this.localScreenPath.endsWith('.txt') ||
+                                this.localScreenPath.endsWith('.groovy');
+
+                            if (!isNonXml && typeof data.metaJsonBuffer === 'string') {
+                                try {
+                                    parsedBuffer = JSON.parse(data.metaJsonBuffer);
+                                } catch (e) {
+                                    console.warn("Could not parse metaJsonBuffer as JSON AST:", e.message);
+                                }
+                            }
 
                             this.activeWorkspaceBuffer.metaJsonBuffer = parsedBuffer;
                             this.activeWorkspaceBuffer.workspaceBufferId = data.workspaceBufferId;
 
                             const ideStore = window.useAgiIdeStore ? window.useAgiIdeStore() : null;
-                            if (ideStore && typeof ideStore.updateActiveBlueprint === 'function') {
+                            if (!isNonXml && ideStore && typeof ideStore.updateActiveBlueprint === 'function') {
                                 ideStore.updateActiveBlueprint({
                                     artifactUri: this.localScreenPath,
                                     blueprintTree: parsedBuffer
@@ -978,6 +1015,51 @@
                     activeBlueprint = ideStore ? ideStore.getActiveBlueprint : this.activeWorkspaceBuffer.metaJsonBuffer;
                 }
 
+                // NON-XML / MARKDOWN SAVE BYPASS
+                if (targetUri.endsWith('.md') || targetUri.endsWith('.txt')) {
+                    const rawText = (typeof activeBlueprint === 'string') ? activeBlueprint : (rawXml || '');
+                    try {
+                        await axios.post('/rest/s1/agi-ide/storeWorkspaceBuffer', {
+                            workspaceBufferId: this.activeWorkspaceBuffer.workspaceBufferId,
+                            artifactUri: targetUri,
+                            userId: activeUser,
+                            metaJsonBuffer: rawText
+                        }, { headers });
+
+                        await axios.post('/rest/s1/agi-ide/saveScreenXml', {
+                            artifactUri: targetUri,
+                            xmlText: rawText,
+                            metaJsonBuffer: rawText,
+                            autoCorrect: false,
+                            autoStubSubscreens: false,
+                            verifyEntities: false
+                        }, { headers });
+
+                        this.isDirty = false;
+                        this.$q?.notify({
+                            type: 'positive',
+                            message: `Successfully saved ${targetUri.split('/').pop()} to disk!`,
+                            icon: 'save'
+                        });
+
+                        if (this.contextBus) {
+                            this.contextBus.postMessage({
+                                event: 'artifact-saved-to-disk',
+                                artifactUri: targetUri
+                            });
+                        }
+                    } catch (err) {
+                        this.$q?.notify({
+                            type: 'negative',
+                            icon: 'report_problem',
+                            message: 'Save Aborted',
+                            caption: err.message
+                        });
+                    }
+                    return;
+                }
+
+                // XML AST PRE-PARSE
                 if (rawXml && rawXml.trim() && !targetUri.endsWith('.md')) {
                     try {
                         const parseResp = await axios.post('/rest/s1/agi-ide/parseXmlToTree', {
@@ -1005,6 +1087,21 @@
                             userId: activeUser,
                             metaJsonBuffer: jsonStringPayload
                         }, { headers });
+                    }
+
+                    if (targetUri.endsWith('.xml')) {
+                        const validation = await this.validateScreenArtifact(targetUri, rawXml);
+                        if (!validation.isValid) {
+                            this.$q.notify({
+                                type: 'negative',
+                                icon: 'gpp_bad',
+                                message: `Save Aborted: Validation Error in ${targetUri.split('/').pop()}`,
+                                caption: validation.errorList.join(' | '),
+                                timeout: 9000,
+                                actions: [{ label: 'Dismiss', color: 'white' }]
+                            });
+                            return;
+                        }
                     }
 
                     const fileSaveResponse = await axios.post('/rest/s1/agi-ide/saveScreenXml', {
@@ -1140,31 +1237,68 @@
 
                 return uri;
             },
-            openProductionView() {
-                const comp = this.targetComponentName || 'nursinghome';
-                let targetUrl = `/${comp}`;
+            async validateScreenArtifact(targetUri, rawXml = null) {
+                if (!targetUri || !targetUri.endsWith('.xml')) return { isValid: true, errorList: [] };
+                try {
+                    const resp = await axios.post('/rest/s1/agi-ide/validateScreenXml', {
+                        artifactUri: targetUri,
+                        xmlContent: rawXml || null
+                    }, {
+                        headers: { 'moquiSessionToken': this.resolveCsrfToken() }
+                    });
+                    return {
+                        isValid: resp.data?.isValid !== false,
+                        errorList: resp.data?.errorList || []
+                    };
+                } catch (err) {
+                    console.warn("Validation service request failed:", err);
+                    return { isValid: true, errorList: [] }; // Fail open if service unreachable
+                }
+            },
 
-                if (this.localScreenPath && this.localScreenPath.startsWith(`component://${comp}/screen/`)) {
+            async openProductionView() {
+                const comp = this.targetComponentName || 'nursinghome';
+
+                if (!this.localScreenPath) {
+                    window.open(`/${comp}`, 'moqui-production-preview');
+                    return;
+                }
+
+                // Pre-flight check on active screen
+                this.$q.loading?.show({ message: 'Validating screen integrity...' });
+                const validation = await this.validateScreenArtifact(this.localScreenPath);
+                this.$q.loading?.hide();
+
+                if (!validation.isValid) {
+                    this.$q.notify({
+                        type: 'negative',
+                        icon: 'report_problem',
+                        message: `Production Launch Blocked: ${this.currentArtifactLabel}`,
+                        caption: validation.errorList.join(' | '),
+                        timeout: 10000,
+                        actions: [{ label: 'Dismiss', color: 'white' }]
+                    });
+                    return;
+                }
+
+                let targetUrl = `/${comp}`;
+                if (this.localScreenPath.startsWith(`component://${comp}/screen/`)) {
                     let subPath = this.localScreenPath
                         .replace(`component://${comp}/screen/`, '')
                         .replace(/\.xml$/, '');
 
-                    // Strip leading component name if subPath starts with '${comp}/'
                     if (subPath.startsWith(comp + '/')) {
                         subPath = subPath.substring(comp.length + 1);
                     }
 
-                    // If pointing directly to root screen, just use /${comp}
                     if (subPath && subPath !== comp) {
                         targetUrl = `/${comp}/${subPath}`;
                     }
                 }
 
-                // If your webroot mounts apps under /qapps or /apps, adjust prefix here if needed:
-                // targetUrl = `/qapps${targetUrl}`;
-
                 window.open(targetUrl, 'moqui-production-preview');
             },
+
             async openNewComponentWizard() {
                 if (!this.editorConstructors.AgiNewComponentWizard) {
                     await this.loadLazyComponent(
@@ -1230,6 +1364,7 @@
                     });
                 }
             },
+
             async handleSeedPipelineStep(node) {
                 const screenTitle = node.displayTitle || node.screenName;
                 const isPlaceholder = node.status === 'placeholder';
@@ -1238,96 +1373,297 @@
                     ? `Implement full Moqui XML screen for ${node.screenName} (${node.artifactUri}) adhering to Mantle UDM and Quasar syntax standards.`
                     : `Formulate architectural implementation plan for ${node.screenName} subscreen under ${this.targetComponentName}.`;
 
-                try {
-                    this.$q.loading.show({ message: `Resolving pipeline for ${screenTitle}...` });
+                const executeSeed = async () => {
+                    try {
+                        this.$q.loading.show({ message: `Resolving pipeline for ${screenTitle}...` });
 
-                    // 1. Resolve or Auto-Provision Discussion Initiative
-                    let discId = this.activeDiscussionId;
+                        // 1. Resolve or Auto-Provision Discussion Initiative
+                        let discId = this.activeDiscussionId;
 
-                    if (!discId) {
-                        // Attempt to pick up an existing initiative for this component
-                        try {
-                            const graphResp = await axios.get('/rest/s1/agi-ai/discussions/pipeline-graph', {
-                                params: { targetComponent: this.targetComponentName, includeArchived: 'N' },
-                                headers: { 'moquiSessionToken': this.resolveCsrfToken() }
-                            });
-                            const initiatives = graphResp.data?.initiatives || [];
-                            if (initiatives.length > 0) {
-                                discId = String(initiatives[0].discussionId);
-                                this.activeDiscussionId = discId;
-                                this.activeDiscussionTitle = initiatives[0].name || `Pipeline #${discId}`;
+                        if (!discId) {
+                            try {
+                                const graphResp = await axios.get('/rest/s1/agi-ai/discussions/pipeline-graph', {
+                                    params: { targetComponent: this.targetComponentName, includeArchived: 'N' },
+                                    headers: { 'moquiSessionToken': this.resolveCsrfToken() }
+                                });
+                                const initiatives = graphResp.data?.initiatives || [];
+                                if (initiatives.length > 0) {
+                                    discId = String(initiatives[0].discussionId);
+                                    this.activeDiscussionId = discId;
+                                    this.activeDiscussionTitle = initiatives[0].name || `Pipeline #${discId}`;
+                                }
+                            } catch (e) {
+                                console.warn("Could not query pipeline graph for default initiative:", e);
                             }
-                        } catch (e) {
-                            console.warn("Could not query pipeline graph for default initiative:", e);
+
+                            if (!discId) {
+                                const createResp = await axios.post('/rest/s1/agi-ai/discussions', {
+                                    name: `${screenTitle} Implementation`,
+                                    targetComponent: this.targetComponentName
+                                }, { headers: { 'moquiSessionToken': this.resolveCsrfToken() } });
+
+                                discId = String(createResp.data?.discussionId);
+                                this.activeDiscussionId = discId;
+                                this.activeDiscussionTitle = `${screenTitle} Implementation`;
+                            }
                         }
 
-                        // If still none, auto-create a dedicated pipeline initiative
-                        if (!discId) {
-                            const createResp = await axios.post('/rest/s1/agi-ai/discussions', {
-                                name: `${screenTitle} Implementation`,
-                                targetComponent: this.targetComponentName
+                        this.$q.loading.show({ message: `Forking draft step for ${node.screenName}...` });
+
+                        // 2. Identify Parent Step (Current selection or omit if root)
+                        const sourceStepId = this.selectedStage?.pipelineStepId || null;
+
+                        const forkPayload = {
+                            discussionId: discId,
+                            targetStanceEnumId: targetStance,
+                            directivePrompt: prompt
+                        };
+                        if (sourceStepId) {
+                            forkPayload.sourceStepId = sourceStepId;
+                        }
+
+                        // 3. Fork Draft Step
+                        const resp = await axios.post('/rest/s1/agi-ai/pipeline/step/fork', forkPayload, {
+                            headers: { 'moquiSessionToken': this.resolveCsrfToken() }
+                        });
+
+                        const newStepId = resp.data?.newStepId;
+                        if (newStepId) {
+                            // 4. Anchor Artifact URI to Step
+                            await axios.post('/rest/s1/agi-ai/pipeline/step/artifact', {
+                                pipelineStepId: newStepId,
+                                targetArtifactUri: node.artifactUri
                             }, { headers: { 'moquiSessionToken': this.resolveCsrfToken() } });
 
-                            discId = String(createResp.data?.discussionId);
-                            this.activeDiscussionId = discId;
-                            this.activeDiscussionTitle = `${screenTitle} Implementation`;
+                            this.$q.notify({
+                                type: 'positive',
+                                message: `Created Draft Step #${newStepId} (${targetStance.replace('Aam', '')}) for ${screenTitle}`,
+                                caption: `Assigned to Pipeline #${discId}: ${this.activeDiscussionTitle}`,
+                                icon: 'auto_fix_high',
+                                timeout: 3500
+                            });
+
+                            // 5. Close Blueprint Drawer, Open DAG Canvas, and Select Node
+                            this.showBlueprintDrawer = false;
+                            this.showDagDrawer = true;
+
+                            if (this.$refs.globalCanvasRef && typeof this.$refs.globalCanvasRef.fetchPipelineGraph === 'function') {
+                                await this.$refs.globalCanvasRef.fetchPipelineGraph();
+                                if (typeof this.$refs.globalCanvasRef.selectStageById === 'function') {
+                                    this.$refs.globalCanvasRef.selectStageById(newStepId);
+                                }
+                            }
                         }
+                    } catch (err) {
+                        this.handleLlmDispatchError(err, () => executeSeed());
+                    } finally {
+                        this.$q.loading.hide();
                     }
+                };
 
-                    this.$q.loading.show({ message: `Forking draft step for ${node.screenName}...` });
+                await executeSeed();
+            },
 
-                    // 2. Identify Parent Step (Current selection or omit if root)
-                    const sourceStepId = this.selectedStage?.pipelineStepId || null;
+            handleLlmDispatchError(err, retryAction = null) {
+                let errorCode = 'UNKNOWN_ERROR';
+                let userMessage = 'Agent execution halted unexpectedly.';
+                let diagnostic = '';
+                let profileUsed = '';
 
-                    const forkPayload = {
-                        discussionId: discId,
-                        targetStanceEnumId: targetStance,
-                        directivePrompt: prompt
-                    };
-                    if (sourceStepId) {
-                        forkPayload.sourceStepId = sourceStepId;
-                    }
+                // Try parsing structured JSON error from response
+                const rawData = err?.response?.data || err;
+                let payload = null;
 
-                    // 3. Fork Draft Step
-                    const resp = await axios.post('/rest/s1/agi-ai/pipeline/step/fork', forkPayload, {
+                if (typeof rawData === 'string' && rawData.trim().startsWith('{')) {
+                    try { payload = JSON.parse(rawData); } catch (e) { }
+                } else if (typeof rawData === 'object') {
+                    payload = rawData;
+                }
+
+                if (payload) {
+                    errorCode = payload.errorCode || payload.status || 'LLM_ERROR';
+                    userMessage = payload.message || payload.error || userMessage;
+                    diagnostic = payload.diagnosticDetail || payload.error || '';
+                    profileUsed = payload.profileName || '';
+                } else if (err.message) {
+                    diagnostic = err.message;
+                }
+
+                const actions = [{ label: 'Dismiss', color: 'white' }];
+
+                // If a retry action is supplied, offer an inline 1-click retry button
+                if (typeof retryAction === 'function') {
+                    actions.unshift({
+                        label: 'Retry Step',
+                        color: 'amber-3',
+                        handler: () => retryAction()
+                    });
+                }
+
+                this.$q.notify({
+                    type: 'negative',
+                    icon: 'cloud_off',
+                    message: `AI Execution Failure: ${userMessage}`,
+                    caption: diagnostic ? `Detail: ${diagnostic.substring(0, 160)}...` : (profileUsed ? `Profile: ${profileUsed}` : null),
+                    timeout: 12000,
+                    actions: actions
+                });
+            },
+
+            // =================================================================
+            // DIRECTIVES & ACCUMULATING SPECIFICATION HOOKS
+            // =================================================================
+            async fetchDiscussionDirectives(discussionId = null) {
+                const targetDiscId = discussionId || this.activeDiscussionId;
+                if (!targetDiscId) return null;
+
+                try {
+                    const resp = await axios.get(`/rest/s1/agi-ai/discussions/${targetDiscId}/directives`, {
+                        params: { targetComponent: this.targetComponentName },
+                        headers: { 'moquiSessionToken': this.resolveCsrfToken() }
+                    });
+                    return resp.data || null;
+                } catch (err) {
+                    console.warn(`Could not fetch directives for discussion #${targetDiscId}:`, err);
+                    return null;
+                }
+            },
+
+            async pinMessageToDirectives(payload) {
+                const discId = payload?.discussionId || this.activeDiscussionId;
+                const messageId = payload?.messageId;
+                if (!discId || !messageId) {
+                    this.$q.notify({ type: 'warning', message: 'Missing discussion or message ID for pinning.' });
+                    return;
+                }
+
+                try {
+                    this.$q.loading?.show({ message: 'Pinning turn to directives...' });
+                    const resp = await axios.post(`/rest/s1/agi-ai/discussions/${discId}/directives/pin`, {
+                        messageId: messageId,
+                        pinnedTitle: payload.title || null,
+                        pinnedContent: payload.content || null
+                    }, {
                         headers: { 'moquiSessionToken': this.resolveCsrfToken() }
                     });
 
-                    const newStepId = resp.data?.newStepId;
-                    if (newStepId) {
-                        // 4. Anchor Artifact URI to Step
-                        await axios.post('/rest/s1/agi-ai/pipeline/step/artifact', {
-                            pipelineStepId: newStepId,
-                            targetArtifactUri: node.artifactUri
-                        }, { headers: { 'moquiSessionToken': this.resolveCsrfToken() } });
+                    this.$q.notify({
+                        type: 'positive',
+                        icon: 'push_pin',
+                        message: `Pinned to ${this.targetComponentName} Directives!`,
+                        caption: `Synced to component.md & Payload #${resp.data?.rootPayloadId || ''}`,
+                        timeout: 3000
+                    });
 
-                        this.$q.notify({
-                            type: 'positive',
-                            message: `Created Draft Step #${newStepId} (${targetStance.replace('Aam', '')}) for ${screenTitle}`,
-                            caption: `Assigned to Pipeline #${discId}: ${this.activeDiscussionTitle}`,
-                            icon: 'auto_fix_high',
-                            timeout: 3500
+                    if (this.contextBus) {
+                        this.contextBus.postMessage({
+                            event: 'directives-updated',
+                            discussionId: discId,
+                            targetComponent: this.targetComponentName
                         });
-
-                        // 5. Close Blueprint Drawer, Open DAG Canvas, and Select Node
-                        this.showBlueprintDrawer = false;
-                        this.showDagDrawer = true;
-
-                        if (this.$refs.globalCanvasRef && typeof this.$refs.globalCanvasRef.fetchPipelineGraph === 'function') {
-                            await this.$refs.globalCanvasRef.fetchPipelineGraph();
-                            if (typeof this.$refs.globalCanvasRef.selectStageById === 'function') {
-                                this.$refs.globalCanvasRef.selectStageById(newStepId);
-                            }
-                        }
                     }
                 } catch (err) {
-                    this.$q.notify({
-                        type: 'negative',
-                        message: 'Failed to create step: ' + (err.response?.data?.errors || err.message)
-                    });
+                    this.handleLlmDispatchError(err);
                 } finally {
-                    this.$q.loading.hide();
+                    this.$q.loading?.hide();
                 }
+            },
+
+            async saveDiscussionDirectives(directivesText) {
+                const discId = this.activeDiscussionId;
+                if (!discId) return;
+
+                try {
+                    await axios.post(`/rest/s1/agi-ai/discussions/${discId}/directives`, {
+                        directivesText: directivesText,
+                        targetComponent: this.targetComponentName
+                    }, {
+                        headers: { 'moquiSessionToken': this.resolveCsrfToken() }
+                    });
+
+                    this.$q.notify({
+                        type: 'positive',
+                        icon: 'save',
+                        message: 'Saved component.md and working buffer.',
+                        timeout: 2500
+                    });
+                } catch (err) {
+                    this.handleLlmDispatchError(err);
+                }
+            },
+
+            async handleAdvanceToPlan(customPrompt = null) {
+                const discId = this.activeDiscussionId;
+                if (!discId) {
+                    this.$q.notify({ type: 'warning', message: 'No active discussion selected to advance.' });
+                    return;
+                }
+
+                const executeAdvance = async () => {
+                    try {
+                        this.$q.loading.show({ message: `Fetching directives for discussion #${discId}...` });
+
+                        // 1. Fetch current accumulated directives from component.md / root AgiPayload
+                        const directivesData = await this.fetchDiscussionDirectives(discId);
+                        const accumulatedDirectives = directivesData?.userPromptText || '';
+
+                        const planDirectivePrompt = customPrompt || accumulatedDirectives || `Synthesize complete architectural implementation plan for ${this.targetComponentName}.`;
+
+                        this.$q.loading.show({ message: 'Forking planning step from directives...' });
+
+                        // 2. Identify Parent Step (Current selection or latest step)
+                        const sourceStepId = this.selectedStage?.pipelineStepId || null;
+
+                        const forkPayload = {
+                            discussionId: discId,
+                            targetStanceEnumId: 'AamPlan',
+                            directivePrompt: planDirectivePrompt
+                        };
+                        if (sourceStepId) {
+                            forkPayload.sourceStepId = sourceStepId;
+                        }
+
+                        // 3. Fork Draft Planning Step
+                        const resp = await axios.post('/rest/s1/agi-ai/pipeline/step/fork', forkPayload, {
+                            headers: { 'moquiSessionToken': this.resolveCsrfToken() }
+                        });
+
+                        const newStepId = resp.data?.newStepId;
+                        if (newStepId) {
+                            const rootArtifact = `component://${this.targetComponentName}/screen/${this.targetComponentName}.xml`;
+                            await axios.post('/rest/s1/agi-ai/pipeline/step/artifact', {
+                                pipelineStepId: newStepId,
+                                targetArtifactUri: rootArtifact
+                            }, { headers: { 'moquiSessionToken': this.resolveCsrfToken() } });
+
+                            this.$q.notify({
+                                type: 'positive',
+                                icon: 'architecture',
+                                message: `Created Architecture Plan Step #${newStepId}`,
+                                caption: `Seeded with specifications from component.md`,
+                                timeout: 4500
+                            });
+
+                            // 4. Switch from Discussion drawer to DAG drawer and focus the new step
+                            this.showDiscussionDrawer = false;
+                            this.showBlueprintDrawer = false;
+                            this.showDagDrawer = true;
+
+                            if (this.$refs.globalCanvasRef && typeof this.$refs.globalCanvasRef.fetchPipelineGraph === 'function') {
+                                await this.$refs.globalCanvasRef.fetchPipelineGraph();
+                                if (typeof this.$refs.globalCanvasRef.selectStageById === 'function') {
+                                    this.$refs.globalCanvasRef.selectStageById(newStepId);
+                                }
+                            }
+                        }
+                    } catch (err) {
+                        this.handleLlmDispatchError(err, () => executeAdvance());
+                    } finally {
+                        this.$q.loading.hide();
+                    }
+                };
+
+                await executeAdvance();
             },
         },
     };
