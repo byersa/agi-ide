@@ -5,8 +5,21 @@
         template: `
             <div :class="['screen-editor-container fit column no-wrap q-pa-xs', activeHighlightedMariaId ? 'glow-active' : '']" style="height: 100%; min-height: 0;">
                 
+                <component is="style">
+                    .screen-editor-container .CodeMirror {
+                        height: 100% !important;
+                        width: 100% !important;
+                        font-family: monospace;
+                        font-size: 12px;
+                    }
+                    .screen-editor-container .CodeMirror-scroll {
+                        height: 100% !important;
+                        min-height: 100% !important;
+                    }
+                </component>
+
                 <!-- Toolbar Header -->
-                <div class="q-mb-xs row items-center justify-between">
+                <div class="q-mb-xs row items-center justify-between" style="flex: 0 0 auto;">
                     <div class="row items-center q-gutter-x-sm">
                         <span class="text-caption text-weight-bold font-mono" :class="isMarkdownArtifact ? 'text-amber-4' : 'text-grey-4'">
                             {{ isMarkdownArtifact ? 'DIRECTIVES &amp; TEXT EDITOR' : 'XML SCREEN EDITOR' }}
@@ -17,7 +30,6 @@
                         <q-btn icon="save" label="Save (Ctrl+S)" color="primary" dense size="xs" class="q-px-xs font-mono" @click="executeBufferSave" />
                     </div>
                     
-                    <!-- Transition Service Badges & Sync Chips -->
                     <div class="row items-center q-gutter-x-xs">
                         <q-chip 
                             v-for="(svc, idx) in detectedTransitionServices"
@@ -49,18 +61,8 @@
                 </div>
 
                 <!-- Code Editor Container -->
-                <div class="col full-width relative-position rounded-borders" style="border: 1px solid #334155; min-height: 0; height: 100%;">
-                    <!-- CodeMirror Host -->
-                    <div v-show="cmAvailable" ref="cmHost" class="fit" style="height: 100%;"></div>
-
-                    <!-- Safe Textarea Fallback -->
-                    <textarea 
-                        v-if="!cmAvailable"
-                        class="xml-textarea fit font-mono text-caption q-pa-xs bg-grey-10 text-white"
-                        style="white-space: pre; overflow: auto; resize: none;"
-                        :value="rawXmlSource"
-                        @input="onTextareaInput"
-                    ></textarea>
+                <div class="col full-width relative-position rounded-borders overflow-hidden" style="border: 1px solid #334155; min-height: 0; flex: 1 1 0%; height: 100%;">
+                    <div ref="cmHost" class="fit" style="height: 100%; width: 100%;"></div>
                 </div>
             </div>
         `,
@@ -73,7 +75,6 @@
         data() {
             return {
                 cmInstance: null,
-                cmAvailable: false,
                 rawXmlSource: '',
                 currentArtifactUri: this.screenPath || '',
                 activeHighlightedMariaId: '',
@@ -81,6 +82,8 @@
                 activeTextMarker: null,
                 localBlueprintTree: { id: "root", tagName: "screen", children: [] },
                 isViewingVirtualBuffer: false,
+                isUserTyping: false,
+                instanceEditorId: 'editor_' + Math.random().toString(36).substring(2, 9)
             };
         },
 
@@ -162,35 +165,47 @@
                 handler(newPath) {
                     if (newPath) {
                         this.currentArtifactUri = newPath;
-                        this.adaptEditorMode();
+                        this.isViewingVirtualBuffer = false;
                         this.fetchRemoteScreenBuffer(newPath);
                     }
                 }
             },
             layoutTree: {
                 handler(newTree) {
+                    if (this.isUserTyping) return;
                     if (this.isMarkdownArtifact) {
-                        // If markdown string passed as layoutTree, use directly as text
                         if (typeof newTree === 'string' && newTree.trim().length > 0) {
-                            this.setEditorContent(newTree);
+                            if (this.cmInstance && this.cmInstance.getValue() !== newTree) {
+                                this.setEditorContent(newTree);
+                            }
                         }
                         return;
                     }
-                    if (newTree && !this.isViewingVirtualBuffer && typeof newTree === 'object') {
-                        this.localBlueprintTree = JSON.parse(JSON.stringify(newTree));
-                        this.compileTreeToXmlText();
+                    if (newTree && !this.isViewingVirtualBuffer) {
+                        let treeObj = newTree;
+                        if (typeof newTree === 'string' && newTree.trim().startsWith('{')) {
+                            try { treeObj = JSON.parse(newTree.trim()); } catch (e) { }
+                        }
+                        if (treeObj && typeof treeObj === 'object') {
+                            const newJson = JSON.stringify(treeObj);
+                            const oldJson = JSON.stringify(this.localBlueprintTree || {});
+                            if (newJson !== oldJson) {
+                                this.localBlueprintTree = treeObj;
+                                this.compileTreeToXmlText();
+                            }
+                        }
                     }
                 },
                 deep: true
-            },
+            }
         },
 
         mounted() {
-            this.tryInitCodeMirror();
+            this.initOrRefreshEditor();
 
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
             this.contextBus.onmessage = (msg) => {
-                if (!msg.data) return;
+                if (!msg.data || msg.data.originId === this.instanceEditorId) return;
 
                 if (msg.data.event === 'open-screen-artifact') {
                     this.handleOpenScreenArtifact(msg.data);
@@ -218,31 +233,100 @@
                 }
             };
             window.addEventListener('open-screen-artifact', this.onWindowOpenArtifact);
+
+            window.addEventListener('resize', this.forceEditorRefresh);
         },
 
         beforeUnmount() {
+            window.removeEventListener('resize', this.forceEditorRefresh);
             if (this.contextBus) this.contextBus.close();
-            if (this.onWindowSelection) {
-                window.removeEventListener('element-selected-by-id', this.onWindowSelection);
-            }
-            if (this.onWindowOpenArtifact) {
-                window.removeEventListener('open-screen-artifact', this.onWindowOpenArtifact);
-            }
+            if (this.onWindowSelection) window.removeEventListener('element-selected-by-id', this.onWindowSelection);
+            if (this.onWindowOpenArtifact) window.removeEventListener('open-screen-artifact', this.onWindowOpenArtifact);
             if (this.cmInstance) {
                 this.cmInstance.toTextArea?.();
+                this.cmInstance = null;
             }
         },
 
         methods: {
-            adaptEditorMode() {
-                if (!this.cmInstance) return;
-                let targetMode = 'application/xml';
-                if (this.isMarkdownArtifact) {
-                    targetMode = 'text/x-markdown';
-                } else if (this.isJsonArtifact) {
-                    targetMode = 'application/json';
+            forceEditorRefresh() {
+                if (this.cmInstance) {
+                    this.$nextTick(() => {
+                        this.cmInstance.refresh();
+                    });
                 }
-                this.cmInstance.setOption('mode', targetMode);
+            },
+
+            getAppropriateMode() {
+                if (this.isMarkdownArtifact) {
+                    return (window.CodeMirror && CodeMirror.modes && CodeMirror.modes.markdown) ? 'text/x-markdown' : 'text/plain';
+                }
+                if (this.isJsonArtifact) return 'application/json';
+                return 'application/xml';
+            },
+
+            initOrRefreshEditor(attempts = 0) {
+                if (typeof CodeMirror === 'undefined') {
+                    if (attempts < 20) setTimeout(() => this.initOrRefreshEditor(attempts + 1), 50);
+                    return;
+                }
+
+                const host = this.$refs.cmHost;
+                if (!host || host.offsetWidth === 0) {
+                    if (attempts < 20) setTimeout(() => this.initOrRefreshEditor(attempts + 1), 50);
+                    return;
+                }
+
+                if (this.cmInstance) {
+                    this.cmInstance.setOption('mode', this.getAppropriateMode());
+                    this.cmInstance.refresh();
+                    return;
+                }
+
+                host.innerHTML = '';
+
+                this.cmInstance = CodeMirror(host, {
+                    value: this.rawXmlSource || '',
+                    mode: this.getAppropriateMode(),
+                    htmlMode: false,
+                    theme: 'material-darker',
+                    lineNumbers: true,
+                    lineWrapping: true,
+                    tabSize: 4,
+                    indentUnit: 4,
+                    undoDepth: 200
+                });
+
+                this.cmInstance.on('focus', () => {
+                    this.cmInstance.refresh();
+                });
+
+                this.cmInstance.on('change', (cm, change) => {
+                    if (change.origin === 'setValue') return;
+                    this.isUserTyping = true;
+                    this.rawXmlSource = cm.getValue();
+
+                    clearTimeout(this._busDebounce);
+                    this._busDebounce = setTimeout(() => {
+                        if (this.contextBus) {
+                            this.contextBus.postMessage({
+                                event: 'xml-source-mutated',
+                                originId: this.instanceEditorId,
+                                rawXmlText: this.rawXmlSource
+                            });
+                        }
+                    }, 350);
+
+                    clearTimeout(this._typingTimeout);
+                    this._typingTimeout = setTimeout(() => {
+                        this.isUserTyping = false;
+                    }, 500);
+                });
+
+                this.cmInstance.setSize('100%', '100%');
+                this.$nextTick(() => {
+                    setTimeout(() => this.cmInstance?.refresh(), 60);
+                });
             },
 
             handleOpenScreenArtifact(payload) {
@@ -253,7 +337,6 @@
 
                 if (uri) {
                     this.currentArtifactUri = uri;
-                    this.adaptEditorMode();
                 }
 
                 if (xml && typeof xml === 'string' && xml.trim().length > 0) {
@@ -276,15 +359,57 @@
             },
 
             setEditorContent(text) {
-                this.rawXmlSource = text || '';
-                if (this.cmInstance) {
-                    if (this.cmInstance.getValue() !== this.rawXmlSource) {
-                        this.cmInstance.setValue(this.rawXmlSource);
+                if (this.isUserTyping) return;
+
+                let content = text || '';
+
+                const isXml = (this.currentArtifactUri || '').endsWith('.xml');
+                if (isXml) {
+                    const trimmed = (typeof content === 'string') ? content.trim() : '';
+
+                    if (typeof content === 'object' || trimmed.startsWith('{')) {
+                        console.warn("🛡️ [AgiScreenEditor] Intercepted non-XML JSON payload targeted for XML editor. Compiling or fetching raw XML instead.");
+
+                        let candidateObj = (typeof content === 'object') ? content : null;
+                        if (!candidateObj && trimmed.startsWith('{')) {
+                            try { candidateObj = JSON.parse(trimmed); } catch (e) { }
+                        }
+
+                        if (candidateObj?.rawXmlContent && typeof candidateObj.rawXmlContent === 'string' && candidateObj.rawXmlContent.trim().startsWith('<')) {
+                            content = candidateObj.rawXmlContent.trim();
+                        } else if (candidateObj?.astTree || candidateObj?.layoutTree) {
+                            this.localBlueprintTree = candidateObj.astTree || candidateObj.layoutTree;
+                            this.compileTreeToXmlText();
+                            return;
+                        } else {
+                            this.fetchRemoteScreenBuffer(this.currentArtifactUri);
+                            return;
+                        }
                     }
-                    this.$nextTick(() => {
-                        setTimeout(() => this.cmInstance?.refresh(), 50);
-                    });
                 }
+
+                this.rawXmlSource = content;
+
+                if (!this.cmInstance) {
+                    this.initOrRefreshEditor();
+                    return;
+                }
+
+                if (this.cmInstance.getValue() !== this.rawXmlSource) {
+                    try {
+                        this.cmInstance.setValue(this.rawXmlSource);
+                        this.cmInstance.clearHistory();
+                    } catch (e) {
+                        this.cmInstance = null;
+                        this.initOrRefreshEditor();
+                        return;
+                    }
+                }
+
+                this.cmInstance.setOption('mode', this.getAppropriateMode());
+                this.$nextTick(() => {
+                    setTimeout(() => this.cmInstance?.refresh(), 50);
+                });
             },
 
             async fetchRemoteScreenBuffer(uri) {
@@ -293,8 +418,26 @@
                 if (window.AGI_SERVER_CSRF_TOKEN) {
                     headers['X-CSRF-Token'] = window.AGI_SERVER_CSRF_TOKEN;
                 }
+
+                const isXml = uri.endsWith('.xml');
+
                 try {
-                    // Try getWorkspaceBuffer first
+                    if (isXml) {
+                        try {
+                            const rawResp = await axios.get('/rest/s1/agi-ide/getRawXml', {
+                                params: { artifactUri: uri },
+                                headers
+                            });
+                            const rawText = rawResp.data?.rawText || rawResp.data?.rawXml || '';
+                            if (rawText && rawText.trim().startsWith('<')) {
+                                this.setEditorContent(rawText.trim());
+                                return;
+                            }
+                        } catch (rawErr) {
+                            console.warn("Direct raw XML read failed, falling back to buffer:", rawErr.message);
+                        }
+                    }
+
                     const resp = await axios.get('/rest/s1/agi-ide/getWorkspaceBuffer', {
                         params: { artifactUri: uri },
                         headers
@@ -303,12 +446,30 @@
                     const buffer = resp.data?.metaJsonBuffer || resp.data?.bufferText || resp.data?.fileContent || resp.data?.xmlText || '';
 
                     if (buffer) {
+                        if (isXml) {
+                            if (typeof buffer === 'object') {
+                                this.localBlueprintTree = JSON.parse(JSON.stringify(buffer));
+                                await this.compileTreeToXmlText();
+                                return;
+                            } else if (typeof buffer === 'string' && buffer.trim().startsWith('{')) {
+                                try {
+                                    const parsed = JSON.parse(buffer.trim());
+                                    if (parsed.rawXmlContent && parsed.rawXmlContent.trim().startsWith('<')) {
+                                        this.setEditorContent(parsed.rawXmlContent.trim());
+                                        return;
+                                    }
+                                    this.localBlueprintTree = parsed.astTree || parsed.layoutTree || parsed;
+                                    await this.compileTreeToXmlText();
+                                    return;
+                                } catch (ignore) { }
+                            }
+                        }
+
                         const contentToDisplay = (typeof buffer === 'object') ? JSON.stringify(buffer, null, 2) : buffer;
                         this.setEditorContent(contentToDisplay);
                         return;
                     }
 
-                    // Fallback to getRawXml
                     const rawResp = await axios.get('/rest/s1/agi-ide/getRawXml', {
                         params: { artifactUri: uri },
                         headers
@@ -319,66 +480,6 @@
                     }
                 } catch (e) {
                     console.warn(`Could not load remote buffer for ${uri}:`, e.message);
-                }
-            },
-
-            tryInitCodeMirror(attempts = 0) {
-                if (typeof CodeMirror === 'undefined') {
-                    if (attempts < 10) setTimeout(() => this.tryInitCodeMirror(attempts + 1), 100);
-                    else this.cmAvailable = false;
-                    return;
-                }
-
-                if (!CodeMirror.modes || !CodeMirror.modes.xml) {
-                    if (!document.getElementById('cm-xml-mode-script')) {
-                        const script = document.createElement('script');
-                        script.id = 'cm-xml-mode-script';
-                        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/xml/xml.min.js';
-                        script.onload = () => this.tryInitCodeMirror(0);
-                        document.head.appendChild(script);
-                        return;
-                    } else if (attempts < 15) {
-                        setTimeout(() => this.tryInitCodeMirror(attempts + 1), 100);
-                        return;
-                    }
-                }
-
-                if (this.$refs.cmHost) {
-                    this.cmAvailable = true;
-                    this.cmInstance = CodeMirror(this.$refs.cmHost, {
-                        value: this.rawXmlSource || '',
-                        mode: this.isMarkdownArtifact ? 'text/x-markdown' : 'application/xml',
-                        htmlMode: false,
-                        theme: 'material-darker',
-                        lineNumbers: true,
-                        lineWrapping: true
-                    });
-
-                    this.cmInstance.on('change', (cm, change) => {
-                        if (change.origin === 'setValue') return;
-                        this.rawXmlSource = cm.getValue();
-                        if (this.contextBus) {
-                            this.contextBus.postMessage({
-                                event: 'xml-source-mutated',
-                                rawXmlText: this.rawXmlSource
-                            });
-                        }
-                    });
-
-                    this.cmInstance.setSize('100%', '100%');
-                    this.$nextTick(() => {
-                        setTimeout(() => this.cmInstance?.refresh(), 100);
-                    });
-                }
-            },
-
-            onTextareaInput(event) {
-                this.rawXmlSource = event.target.value;
-                if (this.contextBus) {
-                    this.contextBus.postMessage({
-                        event: 'xml-source-mutated',
-                        rawXmlText: this.rawXmlSource
-                    });
                 }
             },
 
@@ -396,17 +497,27 @@
                     }, { headers });
 
                     const xml = response.data?.xmlText || '';
-                    vm.setEditorContent(xml);
+                    if (xml && xml.trim().startsWith('<')) {
+                        vm.setEditorContent(xml.trim());
+                    } else {
+                        if (vm.currentArtifactUri && vm.currentArtifactUri.endsWith('.xml')) {
+                            vm.fetchRemoteScreenBuffer(vm.currentArtifactUri);
+                        }
+                    }
                 } catch (err) {
                     console.error("Error compiling tree to XML:", err);
+                    if (vm.currentArtifactUri && vm.currentArtifactUri.endsWith('.xml')) {
+                        vm.fetchRemoteScreenBuffer(vm.currentArtifactUri);
+                    }
                 }
             },
 
             executeBufferSave() {
+                const content = this.cmInstance ? this.cmInstance.getValue() : this.rawXmlSource;
                 this.$emit('trigger-save', {
                     artifactUri: this.currentArtifactUri,
-                    xmlContent: this.rawXmlSource,
-                    layoutTree: this.isMarkdownArtifact ? this.rawXmlSource : (this.localBlueprintTree || this.layoutTree)
+                    xmlContent: content,
+                    layoutTree: this.isMarkdownArtifact ? content : (this.localBlueprintTree || this.layoutTree)
                 });
             },
 
@@ -440,10 +551,7 @@
                     transitionName: svc.transitionName
                 };
 
-                if (this.contextBus) {
-                    this.contextBus.postMessage(payload);
-                }
-
+                if (this.contextBus) this.contextBus.postMessage(payload);
                 window.dispatchEvent(new CustomEvent('open-service-artifact', { detail: payload }));
             },
 

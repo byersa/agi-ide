@@ -34,7 +34,6 @@
         },
         data() {
             return {
-                // null = Multi-pane Split mode; string edId = Solo/Primary mode
                 primaryEditorId: null
             };
         },
@@ -49,7 +48,6 @@
             activeEditors: {
                 immediate: true,
                 handler(newVal) {
-                    // If the current primary editor was closed/unselected, fall back to split mode
                     if (this.primaryEditorId && !newVal.includes(this.primaryEditorId)) {
                         this.primaryEditorId = null;
                     }
@@ -78,17 +76,17 @@
             }
         },
         template: `
-            <div class="fit column no-wrap overflow-hidden relative-position bg-dark" style="height: 100%; min-height: 0; width: 100%;">
+            <div class="column no-wrap overflow-hidden relative-position bg-dark" style="height: 100%; min-height: 100%; width: 100%; flex: 1 1 100%; display: flex; flex-direction: column;">
                 
                 <!-- State A: No Editors Selected -->
-                <div v-if="activeEditors.length === 0" class="fit column flex-center text-slate-500 text-caption font-mono">
+                <div v-if="activeEditors.length === 0" class="col column flex-center text-slate-500 text-caption font-mono" style="flex: 1 1 100%; height: 100%;">
                     <q-icon name="visibility_off" size="32px" class="q-mb-xs" />
                     <div>All editors are hidden.</div>
                     <div class="text-slate-600">Select one or more from the "Editors" menu above.</div>
                 </div>
 
                 <!-- State B: Active Editors Viewport -->
-                <div v-else class="fit column no-wrap overflow-hidden" style="height: 100%; min-height: 0;">
+                <div v-else class="col column no-wrap overflow-hidden" style="height: 100%; min-height: 0; flex: 1 1 100%; display: flex; flex-direction: column;">
                     
                     <!-- Top Focus / Primary Selector Strip -->
                     <div class="row items-center justify-between q-px-sm bg-black" style="height: 28px; min-height: 28px; flex: 0 0 28px; border-bottom: 1px solid #1e293b;">
@@ -138,8 +136,8 @@
                         </div>
                     </div>
 
-                    <!-- Editor Panels Container (Persistent via v-show) -->
-                    <div class="fit row no-wrap overflow-hidden" style="flex: 1 1 0%; min-height: 0;">
+                    <!-- Editor Panels Container -->
+                    <div class="col row no-wrap overflow-hidden" style="flex: 1 1 100%; min-height: 0; height: calc(100% - 28px); display: flex;">
                         <div 
                             v-for="(edId, idx) in activeEditors" 
                             :key="edId"
@@ -149,6 +147,8 @@
                                 flex: primaryEditorId === edId ? '1 1 100%' : '1 1 0%',
                                 minWidth: '0',
                                 height: '100%',
+                                display: 'flex',
+                                flexDirection: 'column',
                                 width: primaryEditorId === edId ? '100%' : 'auto',
                                 borderRight: (!primaryEditorId && idx < activeEditors.length - 1) ? '1px solid #1e293b' : 'none'
                             }"
@@ -162,7 +162,6 @@
                                     </span>
                                 </div>
                                 <div class="row items-center q-gutter-x-xs">
-                                    <!-- Maximize / Restore Toggle -->
                                     <q-btn 
                                         flat 
                                         round 
@@ -174,17 +173,24 @@
                                     >
                                         <q-tooltip>{{ primaryEditorId === edId ? 'Restore to Split' : 'Maximize (Solo)' }}</q-tooltip>
                                     </q-btn>
-                                    <!-- Close Editor -->
                                     <q-btn flat round dense icon="close" size="xs" color="slate-500" @click="closeEditor(edId)" />
                                 </div>
                             </div>
 
                             <!-- Editor Mounting Viewport -->
-                            <div class="col overflow-hidden relative-position" style="flex: 1 1 0%; min-height: 0;">
+                            <div class="col full-width overflow-hidden relative-position" style="flex: 1 1 100%; min-height: 0; height: calc(100% - 24px); display: flex; flex-direction: column;">
+                                <!-- Markdown / Directives Editor -->
+                                <component 
+                                    :is="editorConstructors.AgiMarkdownEditor || 'AgiMarkdownEditor'" 
+                                    v-if="edId === 'AgiMarkdownEditor'"
+                                    :screen-path="localScreenPath" 
+                                    :layout-tree="layoutTree" 
+                                    @trigger-save="handleSave" 
+                                />
                                 <!-- Canvas Editor -->
                                 <component 
                                     :is="editorConstructors.AgiCanvasEditor" 
-                                    v-if="edId === 'AgiCanvasEditor' && editorConstructors.AgiCanvasEditor"
+                                    v-else-if="edId === 'AgiCanvasEditor' && editorConstructors.AgiCanvasEditor"
                                     :screen-path="localScreenPath" 
                                     :layout-tree="layoutTree" 
                                     @trigger-save="handleSave" 
@@ -239,5 +245,4 @@
         }
     };
     registerComp();
-
 })();

@@ -758,12 +758,11 @@
                 const activeStance = this.selectedStage ? this.currentActionType : (this.rootStance || 'discuss');
                 const currentStepId = this.selectedStage?.pipelineStepId || this.selectedStage?.stageId || null;
 
-                // 🎯 KEY FIX: If selectedStage exists and is in draft state, fulfill IT directly.
-                // Only pass parentStepId if we are intentionally branching from a finished stage.
-                const isFulfillingDraft = !!(this.selectedStage && (this.selectedStage.statusId === 'PlsDraft' || !this.selectedStage.egressPayloadId));
+                // Fulfill the currently selected step in-place rather than spawning a child step
+                const isFulfillingExisting = !!(this.selectedStage && currentStepId);
 
-                const targetStepId = isFulfillingDraft ? currentStepId : null;
-                const parentId = isFulfillingDraft ? (this.selectedStage?.parentStepId || null) : currentStepId;
+                const targetStepId = isFulfillingExisting ? currentStepId : null;
+                const parentId = isFulfillingExisting ? (this.selectedStage?.parentStepId || null) : null;
 
                 let effectiveIngressId = this.selectedStage?.ingressPayloadId || null;
                 let payloadOverrideJson = null;

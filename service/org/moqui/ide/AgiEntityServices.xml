@@ -317,4 +317,101 @@
         </actions>
     </service>
 
+    <service verb="scaffold" noun="MissingEntities" type="inline">
+        <description>
+            Infers entity structure from screen queries/forms and stubs missing 
+            entities into component entity XML adhering to Mantle UDM conventions and HIPAA rules.
+        </description>
+        <in-parameters>
+            <parameter name="targetComponent" required="true"/>
+            <parameter name="screenXml" required="true" allow-html="any"/>
+            <parameter name="missingEntities" type="List" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="entityXmlLocation"/>
+            <parameter name="generatedEntities" type="List"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import org.moqui.resource.ResourceReference
+                import groovy.xml.XmlUtil
+                import groovy.xml.XmlParser
+    
+                String comp = targetComponent
+                String entityFileLocation = "component://${comp}/entity/${comp.capitalize()}Entities.xml"
+                ResourceReference entityRef = ec.resource.getLocationReference(entityFileLocation)
+    
+                // Prepare or load existing entities XML
+                groovy.util.Node rootEntities
+                if (entityRef != null && entityRef.exists) {
+                    rootEntities = new XmlParser(false, false).parseText(entityRef.getText())
+                } else {
+                    rootEntities = new groovy.util.Node(null, 'entities', [
+                        'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+                        'xsi:noNamespaceSchemaLocation': 'http://moqui.org/xsd/entity-definition-3.xsd'
+                    ])
+                }
+    
+                List generated = []
+    
+                missingEntities.each { String fullEntityName ->
+                    // Check if already defined in the file
+                    String simpleName = fullEntityName.contains('.') ? fullEntityName.substring(fullEntityName.lastIndexOf('.') + 1) : fullEntityName
+                    String pkgName = fullEntityName.contains('.') ? fullEntityName.substring(0, fullEntityName.lastIndexOf('.')) : comp
+    
+                    boolean existsInDoc = rootEntities.children().any { ch -> ch.name() == 'entity' && ch.attribute('entity-name') == simpleName }
+                    if (existsInDoc) return
+    
+                    boolean isSensitive = simpleName.toLowerCase().contains("medical") || 
+                                          simpleName.toLowerCase().contains("patient") || 
+                                          simpleName.toLowerCase().contains("clinical") ||
+                                          simpleName.toLowerCase().contains("safety")
+    
+                    Map entityAttrs = [
+                        'entity-name': simpleName,
+                        'package': pkgName
+                    ]
+                    if (isSensitive) {
+                        entityAttrs['enable-audit-log'] = 'true'
+                    }
+    
+                    groovy.util.Node newEntity = rootEntities.appendNode('entity', entityAttrs)
+    
+                    // Standard Primary Key
+                    String pkField = simpleName.uncapitalize() + "Id"
+                    newEntity.appendNode('field', ['name': pkField, 'type': 'id', 'is-pk': 'true'])
+    
+                    // Standard Scope/Foreign Keys
+                    newEntity.appendNode('field', ['name': 'facilityId', 'type': 'id'])
+                    newEntity.appendNode('field', ['name': 'statusId', 'type': 'id'])
+    
+                    // Domain-specific heuristic fields based on name
+                    if (simpleName.contains("Log")) {
+                        newEntity.appendNode('field', ['name': 'logDate', 'type': 'date-time'])
+                        newEntity.appendNode('field', ['name': 'description', 'type': 'text-medium'])
+                    } else if (simpleName.contains("Profile")) {
+                        newEntity.appendNode('field', ['name': 'partyId', 'type': 'id'])
+                        newEntity.appendNode('field', ['name': 'medicalSummary', 'type': 'text-medium', 'encrypt': 'true'])
+                    }
+    
+                    generated.add(fullEntityName)
+                }
+    
+                // Write back updated entity XML
+                if (generated) {
+                    String serializedXml = XmlUtil.serialize(rootEntities)
+                    File physFile = new File("runtime/component/${comp}/entity/${comp.capitalize()}Entities.xml")
+                    physFile.getParentFile().mkdirs()
+                    physFile.text = serializedXml
+    
+                    // Reload entity definitions into Moqui runtime
+                    ec.entity.entityFacade.loadEntityDefinitions(entityRef.getLocation())
+                    ec.logger.info("🌱 [scaffold#MissingEntities] Staged and registered entities: ${generated}")
+                }
+    
+                context.entityXmlLocation = entityFileLocation
+                context.generatedEntities = generated
+            ]]></script>
+        </actions>
+    </service>
 </services>

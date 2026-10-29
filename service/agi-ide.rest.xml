@@ -287,4 +287,9 @@
         </method>
     </resource>
 
+    <resource name="validateScreenXml">
+        <method type="post">
+            <service name="org.moqui.ide.AgiIdeServices.validate#ScreenXml"/>
+        </method>
+    </resource>
 </resource>
