@@ -34,13 +34,13 @@
                 }
 
                 // 2. Build Directory Skeleton (screen directory directly under component)
-                File entityDir = new File(baseDir, "entity")
+                // Note: Do NOT create an empty entity/ folder upfront, as EntityFacade scans empty entity
+                // folders and triggers NullPointerException in loadEntityDefinition when entityRoot is null.
                 File serviceDir = new File(baseDir, "service/" + compName.replace('-', '/'))
                 File screenDir = new File(baseDir, "screen")
                 File dataDir = new File(baseDir, "data")
                 File mcpDir = new File(baseDir, "mcp/instructions")
 
-                entityDir.mkdirs()
                 serviceDir.mkdirs()
                 screenDir.mkdirs()
                 dataDir.mkdirs()
@@ -66,7 +66,6 @@
 </component>
 """
                 } else {
-                    // Barebones
                     componentXmlContent = """<?xml version="1.0" encoding="UTF-8"?>
 <component xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
            xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/component-3.0.xsd"
@@ -208,7 +207,6 @@
                 // -------------------------------------------------------------
                 // 3. DISSOLVE ALL SELF-REFERENTIAL AND CROSS-ENTITY CONSTRAINTS
                 // -------------------------------------------------------------
-                // A. Nullify self-referential parent links on Payloads
                 allTargetPayloads.each { p ->
                     if (p.parentPayloadId) {
                         p.parentPayloadId = null
@@ -216,7 +214,6 @@
                     }
                 }
 
-                // B. Nullify references on Pipeline Steps
                 if (discIds) {
                     def steps = ec.entity.find("org.moqui.ai.pipeline.AgiPipelineStep")
                         .condition("discussionId", "in", discIds)
@@ -231,7 +228,6 @@
                     }
                 }
 
-                // C. Nullify references on Messages
                 if (discIds) {
                     def msgs = ec.entity.find("org.moqui.ai.discussion.AgiMessage")
                         .condition("discussionId", "in", discIds)
@@ -275,6 +271,13 @@
                     ec.entity.find("org.moqui.ai.discussion.AgiDiscussionRelationship")
                         .condition("childDiscussionId", "in", discIds)
                         .deleteAll()
+
+                    // Purge native moqui.llm tracking rows tied to these discussions
+                    try {
+                        ec.entity.find("moqui.llm.LlmCallLog").condition("conversationId", "in", discIds).deleteAll()
+                        ec.entity.find("moqui.llm.LlmMessage").condition("conversationId", "in", discIds).deleteAll()
+                        ec.entity.find("moqui.llm.LlmConversation").condition("conversationId", "in", discIds).deleteAll()
+                    } catch (Exception ignore) {}
                 }
 
                 // -------------------------------------------------------------
@@ -308,7 +311,6 @@
                 try {
                     String compPattern = ("%" + comp + "%").toString()
 
-                    // Find all matching artifacts for this component
                     def allArtifacts = ec.entity.find("org.moqui.ai.AgiArtifact")
                         .condition("artifactPath", org.moqui.entity.EntityCondition.ComparisonOperator.LIKE, compPattern)
                         .list()
@@ -316,15 +318,12 @@
                     List artIds = allArtifacts*.agiArtifactId?.findAll { it != null } ?: []
 
                     if (artIds) {
-                        // A. Purge join entity AgiArtifactWorkEffort FIRST
                         try {
                             ec.entity.find("org.moqui.ai.AgiArtifactWorkEffort")
                                 .condition("agiArtifactId", "in", artIds)
                                 .deleteAll()
                         } catch (Exception ignore) {}
 
-                        // B. Clear/Nullify direct foreign keys on WorkEffort pointing to these artifacts
-                        // (Breaks the foreign key constraint 'workeffortagiartifact')
                         def linkedWorkEfforts = ec.entity.find("mantle.work.effort.WorkEffort")
                             .condition("agiArtifactId", "in", artIds)
                             .list()
@@ -333,7 +332,6 @@
                             we.update()
                         }
 
-                        // C. Delete WorkEfforts associated by sourceReferenceId or component path
                         allArtifacts.each { art ->
                             if (art.artifactPath) {
                                 ec.entity.find("mantle.work.effort.WorkEffort")
@@ -342,18 +340,15 @@
                             }
                         }
 
-                        // D. Delete the unlinked WorkEfforts that previously held agiArtifactId
                         linkedWorkEfforts.each { we ->
                             try { we.delete() } catch (Exception ignore) {}
                         }
 
-                        // E. Delete AgiArtifact records now that all inbound foreign keys are cleared
                         ec.entity.find("org.moqui.ai.AgiArtifact")
                             .condition("agiArtifactId", "in", artIds)
                             .deleteAll()
                     }
 
-                    // F. Clean up any remaining WorkEfforts matching the component pattern
                     ec.entity.find("mantle.work.effort.WorkEffort")
                         .condition("sourceReferenceId", org.moqui.entity.EntityCondition.ComparisonOperator.LIKE, compPattern)
                         .deleteAll()
@@ -363,7 +358,7 @@
                 }
 
                 // -------------------------------------------------------------
-                // 7. PURGE WORKSPACE BUFFERS (Using explicit java.lang.String)
+                // 7. PURGE WORKSPACE BUFFERS
                 // -------------------------------------------------------------
                 try {
                     String bufPattern = ("%" + comp + "%").toString()
@@ -385,11 +380,16 @@
                 }
 
                 // -------------------------------------------------------------
-                // 9. CLEAR CACHES
+                // 9. CLEAR CACHES (Resource, Screen, and Entity)
                 // -------------------------------------------------------------
                 try {
                     ec.resource.clearAllCaches()
                     ec.screen.clearScreenCache(true)
+                    // Clear Entity Node and Definition caches so EntityFacade unloads the component
+                    if (ec.entity != null) {
+                        try { ec.entity.clearNodeCache() } catch (Exception ignore) {}
+                        try { ec.entity.clearCacheFinds() } catch (Exception ignore) {}
+                    }
                 } catch (Exception ignore) {}
 
                 context.success = fileSuccess

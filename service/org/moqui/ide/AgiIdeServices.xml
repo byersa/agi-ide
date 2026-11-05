@@ -323,6 +323,11 @@
                                    effectiveUri.endsWith('.txt') || effectiveUri.endsWith('.csv') ||
                                    effectiveUri.endsWith('.groovy')
 
+                // Canonicalize screen URIs missing .xml extension
+                if (!isNonXml && effectiveUri.contains("/screen/") && !effectiveUri.endsWith(".xml")) {
+                    effectiveUri = effectiveUri + ".xml"
+                }
+
                 ec.logger.warn("🔍 [get#WorkspaceBuffer] REQUEST: rawUri=[${rawUri}], effectiveUri=[${effectiveUri}], isNonXml=[${isNonXml}], user=[${activeUserId}], forceReload=[${forceReloadFromDisk}]")
                 
                 ResourceReference rr = ec.resource.getLocationReference(effectiveUri)
