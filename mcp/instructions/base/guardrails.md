@@ -13,3 +13,11 @@
 ## 3. Tool Discovery & Verification
 - Verify Entities Before Generating Code: If uncertain of an entity field name or relationship, call `find#Entities` before finalizing screen or service XML.
 - Relative Paths: Use canonical `component://[component]/...` URIs for all file targets.
+
+### Dynamic Text & Widget Bindings
+- **DO NOT** embed Groovy/EL expressions like `${activeFacility?.facilityName}` directly inside `<label text="..."/>` attributes. In the Vue 3 / Quasar client renderer, `<label text="..."/>` is rendered as literal text.
+- For dynamic text in navigation headers or screens:
+  - Prepare the resolved string in the `<actions>` block first:
+    `<set field="facilityDisplay" from="'Facility: ' + (activeFacility?.facilityName ?: 'Default')"/>`
+  - Or use `<display text="..."/>` within form or field contexts.
+  - Or use plain literal text in `<label text="..."/>` and delegate dynamic entity data to child subscreens, forms, or display widgets.

@@ -783,15 +783,21 @@
                 }
 
                 try {
+                    // Strip HTML/XML tags and collapse whitespace so stepLabel stays clean plain text
+                    const sanitizedLabel = (this.inputDirective || '')
+                        .replace(/<[^>]+>/g, ' ')
+                        .replace(/\s+/g, ' ')
+                        .trim();
+
                     const dispatchPayload = {
                         discussionId: this.discussionId,
-                        pipelineStepId: targetStepId, // 🎯 Passes #100567 when in draft!
-                        parentStepId: parentId,       // Preserves parent step linkage
+                        pipelineStepId: targetStepId,
+                        parentStepId: parentId,
                         stanceEnumId: activeStance,
                         directivePrompt: this.inputDirective,
                         ingressPayloadId: effectiveIngressId,
                         targetArtifactUri: this.inputTargetArtifact,
-                        stepLabel: this.inputDirective.substring(0, 50)
+                        stepLabel: (sanitizedLabel || 'Directive').substring(0, 50)
                     };
 
                     if (payloadOverrideJson) {

@@ -462,104 +462,119 @@
                         class="column no-wrap overflow-hidden relative-position bg-slate-900" 
                         :style="rightPaneStyle"
                     >
-                        <!-- Right Pane Header: Reciprocal Sizing Presets & Editor Checkboxes -->
+                            <!-- Right Pane Header: Clean 2-Row Stack (Total 56px) -->
                         <div 
-                            class="row items-center justify-between q-px-sm bg-slate-950 text-white" 
-                            style="height: 32px; min-height: 32px; flex: 0 0 32px; border-bottom: 1px solid #334155;"
+                            class="column no-wrap bg-slate-950 text-white" 
+                            style="flex: 0 0 56px; height: 56px; min-height: 56px; max-height: 56px; border-bottom: 1px solid #334155; z-index: 10;"
                         >
-                            <!-- Left: Reciprocal Splitter Buttons -->
-                            <div class="row items-center q-gutter-x-none rounded-borders bg-slate-900" style="border: 1px solid #475569; overflow: hidden;">
-                                <button 
-                                    v-for="preset in [100, 65, 50, 35, 0]" 
-                                    :key="preset"
-                                    type="button"
-                                    class="q-btn q-btn-item non-selectable no-outline q-btn--flat q-btn--rectangle q-btn--dense"
-                                    :style="{
-                                        padding: '2px 8px',
-                                        fontSize: '11px',
-                                        fontFamily: 'monospace',
-                                        fontWeight: editorWidthPercent === preset ? '800' : '500',
-                                        backgroundColor: editorWidthPercent === preset ? '#f59e0b' : '#0f172a',
-                                        color: editorWidthPercent === preset ? '#000000 !important' : '#cbd5e1 !important',
-                                        borderRight: '1px solid #334155',
-                                        borderTop: 'none',
-                                        borderBottom: 'none',
-                                        borderLeft: 'none',
-                                        cursor: 'pointer',
-                                        lineHeight: '18px'
-                                    }"
-                                    @click="setEditorWidth(preset)"
-                                >
-                                    <span class="q-btn__content text-center col items-center q-anchor--skip justify-center row" :style="{ color: editorWidthPercent === preset ? '#000000 !important' : '#cbd5e1 !important' }">
-                                        {{ preset }}%
-                                    </span>
-                                    <q-tooltip>Set Right Pane width to {{ preset }}% (Left to {{ 100 - preset }}%)</q-tooltip>
-                                </button>
-                            </div>
 
-                            <!-- Center: Current Artifact Path -->
+                            <!-- Row 1: Reciprocal Splitter Buttons (Left) & Editors Menu (Right) (28px) -->
                             <div 
-                                class="row items-center no-wrap ellipsis q-px-sm rounded-borders font-mono text-caption" 
-                                style="max-width: 50%; height: 22px; background-color: #020617; border: 1px solid #334155;"
+                                class="row items-center justify-between no-wrap q-px-sm bg-slate-950" 
+                                style="flex: 0 0 28px; height: 28px; min-height: 28px;"
                             >
-                                <q-icon 
-                                    :name="localScreenPath ? 'description' : 'layers'" 
-                                    size="13px" 
-                                    :class="localScreenPath ? 'text-amber-4' : 'text-cyan-4'" 
-                                    class="q-mr-xs" 
-                                />
-                                <span 
-                                    class="ellipsis text-weight-bold" 
-                                    :style="{ color: localScreenPath ? '#f8fafc' : '#94a3b8' }"
+                                <!-- Left: Reciprocal Splitter Buttons (Strictly No-Wrap) -->
+                                <div 
+                                    class="row items-center no-wrap q-gutter-x-none rounded-borders bg-slate-900 shrink-0" 
+                                    style="border: 1px solid #475569; overflow: hidden; flex-shrink: 0;"
                                 >
-                                    {{ localScreenPath || (targetComponentName ? 'component://' + targetComponentName + ' (Component Scope)' : 'No Artifact Focused') }}
-                                </span>
-                            </div>
-
-                            <!-- Right: Multi-Editor Selection Dropdown Menu -->
-                            <q-btn-dropdown 
-                                flat dense no-caps size="xs" 
-                                menu-content-class="bg-slate-900 text-slate-100 shadow-8"
-                                class="q-px-sm rounded-borders bg-slate-900 text-cyan-3"
-                                style="border: 1px solid #475569; font-size: 11px;"
-                                icon="tune" 
-                                :label="'Editors (' + activeEditorCount + ')'"
-                            >
-                                <q-list dense dark class="bg-slate-900 font-mono text-caption q-pa-xs" style="min-width: 220px; border: 1px solid #475569;">
-                                    <div class="text-overline text-slate-400 q-px-sm q-pt-xs" style="font-size: 9px; letter-spacing: 0.5px;">ACTIVE EDITORS</div>
-                                    <q-separator dark class="bg-slate-700 q-my-xs" />
-                                    <q-item 
-                                        v-for="ed in availableEditors" 
-                                        :key="ed.id"
-                                        tag="label" 
-                                        dense 
-                                        clickable
-                                        class="rounded-borders q-my-none text-slate-200 hover:bg-slate-800"
+                                    <button 
+                                        v-for="preset in [100, 65, 50, 35, 0]" 
+                                        :key="preset"
+                                        type="button"
+                                        class="q-btn q-btn-item non-selectable no-outline q-btn--flat q-btn--rectangle q-btn--dense"
+                                        :style="{
+                                            padding: '1px 7px',
+                                            fontSize: '11px',
+                                            fontFamily: 'monospace',
+                                            fontWeight: editorWidthPercent === preset ? '800' : '500',
+                                            backgroundColor: editorWidthPercent === preset ? '#f59e0b' : '#0f172a',
+                                            color: editorWidthPercent === preset ? '#000000 !important' : '#cbd5e1 !important',
+                                            borderRight: '1px solid #334155',
+                                            borderTop: 'none',
+                                            borderBottom: 'none',
+                                            borderLeft: 'none',
+                                            cursor: 'pointer',
+                                            lineHeight: '16px',
+                                            flexShrink: 0
+                                        }"
+                                        @click="setEditorWidth(preset)"
                                     >
-                                        <q-item-section side>
-                                            <q-checkbox 
-                                                v-model="activeEditors" 
-                                                :val="ed.id" 
-                                                size="xs" 
-                                                color="cyan-4" 
-                                                dark 
-                                            />
-                                        </q-item-section>
-                                        <q-item-section avatar style="min-width: 20px;">
-                                            <q-icon :name="ed.icon" size="14px" :color="ed.color" />
-                                        </q-item-section>
-                                        <q-item-section>
-                                            <span :class="activeEditors.includes(ed.id) ? 'text-white text-weight-bolder' : 'text-slate-300'">
-                                                {{ ed.label }}
-                                            </span>
-                                        </q-item-section>
-                                    </q-item>
-                                </q-list>
-                            </q-btn-dropdown>
+                                        <span class="q-btn__content text-center col items-center q-anchor--skip justify-center row no-wrap" :style="{ color: editorWidthPercent === preset ? '#000000 !important' : '#cbd5e1 !important' }">
+                                            {{ preset }}%
+                                        </span>
+                                        <q-tooltip>Set Right Pane width to {{ preset }}% (Left to {{ 100 - preset }}%)</q-tooltip>
+                                    </button>
+                                </div>
+
+                                <!-- Right: Multi-Editor Selection Dropdown Menu -->
+                                <q-btn-dropdown 
+                                    flat dense no-caps size="xs" 
+                                    menu-content-class="bg-slate-900 text-slate-100 shadow-8"
+                                    class="q-px-sm rounded-borders bg-slate-900 text-cyan-3 shrink-0"
+                                    style="border: 1px solid #475569; font-size: 11px; flex-shrink: 0; white-space: nowrap; height: 20px;"
+                                    icon="tune" 
+                                    :label="'Editors (' + activeEditorCount + ')'"
+                                >
+                                    <q-list dense dark class="bg-slate-900 font-mono text-caption q-pa-xs" style="min-width: 220px; border: 1px solid #475569;">
+                                        <div class="text-overline text-slate-400 q-px-sm q-pt-xs" style="font-size: 9px; letter-spacing: 0.5px;">ACTIVE EDITORS</div>
+                                        <q-separator dark class="bg-slate-700 q-my-xs" />
+                                        <q-item 
+                                            v-for="ed in availableEditors" 
+                                            :key="ed.id"
+                                            tag="label" 
+                                            dense 
+                                            clickable
+                                            class="rounded-borders q-my-none text-slate-200 hover:bg-slate-800"
+                                        >
+                                            <q-item-section side>
+                                                <q-checkbox 
+                                                    v-model="activeEditors" 
+                                                    :val="ed.id" 
+                                                    size="xs" 
+                                                    color="cyan-4" 
+                                                    dark 
+                                                />
+                                            </q-item-section>
+                                            <q-item-section avatar style="min-width: 20px;">
+                                                <q-icon :name="ed.icon" size="14px" :color="ed.color" />
+                                            </q-item-section>
+                                            <q-item-section>
+                                                <span :class="activeEditors.includes(ed.id) ? 'text-white text-weight-bolder' : 'text-slate-300'">
+                                                    {{ ed.label }}
+                                                </span>
+                                            </q-item-section>
+                                        </q-item>
+                                    </q-list>
+                                </q-btn-dropdown>
+                            </div>
+                            <!-- Row 2: Dedicated Artifact Path Header (28px) -->
+                            <div 
+                                class="row items-center no-wrap q-px-sm bg-slate-950" 
+                                style="flex: 0 0 28px; height: 28px; min-height: 28px; border-bottom: 1px solid #1e293b;"
+                            >
+                                <div 
+                                    class="col row items-center no-wrap ellipsis q-px-xs rounded-borders font-mono text-caption" 
+                                    style="height: 20px; background-color: #020617; border: 1px solid #334155;"
+                                >
+                                    <q-icon 
+                                        :name="localScreenPath ? 'description' : 'layers'" 
+                                        size="13px" 
+                                        :class="localScreenPath ? 'text-amber-4' : 'text-cyan-4'" 
+                                        class="q-mr-xs shrink-0" 
+                                    />
+                                    <span 
+                                        class="ellipsis text-weight-bold" 
+                                        :style="{ color: localScreenPath ? '#f8fafc' : '#94a3b8' }"
+                                    >
+                                        {{ localScreenPath || (targetComponentName ? 'component://' + targetComponentName + ' (Component Scope)' : 'No Artifact Focused') }}
+                                    </span>
+                                </div>
+                            </div>
                         </div>
 
-                        <!-- Right Pane Body: Mounted AgiEditors Component -->
-                        <div class="col full-width overflow-hidden relative-position" style="flex: 1 1 0%; min-height: 0; height: calc(100% - 32px);">
+                        <!-- Right Pane Body: Mounted AgiEditors Component (Height 100% - 56px) -->
+                        <div class="col full-width overflow-hidden relative-position" style="flex: 1 1 0%; min-height: 0; height: calc(100% - 56px);">
                             <component 
                                 :is="editorConstructors.AgiEditors"
                                 v-if="editorConstructors.AgiEditors"
