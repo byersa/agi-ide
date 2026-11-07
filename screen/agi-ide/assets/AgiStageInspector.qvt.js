@@ -1118,6 +1118,51 @@
                     }
                 });
             },
+            validateDirectivesPin(content) {
+                if (!content) return { valid: false, message: 'Content is empty.' };
+                // Reject if the content is primarily raw screen XML or massive JSON AST
+                const trimmed = content.trim();
+                if (trimmed.startsWith('<?xml') || trimmed.startsWith('<screen') || trimmed.includes('<subscreens')) {
+                    return {
+                        valid: false,
+                        message: 'Screen XML cannot be pinned to component.md. Directives are reserved for architectural rules and domain guidelines.'
+                    };
+                }
+                return { valid: true };
+            },
+            handlePinToDirectives(payload) {
+                const content = payload?.content || payload?.text || this.rawStageBody || '';
+                const validation = this.validateDirectivesPin(content);
+
+                if (!validation.valid) {
+                    this.$q?.notify({
+                        type: 'negative',
+                        icon: 'report_problem',
+                        message: 'Pin to Directives Blocked',
+                        caption: validation.message,
+                        timeout: 6000
+                    });
+                    return;
+                }
+
+                // If valid, delegate upward to AgiWorkspace / Studio context bus
+                if (this.contextBus) {
+                    this.contextBus.postMessage({
+                        event: 'pin-turn-to-directives',
+                        discussionId: this.discussionId,
+                        messageId: payload?.messageId || this.stepId,
+                        title: payload?.title || `Rule from Step #${this.stepId}`,
+                        content: content
+                    });
+                }
+
+                this.$q?.notify({
+                    type: 'positive',
+                    icon: 'push_pin',
+                    message: 'Directive pinned to component.md',
+                    timeout: 2500
+                });
+            },
         },
         template: `
             <div class="agi-stage-inspector fit column no-wrap font-mono text-white overflow-hidden" style="background-color: #020617; height: 100%; min-height: 0; width: 100%;">
@@ -1147,6 +1192,7 @@
                     @open-artifact="triggerOpenArtifact"
                     @update-target-artifact="handleUpdateTargetArtifact"
                     @promote-step="handlePromoteToDiscussion"
+                    @pin-to-directives="handlePinToDirectives"
                 />
 
                 <!-- 2. SINGLE FULL-WIDTH INSPECTOR VIEWPORT -->
@@ -1365,6 +1411,7 @@
                                         <agi-discussion-viewer 
                                             :payload="resolvedEgressPayload" 
                                             @advance-to-plan="handleAdvanceFromDiscussion"
+                                            @pin-to-directives="handlePinToDirectives"
                                         />
                                     </template>
 

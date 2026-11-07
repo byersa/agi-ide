@@ -21,3 +21,6 @@
     `<set field="facilityDisplay" from="'Facility: ' + (activeFacility?.facilityName ?: 'Default')"/>`
   - Or use `<display text="..."/>` within form or field contexts.
   - Or use plain literal text in `<label text="..."/>` and delegate dynamic entity data to child subscreens, forms, or display widgets.
+  ### Subscreen Definition Invariants
+- Inside `<subscreens>`, child declarations MUST use `<subscreens-item>` (NOT `<subscreen>`).
+- The default selection attribute is `default-item="..."` (NOT `default-subscreen="..."`).
