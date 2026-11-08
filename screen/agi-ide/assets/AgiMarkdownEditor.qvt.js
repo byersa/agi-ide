@@ -1,253 +1,345 @@
 (function () {
     const AgiMarkdownEditor = {
         name: 'AgiMarkdownEditor',
-        template: `
-            <div class="fit column no-wrap q-pa-xs font-mono text-white bg-slate-950 relative-position" style="height: 100%; min-height: 0; width: 100%;">
-                
-                <!-- Header Toolbar (Fixed 32px) -->
-                <div class="row items-center justify-between q-px-sm q-py-xs bg-slate-900 rounded-borders q-mb-xs" style="border: 1px solid #334155; height: 32px; min-height: 32px; flex: 0 0 32px;">
-                    <div class="row items-center q-gutter-x-sm">
-                        <q-icon name="menu_book" color="cyan-3" size="14px" />
-                        <span class="text-caption text-weight-bold text-cyan-2" style="font-size: 11px;">COMPONENT INSTRUCTIONS &amp; DIRECTIVES</span>
-                        <span class="text-caption text-slate-400" style="font-size: 10px;">[{{ artifactLabel }}]</span>
-                        <q-badge v-if="isDirty" color="amber-10" text-color="black" style="font-size: 9px;" class="text-weight-bold">UNSAVED</q-badge>
-                    </div>
-                    <div class="row items-center q-gutter-x-xs">
-                        <q-btn flat dense no-caps icon="refresh" size="xs" color="slate-400" @click="fetchContent" label="Reload">
-                            <q-tooltip>Reload from disk</q-tooltip>
-                        </q-btn>
-                        <q-btn flat dense no-caps icon="delete_sweep" size="xs" color="rose-4" @click="confirmClearContent" label="Clear">
-                            <q-tooltip>Wipe component.md and clear working database buffer</q-tooltip>
-                        </q-btn>
-                        <q-btn icon="save" label="Save (Ctrl+S)" color="primary" dense size="xs" class="q-px-xs text-weight-bold font-mono" @click="saveContent" />
-                    </div>
-                </div>
-
-                <!-- Textarea Editor Body (Direct Absolute Inset) -->
-                <div class="col full-width relative-position rounded-borders overflow-hidden" style="border: 1px solid #334155; flex: 1 1 0%; min-height: 0; height: calc(100% - 36px);">
-                    <textarea
-                        ref="editorTextarea"
-                        class="font-mono text-caption bg-slate-950 text-slate-100 no-outline q-pa-sm"
-                        style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; width: 100%; height: 100%; white-space: pre-wrap; word-break: break-word; resize: none; border: none; outline: none; line-height: 1.5; font-size: 12px; box-sizing: border-box; overflow-y: auto;"
-                        v-model="editorText"
-                        @input="onInput"
-                        @keydown="handleKeyDown"
-                        placeholder="Loading markdown directives..."
-                        spellcheck="false"
-                    ></textarea>
-                </div>
-            </div>
-        `,
         props: {
-            screenPath: { type: String, default: '' },
-            layoutTree: { type: [Object, Array, String], default: () => '' }
+            artifactUri: { type: String, default: '' },
+            localScreenPath: { type: String, default: '' },
+            targetComponentName: { type: String, default: 'nursinghome' },
+            layoutTree: { type: [String, Object], default: '' },
+            readOnly: { type: Boolean, default: false }
         },
+        emits: ['trigger-save', 'content-changed', 'open-artifact'],
         data() {
             return {
-                editorText: '',
+                content: '',
+                cmEditor: null,
                 isDirty: false,
-                currentUri: this.screenPath || '',
-                contextBus: null
+                previewMode: false,
+                copyingOverride: false,
+                contextBus: null,
+                ignoredFrameworkComponents: ['agi-ide', 'agi-ai', 'moqui-usl', 'mantle-usl', 'webroot', 'tools']
             };
         },
         computed: {
-            artifactLabel() {
-                if (!this.currentUri) return '';
-                const parts = this.currentUri.split('/');
-                return parts[parts.length - 1];
+            effectiveUri() {
+                return this.artifactUri || this.localScreenPath || '';
+            },
+            fileName() {
+                if (!this.effectiveUri) return 'untitled.md';
+                return this.effectiveUri.split('/').pop();
+            },
+            isFrameworkFile() {
+                const uri = this.effectiveUri;
+                if (!uri) return false;
+                return this.ignoredFrameworkComponents.some(comp =>
+                    uri.startsWith(`component://${comp}/`) || uri.startsWith(`/${comp}/`)
+                );
+            },
+            isEffectiveReadOnly() {
+                return this.readOnly || this.isFrameworkFile;
+            },
+            renderedHtml() {
+                if (!this.content) return '<span class="text-slate-500 italic">No content.</span>';
+                if (window.showdown && typeof window.showdown.Converter === 'function') {
+                    const converter = new window.showdown.Converter({ tables: true, strikethrough: true, tasklists: true });
+                    return converter.makeHtml(this.content);
+                }
+                return this.content.replace(/\n/g, '<br/>');
             }
         },
         watch: {
-            screenPath: {
+            effectiveUri: {
                 immediate: true,
-                handler(newPath) {
-                    if (newPath) {
-                        this.currentUri = newPath;
-                        this.fetchContent();
+                handler(newUri) {
+                    if (newUri) {
+                        this.loadFileContent(newUri);
+                    }
+                }
+            },
+            layoutTree: {
+                immediate: true,
+                handler(val) {
+                    if (typeof val === 'string' && val !== this.content) {
+                        this.content = val;
+                        if (this.cmEditor && this.cmEditor.getValue() !== val) {
+                            this.cmEditor.setValue(val);
+                        }
+                    }
+                }
+            },
+            isEffectiveReadOnly: {
+                immediate: true,
+                handler(val) {
+                    if (this.cmEditor) {
+                        this.cmEditor.setOption('readOnly', val ? 'nocursor' : false);
                     }
                 }
             }
         },
         mounted() {
             const vm = this;
+            this.initCodeMirror();
+
             this.contextBus = new BroadcastChannel('agi-ide-context-bus');
-            this.contextBus.onmessage = (msg) => {
-                if (!msg.data) return;
-
-                if (msg.data.event === 'open-screen-artifact' && msg.data.artifactUri) {
-                    if (msg.data.artifactUri.endsWith('.md') || msg.data.artifactUri.endsWith('.txt')) {
-                        vm.currentUri = msg.data.artifactUri;
-                        vm.fetchContent();
-                    }
-                    return;
-                }
-
-                if (msg.data.event === 'directives-updated' || msg.data.event === 'artifact-saved-to-disk') {
-                    if (vm.currentUri && (vm.currentUri.endsWith('component.md') || msg.data.artifactUri === vm.currentUri)) {
-                        vm.fetchContent();
-                    }
+            this.contextBus.onmessage = (event) => {
+                if (!event.data) return;
+                if (event.data.event === 'artifact-saved-to-disk' && event.data.artifactUri === vm.effectiveUri) {
+                    vm.isDirty = false;
                 }
             };
-            this.fetchContent();
         },
         beforeUnmount() {
             if (this.contextBus) this.contextBus.close();
         },
         methods: {
             resolveCsrfToken() {
-                return window.AGI_SERVER_CSRF_TOKEN || (window.moqui && window.moqui.moquiSessionToken) || "";
+                return window.AGI_SERVER_CSRF_TOKEN
+                    || (window.moqui && window.moqui.moquiSessionToken)
+                    || "";
             },
-            onInput() {
-                this.isDirty = true;
-            },
-            handleKeyDown(e) {
-                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-                    e.preventDefault();
-                    this.saveContent();
-                    return;
-                }
-                if (e.key === 'Tab') {
-                    e.preventDefault();
-                    const ta = this.$refs.editorTextarea;
-                    const start = ta.selectionStart;
-                    const end = ta.selectionEnd;
-                    this.editorText = this.editorText.substring(0, start) + "    " + this.editorText.substring(end);
-                    this.$nextTick(() => {
-                        ta.selectionStart = ta.selectionEnd = start + 4;
-                    });
-                }
-            },
-            async fetchContent() {
-                if (!this.currentUri) return;
-                try {
-                    const headers = { 'moquiSessionToken': this.resolveCsrfToken() };
-                    const resp = await axios.get('/rest/s1/agi-ide/getRawXml', {
-                        params: { artifactUri: this.currentUri },
-                        headers
-                    });
-                    this.editorText = resp.data?.rawText || resp.data?.rawXml || '';
-                    this.isDirty = false;
-                } catch (err) {
-                    console.error("Failed to load markdown text:", err);
-                }
-            },
-            confirmClearContent() {
-                this.$q.dialog({
-                    title: 'Clear Instructions Directives?',
-                    message: `Are you sure you want to completely clear ${this.artifactLabel}? This will erase the file on disk, the database workspace buffer, and the active discussion draft payload.`,
-                    cancel: true,
-                    persistent: true,
-                    dark: true
-                }).onOk(async () => {
-                    const activeUser = window.AGI_SERVER_USER_ID || 'ANONYMOUS';
-                    const headers = {
-                        'moquiSessionToken': this.resolveCsrfToken(),
-                        'Content-Type': 'application/json'
-                    };
 
-                    try {
-                        // 1. Wipe the file on disk
-                        await axios.post('/rest/s1/agi-ide/saveScreenXml', {
-                            artifactUri: this.currentUri,
-                            xmlText: '',
-                            metaJsonBuffer: '',
-                            verifyEntities: false,
-                            autoCorrect: false,
-                            autoStubSubscreens: false
-                        }, { headers });
+            initCodeMirror() {
+                this.$nextTick(() => {
+                    const el = this.$refs.cmContainer;
+                    if (!el || this.cmEditor) return;
 
-                        // 2. Clear DB workspace buffer record
-                        await axios.post('/rest/s1/agi-ide/clearWorkspaceBuffer', {
-                            artifactUri: this.currentUri,
-                            userId: activeUser
-                        }, { headers });
-
-                        // 3. Clear the discussion draft AgiPayload record so pinning starts completely fresh
-                        if (window.__agiCurrentDiscussionId || (this.$parent && this.$parent.activeDiscussionId)) {
-                            const discId = window.__agiCurrentDiscussionId || this.$parent.activeDiscussionId;
-                            await axios.post(`/rest/s1/agi-ai/discussions/${discId}/directives`, {
-                                directivesText: '',
-                                targetComponent: 'nursinghome'
-                            }, { headers }).catch(() => { });
-                        }
-
-                        this.editorText = '';
-                        this.isDirty = false;
-
-                        this.$q.notify({
-                            type: 'positive',
-                            icon: 'delete_sweep',
-                            message: `Cleared ${this.artifactLabel} and reset draft payload.`
-                        });
-
-                        if (this.contextBus) {
-                            this.contextBus.postMessage({
-                                event: 'artifact-saved-to-disk',
-                                artifactUri: this.currentUri
-                            });
-                            this.contextBus.postMessage({
-                                event: 'directives-updated',
-                                targetComponent: 'nursinghome'
-                            });
-                        }
-                    } catch (err) {
-                        this.$q.notify({
-                            type: 'negative',
-                            icon: 'report_problem',
-                            message: 'Clear failed: ' + (err.response?.data?.errors || err.message)
-                        });
+                    const CodeMirrorFn = window.CodeMirror;
+                    if (!CodeMirrorFn) {
+                        setTimeout(() => this.initCodeMirror(), 100);
+                        return;
                     }
+
+                    this.cmEditor = CodeMirrorFn(el, {
+                        value: this.content || '',
+                        mode: 'markdown',
+                        theme: 'darcula',
+                        lineNumbers: true,
+                        lineWrapping: true,
+                        readOnly: this.isEffectiveReadOnly ? 'nocursor' : false,
+                        extraKeys: {
+                            'Ctrl-S': () => this.handleSave(),
+                            'Cmd-S': () => this.handleSave()
+                        }
+                    });
+
+                    this.cmEditor.on('change', () => {
+                        const val = this.cmEditor.getValue();
+                        if (val !== this.content) {
+                            this.content = val;
+                            if (!this.isEffectiveReadOnly) {
+                                this.isDirty = true;
+                                this.$emit('content-changed', { artifactUri: this.effectiveUri, content: val });
+                                if (this.contextBus) {
+                                    this.contextBus.postMessage({
+                                        event: 'artifact-state-mutated',
+                                        artifactUri: this.effectiveUri
+                                    });
+                                }
+                            }
+                        }
+                    });
                 });
             },
-            async saveContent() {
-                const activeUser = window.AGI_SERVER_USER_ID || 'ANONYMOUS';
-                const headers = {
-                    'moquiSessionToken': this.resolveCsrfToken(),
-                    'Content-Type': 'application/json'
-                };
+
+            async loadFileContent(uri) {
+                if (!uri) return;
                 try {
-                    await axios.post('/rest/s1/agi-ide/saveScreenXml', {
-                        artifactUri: this.currentUri,
-                        xmlText: this.editorText,
-                        metaJsonBuffer: this.editorText,
-                        verifyEntities: false,
-                        autoCorrect: false,
-                        autoStubSubscreens: false
-                    }, { headers });
-
-                    await axios.post('/rest/s1/agi-ide/storeWorkspaceBuffer', {
-                        artifactUri: this.currentUri,
-                        userId: activeUser,
-                        metaJsonBuffer: this.editorText
-                    }, { headers });
-
-                    this.isDirty = false;
-                    this.$q?.notify({
-                        type: 'positive',
-                        icon: 'save',
-                        message: `Saved ${this.artifactLabel} to disk!`,
-                        timeout: 2500
+                    const resp = await axios.get(`/rest/s1/agi-ide/getWorkspaceBuffer`, {
+                        params: {
+                            artifactUri: uri,
+                            userId: window.AGI_SERVER_USER_ID || 'system_ide_user'
+                        },
+                        headers: { 'moquiSessionToken': this.resolveCsrfToken() }
                     });
 
-                    if (this.contextBus) {
-                        this.contextBus.postMessage({
-                            event: 'artifact-saved-to-disk',
-                            artifactUri: this.currentUri
+                    let text = '';
+                    if (resp.data && resp.data.metaJsonBuffer) {
+                        text = typeof resp.data.metaJsonBuffer === 'string'
+                            ? resp.data.metaJsonBuffer
+                            : JSON.stringify(resp.data.metaJsonBuffer, null, 2);
+                    } else {
+                        const fileResp = await axios.get(`/rest/s1/agi-ide/resource?artifactUri=${encodeURIComponent(uri)}`, {
+                            headers: { 'moquiSessionToken': this.resolveCsrfToken() }
                         });
-                        this.contextBus.postMessage({
-                            event: 'directives-updated',
-                            targetComponent: 'nursinghome'
+                        text = fileResp.data?.content || fileResp.data || '';
+                    }
+
+                    this.content = text;
+                    this.isDirty = false;
+                    if (this.cmEditor) {
+                        this.cmEditor.setValue(text);
+                        this.cmEditor.clearHistory();
+                        this.cmEditor.setOption('readOnly', this.isEffectiveReadOnly ? 'nocursor' : false);
+                    }
+                } catch (e) {
+                    console.warn(`Could not load content for ${uri}:`, e.message);
+                }
+            },
+
+            handleSave() {
+                if (this.isEffectiveReadOnly) {
+                    this.$q?.notify({
+                        type: 'warning',
+                        icon: 'lock',
+                        message: 'Read-Only Artifact',
+                        caption: 'Framework platform defaults cannot be modified directly.',
+                        timeout: 3500
+                    });
+                    return;
+                }
+
+                this.$emit('trigger-save', {
+                    artifactUri: this.effectiveUri,
+                    xmlContent: this.content,
+                    layoutTree: this.content
+                });
+                this.isDirty = false;
+            },
+
+            async copyToOverride() {
+                const targetComp = this.targetComponentName || 'nursinghome';
+                if (!this.effectiveUri || !targetComp) return;
+
+                this.copyingOverride = true;
+                try {
+                    const resp = await axios.post('/rest/s1/agi-ide/component/override', {
+                        sourceArtifactUri: this.effectiveUri,
+                        targetComponent: targetComp
+                    }, {
+                        headers: { 'moquiSessionToken': this.resolveCsrfToken() }
+                    });
+
+                    const targetUri = resp.data?.targetArtifactUri;
+                    if (targetUri) {
+                        this.$q?.notify({
+                            type: 'positive',
+                            icon: 'copy_all',
+                            message: `Created override in ${targetComp}!`,
+                            caption: targetUri,
+                            timeout: 3500
                         });
+
+                        // Notify Workspace & Studio to switch to the new editable file
+                        if (this.contextBus) {
+                            this.contextBus.postMessage({
+                                event: 'open-screen-artifact',
+                                artifactUri: targetUri,
+                                targetComponent: targetComp
+                            });
+                        }
+                        this.$emit('open-artifact', { artifactUri: targetUri });
+                        await this.loadFileContent(targetUri);
+                    } else {
+                        throw new Error(resp.data?.message || 'Failed to create override copy.');
                     }
                 } catch (err) {
+                    const msg = err.response?.data?.errors || err.response?.data?.message || err.message;
                     this.$q?.notify({
                         type: 'negative',
                         icon: 'report_problem',
-                        message: 'Save failed: ' + (err.response?.data?.errors || err.message)
+                        message: 'Override Creation Failed',
+                        caption: msg,
+                        timeout: 5000
                     });
+                } finally {
+                    this.copyingOverride = false;
                 }
             }
-        }
+        },
+        template: `
+            <div class="fit column no-wrap bg-slate-950 font-mono text-white overflow-hidden relative-position" style="height: 100%; min-height: 0;">
+                
+                <!-- EDITOR TOOLBAR (28px) -->
+                <div class="row items-center justify-between q-px-sm bg-slate-900 border-bottom-dark" style="height: 28px; min-height: 28px; flex: 0 0 28px; border-bottom: 1px solid #334155;">
+                    <div class="row items-center q-gutter-x-xs no-wrap ellipsis">
+                        <q-icon name="description" size="13px" :color="isFrameworkFile ? 'cyan-4' : 'amber-4'" />
+                        <span class="text-caption font-mono text-weight-bold ellipsis" :class="isFrameworkFile ? 'text-cyan-2' : 'text-slate-100'" style="font-size: 11px;">
+                            {{ fileName }}
+                        </span>
+
+                        <!-- FRAMEWORK READ-ONLY BADGE -->
+                        <q-badge 
+                            v-if="isFrameworkFile" 
+                            color="cyan-10" 
+                            text-color="cyan-2" 
+                            class="q-ml-xs text-weight-bold font-mono" 
+                            style="border: 1px solid #0284c7; font-size: 9px;"
+                        >
+                            <q-icon name="lock" size="10px" class="q-mr-xs" /> Framework Default (Read-Only)
+                        </q-badge>
+
+                        <q-badge v-else-if="isDirty" color="amber-10" text-color="black" class="q-ml-xs text-weight-bolder" style="font-size: 9px;">
+                            MODIFIED
+                        </q-badge>
+                    </div>
+
+                    <div class="row items-center q-gutter-x-xs">
+                        <!-- COPY TO OVERRIDE BUTTON: Visible only on read-only framework artifacts -->
+                        <q-btn 
+                            v-if="isFrameworkFile"
+                            flat dense no-caps size="xs"
+                            icon="copy_all"
+                            :label="'Copy to ' + targetComponentName + ' to Override'"
+                            color="amber-3"
+                            class="q-px-xs rounded-borders bg-amber-10 text-weight-bolder font-mono"
+                            style="border: 1px solid #d97706; font-size: 10px;"
+                            :loading="copyingOverride"
+                            @click="copyToOverride"
+                        >
+                            <q-tooltip>Copy this rule into {{ targetComponentName }} to customize it for this domain</q-tooltip>
+                        </q-btn>
+
+                        <!-- PREVIEW / RAW TOGGLE -->
+                        <q-btn 
+                            flat dense no-caps size="xs"
+                            :icon="previewMode ? 'code' : 'preview'"
+                            :label="previewMode ? 'Raw' : 'Preview'"
+                            color="slate-300"
+                            class="q-px-xs rounded-borders bg-slate-800"
+                            style="border: 1px solid #475569;"
+                            @click="previewMode = !previewMode"
+                        >
+                            <q-tooltip>{{ previewMode ? 'Switch to Raw Markdown' : 'Preview Rendered Markdown' }}</q-tooltip>
+                        </q-btn>
+
+                        <!-- SAVE BUTTON: Only visible if NOT a read-only framework file -->
+                        <q-btn 
+                            v-if="!isEffectiveReadOnly"
+                            flat dense no-caps size="xs"
+                            icon="save"
+                            label="Save"
+                            color="teal-3"
+                            class="q-px-xs rounded-borders bg-teal-10 text-weight-bolder"
+                            style="border: 1px solid #0d9488;"
+                            :disabled="!isDirty"
+                            @click="handleSave"
+                        >
+                            <q-tooltip>Save Markdown changes to disk (Ctrl+S)</q-tooltip>
+                        </q-btn>
+                    </div>
+                </div>
+
+                <!-- EDITOR BODY -->
+                <div class="col full-width relative-position overflow-hidden" style="flex: 1 1 0%; min-height: 0;">
+                    <!-- PREVIEW VIEW -->
+                    <div 
+                        v-show="previewMode" 
+                        class="fit q-pa-md overflow-auto markdown-body font-mono text-caption text-slate-200" 
+                        style="line-height: 1.6;"
+                        v-html="renderedHtml"
+                    ></div>
+
+                    <!-- CODEMIRROR RAW VIEW -->
+                    <div 
+                        v-show="!previewMode" 
+                        ref="cmContainer" 
+                        class="fit font-mono text-caption"
+                        style="height: 100%;"
+                    ></div>
+                </div>
+
+            </div>
+        `
     };
 
     window.AgiMarkdownEditor = AgiMarkdownEditor;
@@ -255,14 +347,12 @@
     window.AgiComponents['AgiMarkdownEditor'] = AgiMarkdownEditor;
     window.AgiComponents['agi-markdown-editor'] = AgiMarkdownEditor;
 
-    const registerAgiMarkdownEditor = () => {
+    const registerComp = () => {
         if (window.moqui && window.moqui.webrootVueApp) {
-            if (!window.moqui.webrootVueApp.component('agi-markdown-editor')) {
-                window.moqui.webrootVueApp.component('agi-markdown-editor', AgiMarkdownEditor);
-            }
+            window.moqui.webrootVueApp.component('agi-markdown-editor', AgiMarkdownEditor);
         } else {
-            setTimeout(registerAgiMarkdownEditor, 50);
+            setTimeout(registerComp, 50);
         }
     };
-    registerAgiMarkdownEditor();
+    registerComp();
 })();

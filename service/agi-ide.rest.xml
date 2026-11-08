@@ -187,6 +187,21 @@
                 <service name="org.moqui.ide.ComponentServices.drop#Component"/>
             </method>
         </resource>
+        <resource name="status">
+            <method type="get">
+                <service name="org.moqui.ide.ComponentServices.get#ComponentStatus"/>
+            </method>
+        </resource>
+        <resource name="override">
+            <method type="post">
+                <service name="org.moqui.ide.ComponentServices.create#ComponentOverride"/>
+            </method>
+        </resource>
+        <resource name="classify-intent">
+            <method type="post">
+                <service name="org.moqui.ide.ComponentServices.classify#AppIntent"/>
+            </method>
+        </resource>
     </resource>
 
     <!-- ========================================================= -->

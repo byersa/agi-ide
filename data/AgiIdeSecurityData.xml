@@ -4,27 +4,28 @@
     <moqui.security.ArtifactGroup artifactGroupId="AGI_IDE_ALL"
                                   description="AGI IDE Services, Screens, and REST Endpoints"/>
 
-    <!-- 2. Authorize all backend IDE services (parseXmlToTree, saveScreenXml, getWorkspaceBuffer, etc.) -->
+    <!-- 2. Authorize all backend IDE services with inheritable authorization -->
     <moqui.security.ArtifactGroupMember artifactGroupId="AGI_IDE_ALL"
-                                        artifactTypeEnumId="AtmService"
+                                        artifactTypeEnumId="AT_SERVICE"
                                         artifactName="org.moqui.ide.*"
-                                        nameIsPattern="Y"/>
+                                        nameIsPattern="Y"
+                                        inheritAuthz="Y"/>
 
     <!-- 3. Authorize REST endpoints hosted under /rest/s1/agi-ide -->
     <moqui.security.ArtifactGroupMember artifactGroupId="AGI_IDE_ALL"
-                                        artifactTypeEnumId="AtmRestPath"
+                                        artifactTypeEnumId="AT_REST_PATH"
                                         artifactName="/rest/s1/agi-ide.*"
                                         nameIsPattern="Y"/>
 
     <!-- 4. Authorize all screens and subscreen transitions under agi-ide -->
     <moqui.security.ArtifactGroupMember artifactGroupId="AGI_IDE_ALL"
-                                        artifactTypeEnumId="AtmScreen"
+                                        artifactTypeEnumId="AT_XML_SCREEN"
                                         artifactName="component://agi-ide/.*"
                                         nameIsPattern="Y"/>
 
-    <!-- 5. Grant ALL_USERS full operational access (View, Create, Update, Delete) -->
+    <!-- 5. Grant ALL_USERS full operational access -->
     <moqui.security.ArtifactAuthz artifactGroupId="AGI_IDE_ALL"
                                   userGroupId="ALL_USERS"
-                                  authzTypeEnumId="AuthzAll"
-                                  authzActionEnumId="AuthzAll"/>
+                                  authzTypeEnumId="AUTHZT_ALWAYS"
+                                  authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>

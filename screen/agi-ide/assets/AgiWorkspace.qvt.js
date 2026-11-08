@@ -142,6 +142,16 @@
                 return this.activeEditors.length;
             }
         },
+        watch: {
+            targetComponentName: {
+                immediate: false,
+                handler(newVal, oldVal) {
+                    if (newVal && newVal !== oldVal) {
+                        this.checkComponentInitialization(newVal);
+                    }
+                }
+            }
+        },
         mounted() {
             if (this.$q && this.$q.dark) {
                 this.$q.dark.set(true);
@@ -229,6 +239,7 @@
 
             this.loadRequiredComponents();
             this.resolveTargetComponentAndPath();
+            this.checkComponentInitialization(this.targetComponentName);
 
             this._keyHandler = (e) => {
                 if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
@@ -856,6 +867,54 @@
                         this.activeEditors.splice(mdIdx, 1);
                     }
                 }
+            },
+
+            async checkComponentInitialization(compName) {
+                const comp = compName || this.targetComponentName;
+                if (!comp || this.ignoredFrameworkComponents.includes(comp)) return;
+
+                try {
+                    const resp = await axios.get(`/rest/s1/agi-ide/component/status?componentName=${encodeURIComponent(comp)}`, {
+                        headers: { 'moquiSessionToken': this.resolveCsrfToken() }
+                    });
+                    const data = resp.data;
+
+                    if (data && data.initialized === false) {
+                        this.$q?.notify({
+                            type: 'warning',
+                            icon: 'construction',
+                            message: `Domain '${comp}' is uninitialized.`,
+                            caption: 'Please complete initial setup to establish Git tracking and MCP blueprints.',
+                            timeout: 7000
+                        });
+                        await this.openNewComponentWizard();
+                    }
+                } catch (err) {
+                    console.warn(`Could not verify initialization status for component '${comp}':`, err.message);
+                }
+            },
+
+            onComponentCreated(eventData) {
+                this.showNewComponentWizardModal = false;
+                const newComp = eventData?.componentName || this.targetComponentName;
+                this.targetComponentName = newComp;
+                this.localScreenPath = `component://${newComp}/screen/${newComp}.xml`;
+                this.hydrateWorkspaceBuffer();
+
+                if (this.contextBus) {
+                    this.contextBus.postMessage({
+                        event: 'open-screen-artifact',
+                        artifactLocation: this.localScreenPath,
+                        targetComponent: newComp
+                    });
+                }
+
+                this.$q?.notify({
+                    type: 'positive',
+                    icon: 'check_circle',
+                    message: `Domain '${newComp}' initialized and active!`,
+                    timeout: 3000
+                });
             },
 
             resolveTargetComponentAndPath() {

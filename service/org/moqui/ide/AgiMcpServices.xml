@@ -8,13 +8,37 @@
         </actions>
     </service>
 
-    <service verb="get" noun="AllTools" type="script" location="component://agi-ide/script/getAllTools.groovy">
+    <!-- ===================================================================== -->
+    <!-- GET ALL MCP TOOLS (BYPASS ARTIFACT EXECUTION AUTHZ)                   -->
+    <!-- ===================================================================== -->
+    <service verb="get" noun="AllTools" type="inline" authenticate="anonymous-all">
+        <description>
+            Retrieves registered MCP tools for workspace bootstrap.
+            Disables entity artifact authorization so non-admin users (such as john.doe)
+            can load tool definitions into AgiMcpEngine.
+        </description>
         <out-parameters>
             <parameter name="toolsList" type="List"/>
         </out-parameters>
+        <actions>
+            <script><![CDATA[
+                ec.artifactExecution.disableAuthz()
+                try {
+                    def toolList = ec.entity.find("agi.ide.mcp.AgiMcpTool")
+                        .disableAuthz()
+                        .list()
+                    context.toolsList = toolList ? toolList.collect { it.getMap() } : []
+                } catch (Exception ex) {
+                    ec.logger.warn("⚠️ [get#AllTools] Error retrieving AgiMcpTool records: ${ex.message}")
+                    context.toolsList = []
+                } finally {
+                    ec.artifactExecution.enableAuthz()
+                }
+            ]]></script>
+        </actions>
     </service>
 
-    <service verb="execute" noun="OpenAiProxyLoop"  name="executeOpenAiProxyLoop" type="script"
+    <service verb="execute" noun="OpenAiProxyLoop" name="executeOpenAiProxyLoop" type="script"
         location="component://agi-ide/script/executeOpenAiProxyLoop.groovy" read-only="true">
         <in-parameters>
             <parameter name="userPrompt" required="true" type="String"/>

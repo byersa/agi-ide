@@ -2,10 +2,152 @@
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-3.0.xsd">
 
+    <!-- ===================================================================== -->
+    <!-- GET COMPONENT INITIALIZATION STATUS                                   -->
+    <!-- ===================================================================== -->
+    <service verb="get" noun="ComponentStatus" type="inline" authenticate="anonymous-all">
+        <description>
+            Checks if a component exists on disk and has its AI and Git prerequisites initialized.
+        </description>
+        <in-parameters>
+            <parameter name="componentName" type="String" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="initialized" type="Boolean"/>
+            <parameter name="exists" type="Boolean"/>
+            <parameter name="gitExists" type="Boolean"/>
+            <parameter name="blueprintExists" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                String comp = componentName?.trim()?.replaceAll("[^a-zA-Z0-9_-]", "")
+                if (!comp) {
+                    context.exists = false
+                    context.gitExists = false
+                    context.blueprintExists = false
+                    context.initialized = false
+                    return
+                }
+
+                File baseDir = new File("runtime/component/" + comp)
+                boolean exists = baseDir.exists()
+                boolean gitExists = new File(baseDir, ".git").exists()
+                boolean blueprintExists = new File(baseDir, "mcp/instructions/component.md").exists()
+
+                context.exists = exists
+                context.gitExists = gitExists
+                context.blueprintExists = blueprintExists
+                
+                // A component is considered strictly "initialized" for AI if all 3 pieces are in place
+                context.initialized = (exists && gitExists && blueprintExists)
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- ===================================================================== -->
+    <!-- CREATE COMPONENT ARTIFACT OVERRIDE                                    -->
+    <!-- ===================================================================== -->
+    <service verb="create" noun="ComponentOverride" type="inline" authenticate="anonymous-all">
+        <description>
+            Copies a framework or platform instruction file into the active target component
+            at the identical mirrored relative path, establishing a domain-level override.
+        </description>
+        <in-parameters>
+            <parameter name="sourceArtifactUri" type="String" required="true"/>
+            <parameter name="targetComponent" type="String" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="targetArtifactUri" type="String"/>
+            <parameter name="success" type="Boolean"/>
+            <parameter name="message" type="String"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                String srcUri = sourceArtifactUri?.trim()
+                String targetComp = targetComponent?.trim()?.toLowerCase()?.replaceAll("[^a-z0-9-]", "")
+
+                if (!srcUri || !targetComp) {
+                    context.success = false
+                    context.message = "Missing sourceArtifactUri or targetComponent."
+                    ec.message.addError(context.message)
+                    return
+                }
+
+                // 1. Resolve source file content
+                org.moqui.resource.ResourceReference srcRr = ec.resource.getLocationReference(srcUri)
+                if (srcRr == null || !srcRr.getExists()) {
+                    context.success = false
+                    context.message = "Source artifact not found at: ${srcUri}"
+                    ec.message.addError(context.message)
+                    return
+                }
+                String content = srcRr.getText() ?: ""
+
+                // 2. Compute mirrored relative path
+                // e.g. "component://agi-ide/mcp/instructions/artifacts/screen/build.md" -> "mcp/instructions/artifacts/screen/build.md"
+                String cleanPath = srcUri
+                if (cleanPath.startsWith("component://")) {
+                    cleanPath = cleanPath.substring("component://".length())
+                    int slashIdx = cleanPath.indexOf('/')
+                    if (slashIdx != -1) cleanPath = cleanPath.substring(slashIdx + 1)
+                }
+
+                // 3. Verify target component exists on disk
+                File targetCompDir = new File("runtime/component/" + targetComp)
+                if (!targetCompDir.exists()) {
+                    context.success = false
+                    context.message = "Target component '${targetComp}' does not exist on disk."
+                    ec.message.addError(context.message)
+                    return
+                }
+
+                // 4. Check if target override already exists
+                File targetFile = new File(targetCompDir, cleanPath)
+                String destArtifactUri = "component://${targetComp}/${cleanPath}"
+                if (targetFile.exists()) {
+                    context.success = true
+                    context.targetArtifactUri = destArtifactUri
+                    context.message = "Override file already exists at: ${destArtifactUri}"
+                    ec.logger.info("ℹ️ [create#ComponentOverride] Target file already exists: ${destArtifactUri}")
+                    return
+                }
+
+                // 5. Write mirrored file to disk
+                targetFile.parentFile.mkdirs()
+                targetFile.text = content
+
+                // 6. Record Git baseline in target component repo if .git exists
+                File gitDir = new File(targetCompDir, ".git")
+                if (gitDir.exists()) {
+                    try {
+                        ProcessBuilder pbAdd = new ProcessBuilder(["git", "add", cleanPath])
+                        pbAdd.directory(targetCompDir)
+                        pbAdd.start().waitFor()
+
+                        ProcessBuilder pbCommit = new ProcessBuilder(["git", "commit", "-m", "Override ${cleanPath} from platform"])
+                        pbCommit.directory(targetCompDir)
+                        pbCommit.start().waitFor()
+                        ec.logger.info("🔧 [create#ComponentOverride] Git committed override ${cleanPath} in ${targetComp}")
+                    } catch (Exception gitEx) {
+                        ec.logger.warn("⚠️ [create#ComponentOverride] Git commit skipped: ${gitEx.message}")
+                    }
+                }
+
+                context.success = true
+                context.targetArtifactUri = destArtifactUri
+                context.message = "Successfully created override at ${destArtifactUri}"
+                ec.logger.info("✅ [create#ComponentOverride] Created override: ${destArtifactUri}")
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- ===================================================================== -->
+    <!-- CREATE / SCAFFOLD COMPONENT                                           -->
+    <!-- ===================================================================== -->
     <service verb="create" noun="Component" type="inline">
         <description>
             Scaffolds a new Moqui component directory structure on disk, generates component.xml,
-            and auto-registers or updates the primary screen artifact in AgiArtifact.
+            seeds AI blueprints, initializes a Git repository, and registers the root artifact.
         </description>
         <in-parameters>
             <parameter name="componentName" type="String" required="true"/>
@@ -45,6 +187,25 @@
                 screenDir.mkdirs()
                 dataDir.mkdirs()
                 mcpDir.mkdirs()
+
+                // 2b. Seed component.md blueprint
+                String blueprintText = """# Architecture Directives: ${compName.toUpperCase()}
+<!-- Canonical domain specification for ${compName}. High-level invariants and functional policies. -->
+
+## 1. Domain Scope & Core Capabilities
+- Primary operational workflows for ${compName}.
+
+## 2. Mantle UDM Data Model Invariants
+- Extend existing Mantle entities (e.g. mantle.facility.Facility, mantle.party.Party).
+- No redundant custom tables for core party or facility domains.
+
+## 3. Compliance, Privacy & HIPAA Invariants
+- Encrypt PHI fields; enable audit logs on clinical records.
+
+## 4. UI & Navigation Invariants
+- Master-detail layouts; subscreen item routing.
+"""
+                new File(mcpDir, "component.md").text = blueprintText
 
                 // 3. Generate component.xml based on Preset
                 String componentXmlContent = ""
@@ -145,6 +306,23 @@
                         sourceReferenceId: rootScreenPath,
                         workEffortTypeEnumId: "WetIntent"
                     ]).call()
+                }
+
+                // 6. Initialize Git Version Control
+                try {
+                    def execGit = { List<String> args ->
+                        ProcessBuilder pb = new ProcessBuilder(args)
+                        pb.directory(baseDir)
+                        Process p = pb.start()
+                        p.waitFor()
+                    }
+                    execGit(["git", "init"])
+                    execGit(["git", "branch", "-M", "main"])
+                    execGit(["git", "add", "."])
+                    execGit(["git", "commit", "-m", "Initial AI component scaffold"])
+                    ec.logger.info("🔧 [AGI SCAFFOLD] Git repository initialized for ${compName}")
+                } catch (Exception gitEx) {
+                    ec.logger.warn("⚠️ [AGI SCAFFOLD] Git initialization failed for ${compName}: ${gitEx.message}")
                 }
 
                 context.componentPath = runtimeCompPath
@@ -400,4 +578,91 @@
         </actions>
     </service>
 
+    <!-- ===================================================================== -->
+    <!-- CLASSIFY APPLICATION INTENT                                           -->
+    <!-- ===================================================================== -->
+    <service verb="classify" noun="AppIntent" type="inline" authenticate="anonymous-all">
+        <description>
+            Fast micro-classifier for component elicitation. Analyzes raw narrative text
+            and maps it to one of the 5 core application archetypes.
+        </description>
+        <in-parameters>
+            <parameter name="narrative" type="String" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="suggestedArchetype" type="String"/>
+            <parameter name="confidence" type="BigDecimal"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                import groovy.json.JsonSlurper
+                import groovy.json.JsonOutput
+
+                String text = (narrative ?: "").toLowerCase().trim()
+                if (!text || text.length() < 10) {
+                    context.suggestedArchetype = "custom"
+                    context.confidence = 0.5
+                    return
+                }
+
+                // 1. Instant Server Heuristic Fallback (Fast, sub-millisecond)
+                def scores = [
+                    'huddle-ops': 0,
+                    'clinical-registry': 0,
+                    'facility-asset': 0,
+                    'service-case': 0
+                ]
+
+                def huddleKw = ['huddle', 'shift', 'standup', 'census', 'acuity', 'turnover', 'nurse', 'vitals']
+                def clinicKw = ['patient', 'care plan', 'clinical', 'diagnosis', 'treatment', 'medication', 'mar', 'chart']
+                def assetKw  = ['facility', 'room', 'bed', 'equipment', 'maintenance', 'repair', 'asset', 'work order']
+                def caseKw   = ['intake', 'case', 'ticket', 'request', 'complaint', 'incident', 'billing', 'workflow']
+
+                huddleKw.each { if (text.contains(it)) scores['huddle-ops'] += 2 }
+                clinicKw.each { if (text.contains(it)) scores['clinical-registry'] += 2 }
+                assetKw.each  { if (text.contains(it)) scores['facility-asset'] += 2 }
+                caseKw.each   { if (text.contains(it)) scores['service-case'] += 2 }
+
+                def maxEntry = scores.max { it.value }
+                String heuristicResult = (maxEntry && maxEntry.value > 0) ? maxEntry.key : "custom"
+
+                // 2. Micro-Inference Fast-Path (Optional AI validation if AI facade is present)
+                try {
+                    String systemPrompt = """You are an application classifier. Given the narrative description, classify into EXACTLY ONE archetype:
+- huddle-ops (shifts, standups, handoffs, time-critical operational checklists)
+- clinical-registry (residents, patients, long-term logs, care plans, vitals)
+- facility-asset (work orders, maintenance, equipment, facility rooms)
+- service-case (intake tickets, case workflows, customer requests)
+- custom (none of the above)
+
+Return JSON ONLY: {"archetype": "id", "confidence": 0.95}"""
+
+                    Map aiResult = ec.service.sync()
+                        .name("org.moqui.ai.AgiAiGatewayServices.run#OpenAiProxy")
+                        .parameters([
+                            systemInstruction: systemPrompt,
+                            userPrompt: narrative,
+                            mode: "classify",
+                            aiProfileName: "gemini"
+                        ])
+                        .call()
+
+                    String reply = aiResult?.completionText ?: ""
+                    def matcher = reply =~ /\{.*"archetype"\s*:\s*"([^"]+)".*\}/
+                    if (matcher.find()) {
+                        context.suggestedArchetype = matcher.group(1)
+                        context.confidence = 0.95
+                        return
+                    }
+                } catch (Exception ex) {
+                    ec.logger.warn("⚠️ [classify#AppIntent] Fast AI classify fallback to server heuristic: ${ex.message}")
+                }
+
+                // Default to heuristic match if AI call times out or errors
+                context.suggestedArchetype = heuristicResult
+                context.confidence = (maxEntry && maxEntry.value > 0) ? 0.85 : 0.5
+            ]]></script>
+        </actions>
+    </service>
+    
 </services>
